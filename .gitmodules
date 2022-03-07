@@ -1,0 +1,3 @@
+[submodule "external/YAKL"]
+	path = external/YAKL
+	url = git@github.com:mrnorman/YAKL.git
