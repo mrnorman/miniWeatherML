@@ -6,7 +6,6 @@
 #include "vertical_interp.h"
 #include "YAKL_netcdf.h"
 #include "Options.h"
-#include "ArrayIR.h"
 
 
 namespace coupler {
@@ -84,54 +83,6 @@ namespace coupler {
 
   YAKL_INLINE real compute_pressure( real rho_d, real rho_v, real T, real R_d, real R_v ) {
     return rho_d*R_d*T + rho_v*R_v*T;
-  }
-
-
-
-  template <class T, int N>
-  inline ArrayIR<T,N,IRMemHost> yakl_array_to_arrayIR( yakl::Array<T,N,yakl::memHost,yakl::styleC> const &array ) {
-    if (! array.initialized()) {
-      yakl::yakl_throw("Error: converting non-initialized Array object into ArrayIR is not allowed");
-    }
-    std::vector<unsigned int> dims(N);
-    for (int i=0; i < N; i++) { dims[i] = array.dimension[i]; }
-    #ifdef YAKL_DEBUG
-      return ArrayIR<T,N,IRMemHost>( array.data() , dims , array.myname );
-    #else
-      return ArrayIR<T,N,IRMemHost>( array.data() , dims );
-    #endif
-  }
-
-  template <class T, int N>
-  inline ArrayIR<T,N,IRMemDevice> yakl_array_to_arrayIR( yakl::Array<T,N,yakl::memDevice,yakl::styleC> const &array ) {
-    if (! array.initialized()) {
-      yakl::yakl_throw("Error: converting non-initialized Array object into ArrayIR is not allowed");
-    }
-    std::vector<unsigned int> dims(N);
-    for (int i=0; i < N; i++) { dims[i] = array.dimension[i]; }
-    #ifdef YAKL_DEBUG
-      return ArrayIR<T,N,IRMemDevice>( array.data() , dims , array.myname );
-    #else
-      return ArrayIR<T,N,IRMemDevice>( array.data() , dims );
-    #endif
-  }
-
-
-
-  template <class T, int N>
-  inline yakl::Array<T,N,yakl::memHost,yakl::styleC> arrayIR_to_yakl_array( ArrayIR<T,N,IRMemHost> const &arrayIR ) {
-    if (! arrayIR.initialized()) {
-      yakl::yakl_throw("Error: converting non-initialized ArrayIR object into Array is not allowed");
-    }
-    return yakl::Array<T,N,yakl::memHost,yakl::styleC>( arrayIR.get_label() , arrayIR.get_data() , arrayIR.get_dims() );
-  }
-
-  template <class T, int N>
-  inline yakl::Array<T,N,yakl::memDevice,yakl::styleC> arrayIR_to_yakl_array( ArrayIR<T,N,IRMemDevice> const &arrayIR ) {
-    if (! arrayIR.initialized()) {
-      yakl::yakl_throw("Error: converting non-initialized ArrayIR object into Array is not allowed");
-    }
-    return yakl::Array<T,N,yakl::memDevice,yakl::styleC>( arrayIR.get_label() , arrayIR.get_data() , arrayIR.get_dims() );
   }
 
 
