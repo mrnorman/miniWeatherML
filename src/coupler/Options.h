@@ -3,7 +3,7 @@
 
 #include "main_header.h"
 
-namespace coupler {
+namespace core {
 
   class Options {
   public:

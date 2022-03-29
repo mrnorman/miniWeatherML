@@ -4,7 +4,7 @@
 #include "main_header.h"
 #include <typeinfo>
 
-namespace coupler {
+namespace core {
 
   using yakl::Array;
 

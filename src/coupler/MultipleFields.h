@@ -3,7 +3,7 @@
 
 #include "main_header.h"
 
-namespace coupler {
+namespace core {
 
   // Aggregate multiple fields into a single field that makes it easier to operate
   // on them together inside the same kernel. used mostly for tracers

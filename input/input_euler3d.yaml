@@ -1,56 +1,29 @@
 ---
 # Simulation time in seconds
-# simTime  : 28800    # 8 hours
-# simTime  : 86400    # 1 day
-simTime  : 432000   # 5 days
-# simTime  : 3600   # 30 min
+sim_time: 1000
 
 # Number of cells to use in the CRMs
-crm_nx   : 128
-crm_ny   : 1
-
-# Number of CRMs
-nens     : 1
-
-# Vertical height cooridnates file
-vcoords  : vcoords_equal_60_20km.nc
-
-# mmf column forcing data
-column_data : column_forcing_data.nc
+nx: 100
+ny: 1
+nz: 50
 
 # Domain size of the CRMs
-xlen     : 128000
-ylen     : 64000
+xlen: 20000
+ylen: 20000
+zlen: 10000
 
-bc_x   : periodic
-bc_y   : periodic
-bc_z   : wall
-
-weno_scalars : true
-
-weno_winds   : true
-
-initData : supercell
+init_data: thermal
 
 # Output filename
-out_prefix  : test
+out_fname: test.nc
 
 # GCM time step
 dt_gcm: 900
 
 # CRM physics time step
-dt_crm_phys: 20.
+dt_phys: 20.
 
 # Output frequency in seconds
 outFreq: 0.
-
-# Specify how to force density from the GCM (loose, strict, or off)
-density_forcing: loose
-
-# If true, GCM forcing is applied at the finest dycore time step; otherwise at coarser CRM physics time step
-forcing_at_dycore_time_step: false
-
-# Whether or not to advect TKE in SGS scheme
-advect_tke: true
 
 

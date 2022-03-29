@@ -1,7 +1,7 @@
 
 #include "main_header.h"
 
-namespace coupler {
+namespace core {
   std::mutex data_manager_mutex;
 }
 

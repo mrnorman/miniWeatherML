@@ -3,12 +3,11 @@
 
 #include "main_header.h"
 #include "DataManager.h"
-#include "vertical_interp.h"
 #include "YAKL_netcdf.h"
 #include "Options.h"
 
 
-namespace coupler {
+namespace core {
 
   class Coupler {
     public:
@@ -218,6 +217,9 @@ namespace coupler {
 
 
     void allocate_coupler_state( int nz, int ny, int nx ) {
+      using yakl::c::parallel_for;
+      using yakl::c::Bounds;
+      using yakl::c::SimpleBounds;
       dm.register_and_allocate<real>("density_dry","dry density"         ,{nz,ny,nx},{"z","y","x"});
       dm.register_and_allocate<real>("uvel"       ,"x-direction velocity",{nz,ny,nx},{"z","y","x"});
       dm.register_and_allocate<real>("vvel"       ,"y-direction velocity",{nz,ny,nx},{"z","y","x"});
@@ -240,7 +242,10 @@ namespace coupler {
     }
 
 
-    real4d compute_pressure_array() const {
+    real3d compute_pressure_array() const {
+      using yakl::c::parallel_for;
+      using yakl::c::Bounds;
+      using yakl::c::SimpleBounds;
       auto dens_dry = dm.get<real const,3>("density_dry");
       auto dens_wv  = dm.get<real const,3>("water_vapor");
       auto temp     = dm.get<real const,3>("temp");

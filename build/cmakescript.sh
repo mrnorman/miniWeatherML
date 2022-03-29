@@ -12,5 +12,5 @@ cmake      \
   -DYAKL_F90_FLAGS="${YAKL_F90_FLAGS}"                            \
   -DNCFLAGS="${NCFLAGS}"                                          \
   -DYAKL_ARCH="${YAKL_ARCH}"                                      \
-  ..
+  ../src
 
