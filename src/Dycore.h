@@ -408,6 +408,9 @@ class Dycore {
       for (int l=0; l < num_state; l++) {
         state(l,hs+k,hs+j,hs+i) = 0.;
       }
+      for (int l=0; l < num_tracers; l++) {
+        tracers(l,hs+k,hs+j,hs+i) = 0.;
+      }
       //Use Gauss-Legendre quadrature
       for (int kk=0; kk<nqpoints; kk++) {
         for (int jj=0; jj<nqpoints; jj++) {
@@ -429,8 +432,8 @@ class Dycore {
             state(idW,hs+k,hs+j,hs+i) += rho*w                 * wt;
             state(idT,hs+k,hs+j,hs+i) += ( rho*theta - hr*ht ) * wt;
             for (int tr=0; tr < num_tracers; tr++) {
-              if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i) = rho_v; }
-              else            { tracers(tr,hs+k,hs+j,hs+i) = 0;     }
+              if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i) += rho_v * wt; }
+              else            { tracers(tr,hs+k,hs+j,hs+i) += 0     * wt; }
             }
           }
         }
