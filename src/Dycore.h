@@ -11,11 +11,13 @@ class Dycore {
   int  static constexpr sten_size = 4;
   real static constexpr hv_beta   = 0.05;
 
-  int  static constexpr idR       = 0;
-  int  static constexpr idU       = 1;
-  int  static constexpr idV       = 2;
-  int  static constexpr idW       = 3;
-  int  static constexpr idT       = 4;
+  int  static constexpr idR = 0;
+  int  static constexpr idU = 1;
+  int  static constexpr idV = 2;
+  int  static constexpr idW = 3;
+  int  static constexpr idT = 4;
+
+  int  static constexpr DATA_THERMAL = 0;
 
   real1d      hy_dens_cells;
   real1d      hy_dens_theta_cells;
@@ -25,6 +27,7 @@ class Dycore {
   real        out_freq;
   int         num_out;
   std::string fname;
+  int         init_data_int;
 
 
   real compute_time_step( core::Coupler const &coupler ) {
@@ -99,6 +102,11 @@ class Dycore {
     real4d flux_x("flux_x",num_state,nz  ,ny  ,nx+1);
     real4d flux_y("flux_y",num_state,nz  ,ny+1,nx  );
     real4d flux_z("flux_z",num_state,nz+1,ny  ,nx  );
+
+    YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
+    YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
+    YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
+    YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
 
     parallel_for( Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i ) {
       ////////////////////////////////////////////////////////
@@ -196,7 +204,7 @@ class Dycore {
         //Use fourth-order interpolation from four cell averages to compute the value at the interface in question
         for (int l=0; l < num_state; l++) {
           for (int s=0; s < sten_size; s++) {
-            int ind = std::min( nz+hs-1 , std::max( hs , k+s ) );
+            int ind = std::min( nz+hs-1 , std::max( (int) hs , k+s ) );
             stencil(s) = state(l,ind,hs+j,hs+i);
           }
           //Fourth-order-accurate interpolation of the state
@@ -242,6 +250,9 @@ class Dycore {
     fname          = config["out_fname"].as<std::string>();
     out_freq       = config["out_freq" ].as<real>();
 
+    if (init_data == "thermal") { init_data_int = DATA_THERMAL; }
+    else { endrun("ERROR: Invalid init_data in yaml input file"); }
+
     int  nx, ny, nz;
     real xlen, ylen, zlen, dx, dy, dz;
     bool sim2d;
@@ -269,6 +280,8 @@ class Dycore {
     // Compute the state that the dycore uses
     real4d state("state",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
 
+    YAKL_SCOPE( init_data_int       , this->init_data_int       );
+
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
       for (int l=0; l < num_state; l++) {
         state(l,hs+k,hs+j,hs+i) = 0.;
@@ -282,7 +295,7 @@ class Dycore {
             real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
             real r, u, v, w, t, hr, ht;
 
-            if (init_data == "thermal") { thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,r,u,v,w,t,hr,ht); }
+            if (init_data_int == DATA_THERMAL) { thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,r,u,v,w,t,hr,ht); }
             else { endrun("ERROR: init_data not supported"); }
 
             if (sim2d) v = 0;
@@ -303,6 +316,11 @@ class Dycore {
     hy_dens_edges       = real1d("hy_dens_edges"      ,nz+1);
     hy_dens_theta_edges = real1d("hy_dens_theta_edges",nz+1);
 
+    YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
+    YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
+    YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
+    YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
+
     parallel_for( Bounds<1>(nz) , YAKL_LAMBDA (int k) {
       hy_dens_cells      (k) = 0.;
       hy_dens_theta_cells(k) = 0.;
@@ -310,7 +328,7 @@ class Dycore {
         real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
         real hr, ht;
 
-        if (init_data == "thermal") { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
+        if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
 
         hy_dens_cells      (k) += hr    * qweights(kk);
         hy_dens_theta_cells(k) += hr*ht * qweights(kk);
@@ -321,7 +339,7 @@ class Dycore {
       real z = k*dz;
       real hr, ht;
 
-      if (init_data == "thermal") { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
+      if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
 
       hy_dens_edges      (k) = hr   ;
       hy_dens_theta_edges(k) = hr*ht;
@@ -453,17 +471,21 @@ class Dycore {
     }
 
     auto &dm = coupler.dm;
-    nc.write1(dm.get<real const,3>("density_dry"),"density_dry",{"z","y","x"},ulIndex,"t");
-    nc.write1(dm.get<real const,3>("uvel"       ),"uvel"       ,{"z","y","x"},ulIndex,"t");
-    nc.write1(dm.get<real const,3>("vvel"       ),"vvel"       ,{"z","y","x"},ulIndex,"t");
-    nc.write1(dm.get<real const,3>("wvel"       ),"wvel"       ,{"z","y","x"},ulIndex,"t");
-    nc.write1(dm.get<real const,3>("temp"       ),"temperature",{"z","y","x"},ulIndex,"t");
+    nc.write1(dm.get<real const,3>("density_dry").createHostCopy(),"density_dry",{"z","y","x"},ulIndex,"t");
+    nc.write1(dm.get<real const,3>("uvel"       ).createHostCopy(),"uvel"       ,{"z","y","x"},ulIndex,"t");
+    nc.write1(dm.get<real const,3>("vvel"       ).createHostCopy(),"vvel"       ,{"z","y","x"},ulIndex,"t");
+    nc.write1(dm.get<real const,3>("wvel"       ).createHostCopy(),"wvel"       ,{"z","y","x"},ulIndex,"t");
+    nc.write1(dm.get<real const,3>("temp"       ).createHostCopy(),"temperature",{"z","y","x"},ulIndex,"t");
+
+    YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
+    YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
 
     real3d data("data",nz,ny,nx);
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
       data(k,j,i) = state(idR,hs+k,hs+j,hs+i);
     });
-    nc.write1(data,"density_pert",{"z","y","x"},ulIndex,"t");
+    nc.write1(data.createHostCopy(),"density_pert",{"z","y","x"},ulIndex,"t");
+
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
       real hy_r  = hy_dens_cells      (k);
       real hy_rt = hy_dens_theta_cells(k);
@@ -471,7 +493,7 @@ class Dycore {
       real rt    = state(idT,hs+k,hs+j,hs+i) + hy_rt;
       data(k,j,i) = rt / r - hy_rt / hy_r;
     });
-    nc.write1(data,"theta_pert",{"z","y","x"},ulIndex,"t");
+    nc.write1(data.createHostCopy(),"theta_pert",{"z","y","x"},ulIndex,"t");
 
     nc.close();
   }
@@ -496,8 +518,8 @@ class Dycore {
     const real exner0 = 1.;    //Surface-level Exner pressure
     t = theta0;                                       //Potential Temperature at z
     real exner = exner0 - grav * z / (cp * theta0);   //Exner pressure at z
-    real p = p0 * pow(exner,(cp/rd));                 //Pressure at z
-    real rt = pow((p / C0),(1._fp / gamma));          //rho*theta at z
+    real p = p0 * std::pow(exner,(cp/rd));                 //Pressure at z
+    real rt = std::pow((p / C0),(1._fp / gamma));          //rho*theta at z
     r = rt / t;                                       //Density at z
   }
 
@@ -511,7 +533,7 @@ class Dycore {
                       ((z-z0)/zrad)*((z-z0)/zrad) ) * M_PI / 2.;
     //If the distance from bubble center is less than the radius, create a cos**2 profile
     if (dist <= M_PI / 2.) {
-      return amp * pow(cos(dist),2._fp);
+      return amp * std::pow(cos(dist),2._fp);
     } else {
       return 0.;
     }
