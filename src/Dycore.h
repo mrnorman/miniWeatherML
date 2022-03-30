@@ -54,7 +54,7 @@ class Dycore {
       real4d state_tmp("state_tmp",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
       real4d tend     ("tend"     ,num_state,nz     ,ny     ,nx     );
       // Stage 1
-      compute_tendencies( coupler , state , tend , dt_dyn/3._fp );
+      compute_tendencies( coupler , state     , tend , dt_dyn/3._fp );
       parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
         state_tmp(l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn/3._fp * tend(l,k,j,i);
       });
@@ -66,7 +66,7 @@ class Dycore {
       // Stage 3
       compute_tendencies( coupler , state_tmp , tend , dt_dyn/1._fp );
       parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
-        state(l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn/1._fp * tend(l,k,j,i);
+        state    (l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn/1._fp * tend(l,k,j,i);
       });
     }
 
@@ -97,7 +97,7 @@ class Dycore {
       // X-direction
       ////////////////////////////////////////////////////////
       if (j < ny && k < nz) {
-        SArray<real,1,4        > stencil;
+        SArray<real,1,sten_size> stencil;
         SArray<real,1,num_state> d3_vals;
         SArray<real,1,num_state> vals;
         //Compute the hyperviscosity coeficient
@@ -106,7 +106,7 @@ class Dycore {
         //Use fourth-order interpolation from four cell averages to compute the value at the interface in question
         for (int l=0; l < num_state; l++) {
           for (int s=0; s < sten_size; s++) {
-            int ind = i+s;   if (ind < hs) ind += nx;   if (ind > nx+hs) ind -= nx;
+            int ind = i+s;   if (ind < hs) ind += nx;   if (ind >= nx+hs) ind -= nx;
             stencil(s) = state(l,hs+k,hs+j,ind);
           }
           //Fourth-order-accurate interpolation of the state
@@ -135,7 +135,7 @@ class Dycore {
       // Y-direction
       ////////////////////////////////////////////////////////
       if ( (! sim2d) && i < nx && k < nz) {
-        SArray<real,1,4        > stencil;
+        SArray<real,1,sten_size> stencil;
         SArray<real,1,num_state> d3_vals;
         SArray<real,1,num_state> vals;
         //Compute the hyperviscosity coeficient
@@ -144,7 +144,7 @@ class Dycore {
         //Use fourth-order interpolation from four cell averages to compute the value at the interface in question
         for (int l=0; l < num_state; l++) {
           for (int s=0; s < sten_size; s++) {
-            int ind = j+s;   if (ind < hs) ind += ny;   if (ind > ny+hs) ind -= ny;
+            int ind = j+s;   if (ind < hs) ind += ny;   if (ind >= ny+hs) ind -= ny;
             stencil(s) = state(l,hs+k,ind,hs+i);
           }
           //Fourth-order-accurate interpolation of the state
@@ -179,7 +179,7 @@ class Dycore {
       // Z-direction
       ////////////////////////////////////////////////////////
       if (i < nx && j < ny) {
-        SArray<real,1,4        > stencil;
+        SArray<real,1,sten_size> stencil;
         SArray<real,1,num_state> d3_vals;
         SArray<real,1,num_state> vals;
         //Compute the hyperviscosity coeficient
