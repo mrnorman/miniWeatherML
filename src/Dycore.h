@@ -143,7 +143,10 @@ class Dycore {
 
         //Use fourth-order interpolation from four cell averages to compute the value at the interface in question
         for (int l=0; l < num_state; l++) {
-          for (int s=0; s < sten_size; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
+          for (int s=0; s < sten_size; s++) {
+            int ind = j+s;   if (ind < hs) ind += ny;   if (ind > ny+hs) ind -= ny;
+            stencil(s) = state(l,hs+k,ind,hs+i);
+          }
           //Fourth-order-accurate interpolation of the state
           vals   (l) = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
           //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
@@ -217,6 +220,7 @@ class Dycore {
                       -( flux_y(l,k  ,j+1,i  ) - flux_y(l,k,j,i) ) / dy
                       -( flux_z(l,k+1,j  ,i  ) - flux_z(l,k,j,i) ) / dz;
       if (l == idW) tend(l,k,j,i) += -grav * ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+      if (l == idV && sim2d) tend(l,k,j,i) = 0;
     });
   }
 
