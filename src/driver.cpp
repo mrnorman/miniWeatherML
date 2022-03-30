@@ -54,9 +54,9 @@ int main(int argc, char** argv) {
 
       etime += dtphys;
       real maxw = maxval(abs(coupler.dm.get_collapsed<real const>("wvel")));
-      std::cout << "Etime , dtphys, maxw: " << etime  << " , " 
-                                            << dtphys << " , "
-                                            << std::setw(10) << maxw << "\n";
+      std::cout << "Etime , dtphys, maxw: " << std::scientific << std::setw(10) << etime  << " , " 
+                                            << std::scientific << std::setw(10) << dtphys << " , "
+                                            << std::scientific << std::setw(10) << maxw << "\n";
     }
 
     std::cout << "Elapsed Time: " << etime << "\n";

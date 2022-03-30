@@ -4,7 +4,7 @@ sim_time: 1000
 
 # Number of cells to use in the CRMs
 nx: 100
-ny: 1
+ny: 100
 nz: 50
 
 # Domain size of the CRMs

@@ -9,7 +9,7 @@ class Dycore {
   int  static constexpr num_state = 5;
   int  static constexpr hs        = 2;
   int  static constexpr sten_size = 4;
-  real static constexpr hv_beta   = 0.05;
+  real static constexpr hv_beta   = 0.01;
 
   int  static constexpr idR = 0;
   int  static constexpr idU = 1;
@@ -31,10 +31,9 @@ class Dycore {
 
 
   real compute_time_step( core::Coupler const &coupler ) {
-    real constexpr maxwave = 350 + 30;
+    real constexpr maxwave = 350 + 80;
     real constexpr cfl = 0.3;
-    real dt_dyn = cfl * std::min( std::min( coupler.get_dx() , coupler.get_dy() ) , coupler.get_dz() ) / maxwave;
-    return dt_dyn;
+    return cfl * std::min( std::min( coupler.get_dx() , coupler.get_dy() ) , coupler.get_dz() ) / maxwave;
   }
 
 
@@ -59,19 +58,23 @@ class Dycore {
       real4d state_tmp("state_tmp",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
       real4d tend     ("tend"     ,num_state,nz     ,ny     ,nx     );
       // Stage 1
-      compute_tendencies( coupler , state     , tend , dt_dyn/3._fp );
+      compute_tendencies( coupler , state     , tend , dt_dyn );
       parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
-        state_tmp(l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn/3._fp * tend(l,k,j,i);
+        state_tmp(l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn * tend(l,k,j,i);
       });
       // Stage 2
-      compute_tendencies( coupler , state_tmp , tend , dt_dyn/2._fp );
+      compute_tendencies( coupler , state_tmp , tend , (1._fp/4._fp) * dt_dyn );
       parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
-        state_tmp(l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn/2._fp * tend(l,k,j,i);
+        state_tmp(l,hs+k,hs+j,hs+i) = (3._fp/4._fp) * state    (l,hs+k,hs+j,hs+i) + 
+                                      (1._fp/4._fp) * state_tmp(l,hs+k,hs+j,hs+i) +
+                                      (1._fp/4._fp) * dt_dyn * tend(l,k,j,i);
       });
       // Stage 3
-      compute_tendencies( coupler , state_tmp , tend , dt_dyn/1._fp );
+      compute_tendencies( coupler , state_tmp , tend , (2._fp/3._fp) * dt_dyn );
       parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
-        state    (l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn/1._fp * tend(l,k,j,i);
+        state    (l,hs+k,hs+j,hs+i) = (1._fp/3._fp) * state    (l,hs+k,hs+j,hs+i) +
+                                      (2._fp/3._fp) * state_tmp(l,hs+k,hs+j,hs+i) +
+                                      (2._fp/3._fp) * dt_dyn * tend(l,k,j,i);
       });
     }
 
@@ -533,7 +536,8 @@ class Dycore {
                       ((z-z0)/zrad)*((z-z0)/zrad) ) * M_PI / 2.;
     //If the distance from bubble center is less than the radius, create a cos**2 profile
     if (dist <= M_PI / 2.) {
-      return amp * std::pow(cos(dist),2._fp);
+      // return amp * std::pow(cos(dist),2._fp);
+      return amp;
     } else {
       return 0.;
     }
