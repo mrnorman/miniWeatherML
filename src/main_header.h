@@ -11,7 +11,7 @@ using yakl::styleC;
 using yakl::Array;
 using yakl::SArray;
 
-typedef float real;
+typedef double real;
 
 inline real operator"" _fp( long double x ) {
   return static_cast<real>(x);

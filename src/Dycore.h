@@ -22,6 +22,8 @@ class Dycore {
   real1d      hy_dens_edges;
   real1d      hy_dens_theta_edges;
   real        etime;
+  real        out_freq;
+  int         num_out;
   std::string fname;
 
 
@@ -71,8 +73,14 @@ class Dycore {
     }
 
     convert_dynamics_to_coupler( coupler , state );
+
     etime += dt_phys;
-    output( coupler , etime );
+    if (out_freq >= 0. && etime / out_freq >= num_out+1) {
+      yakl::timer_start("output");
+      output( coupler , etime );
+      yakl::timer_stop("output");
+      num_out++;
+    }
   }
 
 
@@ -232,6 +240,7 @@ class Dycore {
     YAML::Node config = YAML::LoadFile(inFile);
     auto init_data = config["init_data"].as<std::string>();
     fname          = config["out_fname"].as<std::string>();
+    out_freq       = config["out_freq" ].as<real>();
 
     int  nx, ny, nz;
     real xlen, ylen, zlen, dx, dy, dz;
@@ -241,7 +250,8 @@ class Dycore {
     real R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
     get_constants(coupler, R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0);
 
-    etime = 0;
+    etime   = 0;
+    num_out = 0;
 
     // Define quadrature weights and points
     const int nqpoints = 3;
