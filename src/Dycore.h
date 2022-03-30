@@ -64,26 +64,50 @@ class Dycore {
     dt_dyn = dt_phys / ncycles;
     
     for (int icycle = 0; icycle < ncycles; icycle++) {
-      real4d state_tmp("state_tmp",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
-      real4d tend     ("tend"     ,num_state,nz     ,ny     ,nx     );
+      real4d state_tmp   ("state_tmp"   ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs);
+      real4d state_tend  ("state_tend"  ,num_state  ,nz     ,ny     ,nx     );
+      real4d tracers_tmp ("tracers_tmp" ,num_tracers,nz+2*hs,ny+2*hs,nx+2*hs);
+      real4d tracers_tend("tracers_tend",num_tracers,nz     ,ny     ,nx     );
       // Stage 1
-      compute_tendencies( coupler , state     , tend , dt_dyn );
-      parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
-        state_tmp(l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn * tend(l,k,j,i);
+      compute_tendencies( coupler , state     , state_tend , tracers     , tracers_tend , dt_dyn );
+      parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+        for (int l = 0; l < num_state  ; l++) {
+          state_tmp  (l,hs+k,hs+j,hs+i) = state  (l,hs+k,hs+j,hs+i) + dt_dyn * state_tend  (l,k,j,i);
+        }
+        for (int l = 0; l < num_tracers; l++) {
+          tracers_tmp(l,hs+k,hs+j,hs+i) = tracers(l,hs+k,hs+j,hs+i) + dt_dyn * tracers_tend(l,k,j,i);
+          tracers_tmp(l,hs+k,hs+j,hs+i) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i) );
+        }
       });
       // Stage 2
-      compute_tendencies( coupler , state_tmp , tend , (1._fp/4._fp) * dt_dyn );
-      parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
-        state_tmp(l,hs+k,hs+j,hs+i) = (3._fp/4._fp) * state    (l,hs+k,hs+j,hs+i) + 
-                                      (1._fp/4._fp) * state_tmp(l,hs+k,hs+j,hs+i) +
-                                      (1._fp/4._fp) * dt_dyn * tend(l,k,j,i);
+      compute_tendencies( coupler , state_tmp , state_tend , tracers_tmp , tracers_tend , (1._fp/4._fp) * dt_dyn );
+      parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+        for (int l = 0; l < num_state  ; l++) {
+          state_tmp  (l,hs+k,hs+j,hs+i) = (3._fp/4._fp) * state      (l,hs+k,hs+j,hs+i) + 
+                                          (1._fp/4._fp) * state_tmp  (l,hs+k,hs+j,hs+i) +
+                                          (1._fp/4._fp) * dt_dyn * state_tend  (l,k,j,i);
+        }
+        for (int l = 0; l < num_tracers; l++) {
+          tracers_tmp(l,hs+k,hs+j,hs+i) = (3._fp/4._fp) * tracers    (l,hs+k,hs+j,hs+i) + 
+                                          (1._fp/4._fp) * tracers_tmp(l,hs+k,hs+j,hs+i) +
+                                          (1._fp/4._fp) * dt_dyn * tracers_tend(l,k,j,i);
+          tracers_tmp(l,hs+k,hs+j,hs+i) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i) );
+        }
       });
       // Stage 3
-      compute_tendencies( coupler , state_tmp , tend , (2._fp/3._fp) * dt_dyn );
-      parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
-        state    (l,hs+k,hs+j,hs+i) = (1._fp/3._fp) * state    (l,hs+k,hs+j,hs+i) +
-                                      (2._fp/3._fp) * state_tmp(l,hs+k,hs+j,hs+i) +
-                                      (2._fp/3._fp) * dt_dyn * tend(l,k,j,i);
+      compute_tendencies( coupler , state_tmp , state_tend , tracers_tmp , tracers_tend , (2._fp/3._fp) * dt_dyn );
+      parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+        for (int l = 0; l < num_state  ; l++) {
+          state      (l,hs+k,hs+j,hs+i) = (1._fp/3._fp) * state      (l,hs+k,hs+j,hs+i) +
+                                          (2._fp/3._fp) * state_tmp  (l,hs+k,hs+j,hs+i) +
+                                          (2._fp/3._fp) * dt_dyn * state_tend  (l,k,j,i);
+        }
+        for (int l = 0; l < num_tracers; l++) {
+          tracers    (l,hs+k,hs+j,hs+i) = (1._fp/3._fp) * tracers    (l,hs+k,hs+j,hs+i) +
+                                          (2._fp/3._fp) * tracers_tmp(l,hs+k,hs+j,hs+i) +
+                                          (2._fp/3._fp) * dt_dyn * tracers_tend(l,k,j,i);
+          tracers    (l,hs+k,hs+j,hs+i) = std::max( 0._fp , tracers    (l,hs+k,hs+j,hs+i) );
+        }
       });
     }
 
@@ -99,13 +123,18 @@ class Dycore {
   }
 
 
-  void compute_tendencies( core::Coupler const &coupler , real4d const &state , real4d const &tend , real dt ) {
+  void compute_tendencies( core::Coupler const &coupler , real4d const &state   , real4d const &state_tend   ,
+                                                          real4d const &tracers , real4d const &tracers_tend , real dt ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
-    real4d flux_x("flux_x",num_state,nz  ,ny  ,nx+1);
-    real4d flux_y("flux_y",num_state,nz  ,ny+1,nx  );
-    real4d flux_z("flux_z",num_state,nz+1,ny  ,nx  );
+    real4d state_flux_x  ("state_flux_x"  ,num_state  ,nz  ,ny  ,nx+1);
+    real4d state_flux_y  ("state_flux_y"  ,num_state  ,nz  ,ny+1,nx  );
+    real4d state_flux_z  ("state_flux_z"  ,num_state  ,nz+1,ny  ,nx  );
+
+    real4d tracers_flux_x("tracers_flux_x",num_tracers,nz  ,ny  ,nx+1);
+    real4d tracers_flux_y("tracers_flux_y",num_tracers,nz  ,ny+1,nx  );
+    real4d tracers_flux_z("tracers_flux_z",num_tracers,nz+1,ny  ,nx  );
 
     YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
     YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
@@ -144,11 +173,24 @@ class Dycore {
         real p = C0*pow( r*t  , gamma );
 
         //Compute the flux vector
-        flux_x(idR,k,j,i) = r*u     - hv_coef*d3_vals(idR);
-        flux_x(idU,k,j,i) = r*u*u+p - hv_coef*d3_vals(idU);
-        flux_x(idV,k,j,i) = r*u*v   - hv_coef*d3_vals(idV);
-        flux_x(idW,k,j,i) = r*u*w   - hv_coef*d3_vals(idW);
-        flux_x(idT,k,j,i) = r*u*t   - hv_coef*d3_vals(idT);
+        state_flux_x(idR,k,j,i) = r*u     - hv_coef*d3_vals(idR);
+        state_flux_x(idU,k,j,i) = r*u*u+p - hv_coef*d3_vals(idU);
+        state_flux_x(idV,k,j,i) = r*u*v   - hv_coef*d3_vals(idV);
+        state_flux_x(idW,k,j,i) = r*u*w   - hv_coef*d3_vals(idW);
+        state_flux_x(idT,k,j,i) = r*u*t   - hv_coef*d3_vals(idT);
+
+        for (int l=0; l < num_tracers; l++) {
+          for (int s=0; s < sten_size; s++) {
+            int ind = i+s;   if (ind < hs) ind += nx;   if (ind >= nx+hs) ind -= nx;
+            stencil(s) = tracers(l,hs+k,hs+j,ind);
+          }
+          //Fourth-order-accurate interpolation of the state
+          real val    = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
+          //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
+          real d3_val = -stencil(0)    + 3*stencil(1)    - 3*stencil(2)    + stencil(3);
+          val = std::max( 0._fp , val );
+          tracers_flux_x(l,k,j,i) = u*val - hv_coef*d3_val;
+        }
       }
 
       ////////////////////////////////////////////////////////
@@ -182,17 +224,34 @@ class Dycore {
         real p = C0*pow( r*t  , gamma );
 
         //Compute the flux vector
-        flux_y(idR,k,j,i) = r*v     - hv_coef*d3_vals(idR);
-        flux_y(idU,k,j,i) = r*v*u   - hv_coef*d3_vals(idU);
-        flux_y(idV,k,j,i) = r*v*v+p - hv_coef*d3_vals(idV);
-        flux_y(idW,k,j,i) = r*v*w   - hv_coef*d3_vals(idW);
-        flux_y(idT,k,j,i) = r*v*t   - hv_coef*d3_vals(idT);
+        state_flux_y(idR,k,j,i) = r*v     - hv_coef*d3_vals(idR);
+        state_flux_y(idU,k,j,i) = r*v*u   - hv_coef*d3_vals(idU);
+        state_flux_y(idV,k,j,i) = r*v*v+p - hv_coef*d3_vals(idV);
+        state_flux_y(idW,k,j,i) = r*v*w   - hv_coef*d3_vals(idW);
+        state_flux_y(idT,k,j,i) = r*v*t   - hv_coef*d3_vals(idT);
+
+        for (int l=0; l < num_tracers; l++) {
+          for (int s=0; s < sten_size; s++) {
+            int ind = j+s;   if (ind < hs) ind += ny;   if (ind >= ny+hs) ind -= ny;
+            stencil(s) = tracers(l,hs+k,ind,hs+i);
+          }
+          //Fourth-order-accurate interpolation of the state
+          real val    = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
+          //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
+          real d3_val = -stencil(0)    + 3*stencil(1)    - 3*stencil(2)    + stencil(3);
+          val = std::max( 0._fp , val );
+          tracers_flux_y(l,k,j,i) = v*val - hv_coef*d3_val;
+        }
+
       } else if (i < nx && k < nz) {
-        flux_y(idR,k,j,i) = 0;
-        flux_y(idU,k,j,i) = 0;
-        flux_y(idV,k,j,i) = 0;
-        flux_y(idW,k,j,i) = 0;
-        flux_y(idT,k,j,i) = 0;
+
+        state_flux_y(idR,k,j,i) = 0;
+        state_flux_y(idU,k,j,i) = 0;
+        state_flux_y(idV,k,j,i) = 0;
+        state_flux_y(idW,k,j,i) = 0;
+        state_flux_y(idT,k,j,i) = 0;
+        for (int tr=0; tr < num_tracers; tr++) { tracers_flux_y(tr,k,j,i) = 0; }
+
       }
 
       ////////////////////////////////////////////////////////
@@ -227,20 +286,40 @@ class Dycore {
         real p = C0*pow( r*t  , gamma );
 
         //Compute the flux vector
-        flux_z(idR,k,j,i) = r*w     - hv_coef*d3_vals(idR);
-        flux_z(idU,k,j,i) = r*w*u   - hv_coef*d3_vals(idU);
-        flux_z(idV,k,j,i) = r*w*v   - hv_coef*d3_vals(idV);
-        flux_z(idW,k,j,i) = r*w*w+p - hv_coef*d3_vals(idW);
-        flux_z(idT,k,j,i) = r*w*t   - hv_coef*d3_vals(idT);
+        state_flux_z(idR,k,j,i) = r*w     - hv_coef*d3_vals(idR);
+        state_flux_z(idU,k,j,i) = r*w*u   - hv_coef*d3_vals(idU);
+        state_flux_z(idV,k,j,i) = r*w*v   - hv_coef*d3_vals(idV);
+        state_flux_z(idW,k,j,i) = r*w*w+p - hv_coef*d3_vals(idW);
+        state_flux_z(idT,k,j,i) = r*w*t   - hv_coef*d3_vals(idT);
+
+        for (int l=0; l < num_tracers; l++) {
+          for (int s=0; s < sten_size; s++) {
+            int ind = std::min( nz+hs-1 , std::max( (int) hs , k+s ) );
+            stencil(s) = tracers(l,ind,hs+j,hs+i);
+          }
+          //Fourth-order-accurate interpolation of the state
+          real val    = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
+          //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
+          real d3_val = -stencil(0)    + 3*stencil(1)    - 3*stencil(2)    + stencil(3);
+          val = std::max( 0._fp , val );
+          tracers_flux_z(l,k,j,i) = w*val - hv_coef*d3_val;
+        }
       }
     });
 
-    parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA ( int l, int k, int j, int i ) {
-      tend(l,k,j,i) = -( flux_x(l,k  ,j  ,i+1) - flux_x(l,k,j,i) ) / dx
-                      -( flux_y(l,k  ,j+1,i  ) - flux_y(l,k,j,i) ) / dy
-                      -( flux_z(l,k+1,j  ,i  ) - flux_z(l,k,j,i) ) / dz;
-      if (l == idW) tend(l,k,j,i) += -grav * ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
-      if (l == idV && sim2d) tend(l,k,j,i) = 0;
+    parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+      for (int l = 0; l < num_state; l++) {
+        state_tend  (l,k,j,i) = -( state_flux_x  (l,k  ,j  ,i+1) - state_flux_x  (l,k,j,i) ) / dx
+                                -( state_flux_y  (l,k  ,j+1,i  ) - state_flux_y  (l,k,j,i) ) / dy
+                                -( state_flux_z  (l,k+1,j  ,i  ) - state_flux_z  (l,k,j,i) ) / dz;
+        if (l == idW) state_tend(l,k,j,i) += -grav * ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+        if (l == idV && sim2d) state_tend(l,k,j,i) = 0;
+      }
+      for (int l = 0; l < num_tracers; l++) {
+        tracers_tend(l,k,j,i) = -( tracers_flux_x(l,k  ,j  ,i+1) - tracers_flux_x(l,k,j,i) ) / dx
+                                -( tracers_flux_y(l,k  ,j+1,i  ) - tracers_flux_y(l,k,j,i) ) / dy
+                                -( tracers_flux_z(l,k+1,j  ,i  ) - tracers_flux_z(l,k,j,i) ) / dz;
+      }
     });
   }
 
