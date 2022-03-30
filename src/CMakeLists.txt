@@ -15,10 +15,12 @@ include_directories(${YAKL_BIN})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-add_subdirectory(coupler coupler)
+add_subdirectory(core core)
+
+add_subdirectory(physics/micro/kessler micro)
 
 add_executable(driver driver.cpp)
 include(${YAKL_HOME}/yakl_utils.cmake)
 yakl_process_target(driver)
-target_link_libraries(driver coupler "${NCFLAGS} -lyaml-cpp")
+target_link_libraries(driver micro core "${NCFLAGS} -lyaml-cpp")
 

@@ -1,6 +1,7 @@
 
 #include "coupler.h"
 #include "Dycore.h"
+#include "Microphysics.h"
 
 
 int main(int argc, char** argv) {
@@ -25,9 +26,10 @@ int main(int argc, char** argv) {
     real zlen      = config["zlen"    ].as<real>();
     real dtphys_in = config["dt_phys" ].as<real>();
 
-    Dycore dycore;
+    Microphysics micro;
+    Dycore       dycore;
 
-    // coupler.set_phys_constants( micro.R_d , micro.R_v , micro.cp_d , micro.cp_v , micro.grav , micro.p0 );
+    coupler.set_phys_constants( micro.R_d , micro.R_v , micro.cp_d , micro.cp_v , micro.grav , micro.p0 );
 
     coupler.allocate_coupler_state( nz, ny, nx );
 
@@ -36,6 +38,7 @@ int main(int argc, char** argv) {
     // This is for the dycore to pull out to determine how to do idealized test cases
     coupler.set_option<std::string>( "standalone_input_file" , inFile );
 
+    micro .init( coupler );
     dycore.init( coupler ); // Dycore should initialize its own state here
 
     // Now that we have an initial state, define hydrostasis for each ensemble member
@@ -48,9 +51,8 @@ int main(int argc, char** argv) {
       if (dtphys_in <= 0.) { dtphys = dycore.compute_time_step(coupler); }
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
-      yakl::timer_start("dycore");
+      micro .time_step( coupler , dtphys );
       dycore.time_step( coupler , dtphys );
-      yakl::timer_stop("dycore");
 
       etime += dtphys;
       real maxw = maxval(abs(coupler.dm.get_collapsed<real const>("wvel")));

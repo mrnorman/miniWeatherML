@@ -11,6 +11,12 @@ using yakl::styleC;
 using yakl::Array;
 using yakl::SArray;
 
+template <class T> inline void debug_print( T var , char const * file , int line ) {
+  std::cout << "DEBUG: " << file << " , " << line << " , " << yakl::intrinsics::sum( var ) << "\n";
+}
+
+int constexpr max_fields = 50;
+
 typedef double real;
 
 YAKL_INLINE real constexpr operator"" _fp( long double x ) {

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "main_header.h"
+#include "MultipleFields.h"
 
 class Dycore {
   public:
@@ -29,11 +30,22 @@ class Dycore {
   std::string fname;
   int         init_data_int;
 
+  int         nx  , ny  , nz  ;
+  real        dx  , dy  , dz  ;
+  real        xlen, ylen, zlen;
+  bool        sim2d;
+
+  real        R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
+
+  int         num_tracers;
+  int         idWV;
+  bool1d      tracer_adds_mass;
+  bool1d      tracer_positive;
 
   real compute_time_step( core::Coupler const &coupler ) {
     real constexpr maxwave = 350 + 80;
     real constexpr cfl = 0.3;
-    return cfl * std::min( std::min( coupler.get_dx() , coupler.get_dy() ) , coupler.get_dz() ) / maxwave;
+    return cfl * std::min( std::min( dx , dy ) , dz ) / maxwave;
   }
 
 
@@ -41,13 +53,10 @@ class Dycore {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
-    int  nx, ny, nz;
-    real xlen, ylen, zlen, dx, dy, dz;
-    bool sim2d;
-    get_grid(coupler,nx,ny,nz,xlen,ylen,zlen,dx,dy,dz,sim2d);
+    real4d state  ("state"  ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs);
+    real4d tracers("tracers",num_tracers,nz+2*hs,ny+2*hs,nx+2*hs);
 
-    real4d state("state",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
-    convert_coupler_to_dynamics( coupler , state );
+    convert_coupler_to_dynamics( coupler , state , tracers );
 
     real dt_dyn = compute_time_step( coupler );
 
@@ -78,7 +87,7 @@ class Dycore {
       });
     }
 
-    convert_dynamics_to_coupler( coupler , state );
+    convert_dynamics_to_coupler( coupler , state , tracers );
 
     etime += dt_phys;
     if (out_freq >= 0. && etime / out_freq >= num_out+1) {
@@ -93,14 +102,6 @@ class Dycore {
   void compute_tendencies( core::Coupler const &coupler , real4d const &state , real4d const &tend , real dt ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
-
-    int  nx, ny, nz;
-    real xlen, ylen, zlen, dx, dy, dz;
-    bool sim2d;
-    get_grid(coupler,nx,ny,nz,xlen,ylen,zlen,dx,dy,dz,sim2d);
-
-    real R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
-    get_constants(coupler, R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0);
 
     real4d flux_x("flux_x",num_state,nz  ,ny  ,nx+1);
     real4d flux_y("flux_y",num_state,nz  ,ny+1,nx  );
@@ -247,6 +248,50 @@ class Dycore {
   void init(core::Coupler &coupler) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
+
+    nx    = coupler.get_nx();
+    ny    = coupler.get_ny();
+    nz    = coupler.get_nz();
+
+    dx    = coupler.get_dx();
+    dy    = coupler.get_dy();
+    dz    = coupler.get_dz();
+
+    xlen  = coupler.get_xlen();
+    ylen  = coupler.get_ylen();
+    zlen  = coupler.get_zlen();
+
+    sim2d = (ny == 1);
+
+    R_d   = coupler.R_d ;
+    R_v   = coupler.R_v ;
+    cp_d  = coupler.cp_d;
+    cp_v  = coupler.cp_v;
+    p0    = coupler.p0  ;
+    grav  = coupler.grav;
+    kappa = R_d / cp_d;
+    gamma = cp_d / (cp_d - R_d);
+    C0    = pow( R_d * pow( p0 , -kappa ) , gamma );
+
+    num_tracers = coupler.get_num_tracers();
+    tracer_adds_mass = bool1d("tracer_adds_mass",num_tracers);
+    tracer_positive  = bool1d("tracer_positive" ,num_tracers);
+
+    auto tracer_adds_mass_host = tracer_adds_mass.createHostCopy();
+    auto tracer_positive_host  = tracer_positive .createHostCopy();
+
+    auto tracer_names = coupler.get_tracer_names();
+    for (int tr=0; tr < num_tracers; tr++) {
+      std::string tracer_desc;
+      bool        tracer_found, positive, adds_mass;
+      coupler.get_tracer_info( tracer_names[tr] , tracer_desc, tracer_found , positive , adds_mass);
+      tracer_positive_host (tr) = positive;
+      tracer_adds_mass_host(tr) = adds_mass;
+      if (tracer_names[tr] == "water_vapor") idWV = tr;
+    }
+    tracer_positive_host .deep_copy_to(tracer_positive );
+    tracer_adds_mass_host.deep_copy_to(tracer_adds_mass);
+
     auto inFile = coupler.get_option<std::string>( "standalone_input_file" );
     YAML::Node config = YAML::LoadFile(inFile);
     auto init_data = config["init_data"].as<std::string>();
@@ -256,13 +301,7 @@ class Dycore {
     if (init_data == "thermal") { init_data_int = DATA_THERMAL; }
     else { endrun("ERROR: Invalid init_data in yaml input file"); }
 
-    int  nx, ny, nz;
-    real xlen, ylen, zlen, dx, dy, dz;
-    bool sim2d;
-    get_grid(coupler,nx,ny,nz,xlen,ylen,zlen,dx,dy,dz,sim2d);
-
-    real R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
-    get_constants(coupler, R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0);
+    auto rho_v = coupler.dm.get<real,3>("water_vapor");
 
     etime   = 0;
     num_out = 0;
@@ -281,7 +320,8 @@ class Dycore {
     qweights(2) = 0.277777777777777777777777777779;
 
     // Compute the state that the dycore uses
-    real4d state("state",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
+    real4d state  ("state"  ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs);
+    real4d tracers("tracers",num_tracers,nz+2*hs,ny+2*hs,nx+2*hs);
 
     YAKL_SCOPE( init_data_int       , this->init_data_int       );
 
@@ -296,19 +336,23 @@ class Dycore {
             real x = (i+0.5)*dx + (qpoints(ii)-0.5)*dx;
             real y = (j+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
             real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
-            real r, u, v, w, t, hr, ht;
+            real rho, u, v, w, theta, rho_v, hr, ht;
 
-            if (init_data_int == DATA_THERMAL) { thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,r,u,v,w,t,hr,ht); }
+            if (init_data_int == DATA_THERMAL) { thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,R_v,rho,u,v,w,theta,rho_v,hr,ht); }
             else { endrun("ERROR: init_data not supported"); }
 
             if (sim2d) v = 0;
 
             real wt = qweights(ii)*qweights(jj)*qweights(kk);
-            state(idR,hs+k,hs+j,hs+i) += r                         * wt;
-            state(idU,hs+k,hs+j,hs+i) += (r+hr)*u                  * wt;
-            state(idV,hs+k,hs+j,hs+i) += (r+hr)*v                  * wt;
-            state(idW,hs+k,hs+j,hs+i) += (r+hr)*w                  * wt;
-            state(idT,hs+k,hs+j,hs+i) += ( (r+hr)*(t+ht) - hr*ht ) * wt;
+            state(idR,hs+k,hs+j,hs+i) += ( rho - hr )          * wt;
+            state(idU,hs+k,hs+j,hs+i) += rho*u                 * wt;
+            state(idV,hs+k,hs+j,hs+i) += rho*v                 * wt;
+            state(idW,hs+k,hs+j,hs+i) += rho*w                 * wt;
+            state(idT,hs+k,hs+j,hs+i) += ( rho*theta - hr*ht ) * wt;
+            for (int tr=0; tr < num_tracers; tr++) {
+              if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i) = rho_v; }
+              else            { tracers(tr,hs+k,hs+j,hs+i) = 0;     }
+            }
           }
         }
       }
@@ -348,83 +392,100 @@ class Dycore {
       hy_dens_theta_edges(k) = hr*ht;
     });
 
-    convert_dynamics_to_coupler( coupler , state );
+    convert_dynamics_to_coupler( coupler , state , tracers );
 
     output( coupler , etime );
   }
 
 
-  void convert_dynamics_to_coupler( core::Coupler &coupler , realConst4d state ) {
+  void convert_dynamics_to_coupler( core::Coupler &coupler , realConst4d state , realConst4d tracers ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
-    int  nx, ny, nz;
-    real xlen, ylen, zlen, dx, dy, dz;
-    bool sim2d;
-    get_grid(coupler,nx,ny,nz,xlen,ylen,zlen,dx,dy,dz,sim2d);
-
-    real R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
-    get_constants(coupler, R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0);
 
     YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells      );
     YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
 
-    auto rho_d = coupler.dm.get<real,3>("density_dry");
-    auto uvel  = coupler.dm.get<real,3>("uvel"       );
-    auto vvel  = coupler.dm.get<real,3>("vvel"       );
-    auto wvel  = coupler.dm.get<real,3>("wvel"       );
-    auto temp  = coupler.dm.get<real,3>("temp"       );
+    auto dm_rho_d = coupler.dm.get<real,3>("density_dry");
+    auto dm_uvel  = coupler.dm.get<real,3>("uvel"       );
+    auto dm_vvel  = coupler.dm.get<real,3>("vvel"       );
+    auto dm_wvel  = coupler.dm.get<real,3>("wvel"       );
+    auto dm_temp  = coupler.dm.get<real,3>("temp"       );
+
+    core::MultiField<real,3> dm_tracers;
+    auto tracer_names = coupler.get_tracer_names();
+    for (int tr=0; tr < num_tracers; tr++) {
+      dm_tracers.add_field( coupler.dm.get<real,3>(tracer_names[tr]) );
+    }
 
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-      real r  = state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k);
-      real ru = state(idU,hs+k,hs+j,hs+i);
-      real rv = state(idV,hs+k,hs+j,hs+i);
-      real rw = state(idW,hs+k,hs+j,hs+i);
-      real rt = state(idT,hs+k,hs+j,hs+i) + hy_dens_theta_cells(k);
-      real p  = C0 * pow( rt , gamma );
+      real rho   = state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k);
+      real u     = state(idU,hs+k,hs+j,hs+i) / rho;
+      real v     = state(idV,hs+k,hs+j,hs+i) / rho;
+      real w     = state(idW,hs+k,hs+j,hs+i) / rho;
+      real theta = ( state(idT,hs+k,hs+j,hs+i) + hy_dens_theta_cells(k) ) / rho;
+      real press = C0 * pow( rho*theta , gamma );
 
-      rho_d(k,j,i) = r;
-      uvel (k,j,i) = ru / r;
-      vvel (k,j,i) = rv / r;
-      wvel (k,j,i) = rw / r;
-      temp (k,j,i) = p / rho_d(k,j,i) / R_d;
+      real rho_v = tracers(idWV,hs+k,hs+j,hs+i);
+      real rho_d = rho;
+      for (int tr=0; tr < num_tracers; tr++) {
+        if (tracer_adds_mass(tr)) rho_d -= tracers(tr,hs+k,hs+j,hs+i);
+      }
+      real temp = press / ( rho_d * R_d + rho_v * R_v );
+
+      dm_rho_d(k,j,i) = rho_d;
+      dm_uvel (k,j,i) = u;
+      dm_vvel (k,j,i) = v;
+      dm_wvel (k,j,i) = w;
+      dm_temp (k,j,i) = temp;
+      for (int tr=0; tr < num_tracers; tr++) {
+        dm_tracers(tr,k,j,i) = tracers(tr,hs+k,hs+j,hs+i);
+      }
     });
   }
 
 
-  void convert_coupler_to_dynamics( core::Coupler const &coupler , real4d &state ) {
+  void convert_coupler_to_dynamics( core::Coupler const &coupler , real4d &state , real4d &tracers ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
-    int  nx, ny, nz;
-    real xlen, ylen, zlen, dx, dy, dz;
-    bool sim2d;
-    get_grid(coupler,nx,ny,nz,xlen,ylen,zlen,dx,dy,dz,sim2d);
-
-    real R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
-    get_constants(coupler, R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0);
 
     YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
     YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
 
-    auto rho_d = coupler.dm.get<real const,3>("density_dry");
-    auto uvel  = coupler.dm.get<real const,3>("uvel"       );
-    auto vvel  = coupler.dm.get<real const,3>("vvel"       );
-    auto wvel  = coupler.dm.get<real const,3>("wvel"       );
-    auto temp  = coupler.dm.get<real const,3>("temp"       );
+    auto dm_rho_d = coupler.dm.get<real const,3>("density_dry");
+    auto dm_uvel  = coupler.dm.get<real const,3>("uvel"       );
+    auto dm_vvel  = coupler.dm.get<real const,3>("vvel"       );
+    auto dm_wvel  = coupler.dm.get<real const,3>("wvel"       );
+    auto dm_temp  = coupler.dm.get<real const,3>("temp"       );
+
+    core::MultiField<real const,3> dm_tracers;
+    auto tracer_names = coupler.get_tracer_names();
+    for (int tr=0; tr < num_tracers; tr++) {
+      dm_tracers.add_field( coupler.dm.get<real const,3>(tracer_names[tr]) );
+    }
 
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-      real r  = rho_d(k,j,i);
-      real ru = uvel(k,j,i) * r;
-      real rv = vvel(k,j,i) * r;
-      real rw = wvel(k,j,i) * r;
-      real T  = temp(k,j,i);
-      real p  = rho_d(k,j,i) * R_d * T;
-      real rt = pow( p/C0 , 1._fp / gamma );
+      real rho_d = dm_rho_d(k,j,i);
+      real u     = dm_uvel (k,j,i);
+      real v     = dm_vvel (k,j,i);
+      real w     = dm_wvel (k,j,i);
+      real temp  = dm_temp (k,j,i);
+      real rho_v = dm_tracers(idWV,k,j,i);
+      real press = rho_d * R_d * temp + rho_v * R_v * temp;
 
-      state(idR,hs+k,hs+j,hs+i) = r - hy_dens_cells(k);
-      state(idU,hs+k,hs+j,hs+i) = ru;
-      state(idV,hs+k,hs+j,hs+i) = rv;
-      state(idW,hs+k,hs+j,hs+i) = rw;
-      state(idT,hs+k,hs+j,hs+i) = rt - hy_dens_theta_cells(k);
+      real rho = rho_d;
+      for (int tr=0; tr < num_tracers; tr++) {
+        if (tracer_adds_mass(tr)) rho += dm_tracers(tr,k,j,i);
+      }
+      real theta = pow( press/C0 , 1._fp / gamma ) / rho;
+
+      state(idR,hs+k,hs+j,hs+i) = rho - hy_dens_cells(k);
+      state(idU,hs+k,hs+j,hs+i) = rho * u;
+      state(idV,hs+k,hs+j,hs+i) = rho * v;
+      state(idW,hs+k,hs+j,hs+i) = rho * w;
+      state(idT,hs+k,hs+j,hs+i) = rho * theta - hy_dens_theta_cells(k);
+      for (int tr=0; tr < num_tracers; tr++) {
+        tracers(tr,hs+k,hs+j,hs+i) = dm_tracers(tr,k,j,i);
+      }
     });
   }
 
@@ -433,11 +494,9 @@ class Dycore {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
-    int  nz = coupler.get_nz();   int  ny = coupler.get_ny();   int  nx = coupler.get_nx();
-    real dz = coupler.get_dz();   real dy = coupler.get_dy();   real dx = coupler.get_dx();
-
-    real4d state("state",num_state,hs+nz,hs+ny,hs+nx);
-    convert_coupler_to_dynamics( coupler , state );
+    real4d state  ("state"  ,num_state  ,hs+nz,hs+ny,hs+nx);
+    real4d tracers("tracers",num_tracers,hs+nz,hs+ny,hs+nx);
+    convert_coupler_to_dynamics( coupler , state , tracers );
 
     yakl::SimpleNetCDF nc;
     int ulIndex = 0; // Unlimited dimension index to place this data at
@@ -479,6 +538,10 @@ class Dycore {
     nc.write1(dm.get<real const,3>("vvel"       ).createHostCopy(),"vvel"       ,{"z","y","x"},ulIndex,"t");
     nc.write1(dm.get<real const,3>("wvel"       ).createHostCopy(),"wvel"       ,{"z","y","x"},ulIndex,"t");
     nc.write1(dm.get<real const,3>("temp"       ).createHostCopy(),"temperature",{"z","y","x"},ulIndex,"t");
+    auto tracer_names = coupler.get_tracer_names();
+    for (int tr = 0; tr < num_tracers; tr++) {
+      nc.write1(dm.get<real const,3>(tracer_names[tr]).createHostCopy(),tracer_names[tr],{"z","y","x"},ulIndex,"t");
+    }
 
     YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
     YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
@@ -503,15 +566,22 @@ class Dycore {
 
 
   YAKL_INLINE static void thermal(real x, real y, real z, real xlen, real ylen, real grav, real C0, real gamma,
-                                  real cp, real p0, real rd, real &r, real &u, real &v, real &w, real &t,
-                                  real &hr, real &ht) {
-    hydro_const_theta(z,grav,C0,cp,p0,gamma,rd,hr,ht);
-    r = 0.;
-    t = 0.;
-    u = 0.;
-    v = 0.;
-    w = 0.;
-    t = t + sample_ellipse_cosine(3._fp  ,  x,y,z  ,  xlen/2,ylen/2,2000.  ,  2000.,2000.,2000.);
+                                  real cp, real p0, real R_d, real R_v, real &rho, real &u, real &v, real &w,
+                                  real &theta, real &rho_v, real &hr, real &ht) {
+    hydro_const_theta(z,grav,C0,cp,p0,gamma,R_d,hr,ht);
+    real rho_d   = hr;
+    u            = 0.;
+    v            = 0.;
+    w            = 0.;
+    real theta_d = ht + sample_ellipse_cosine(2._fp  ,  x,y,z  ,  xlen/2,ylen/2,2000.  ,  2000.,2000.,2000.);
+    real p_d     = C0 * pow( rho_d*theta_d , gamma );
+    real temp    = p_d / rho_d / R_d;
+    real sat_pv  = saturation_vapor_pressure(temp);
+    real sat_rv  = sat_pv / R_v / temp;
+    rho_v        = sample_ellipse_cosine(0.8_fp  ,  x,y,z  ,  xlen/2,ylen/2,2000.  ,  2000.,2000.,2000.) * sat_rv;
+    real p       = rho_d * R_d * temp + rho_v * R_v * temp;
+    rho          = rho_d + rho_v;
+    theta        = std::pow( p / C0 , 1._fp / gamma ) / rho;
   }
 
 
@@ -521,8 +591,8 @@ class Dycore {
     const real exner0 = 1.;    //Surface-level Exner pressure
     t = theta0;                                       //Potential Temperature at z
     real exner = exner0 - grav * z / (cp * theta0);   //Exner pressure at z
-    real p = p0 * std::pow(exner,(cp/rd));                 //Pressure at z
-    real rt = std::pow((p / C0),(1._fp / gamma));          //rho*theta at z
+    real p = p0 * std::pow(exner,(cp/rd));            //Pressure at z
+    real rt = std::pow((p / C0),(1._fp / gamma));     //rho*theta at z
     r = rt / t;                                       //Density at z
   }
 
@@ -536,35 +606,16 @@ class Dycore {
                       ((z-z0)/zrad)*((z-z0)/zrad) ) * M_PI / 2.;
     //If the distance from bubble center is less than the radius, create a cos**2 profile
     if (dist <= M_PI / 2.) {
-      // return amp * std::pow(cos(dist),2._fp);
-      return amp;
+      return amp * std::pow(cos(dist),2._fp);
     } else {
       return 0.;
     }
   }
 
 
-  static void get_grid( core::Coupler const &coupler, int  &nx  , int  &ny  , int  &nz  ,
-                                                      real &xlen, real &ylen, real &zlen,
-                                                      real &dx  , real &dy  , real &dz  , bool &sim2d) {
-    xlen = coupler.get_xlen();   ylen = coupler.get_ylen();   zlen = coupler.get_zlen();
-    nx   = coupler.get_nx  ();   ny   = coupler.get_ny  ();   nz   = coupler.get_nz  ();
-    dx   = coupler.get_dx  ();   dy   = coupler.get_dy  ();   dz   = coupler.get_dz  ();
-    sim2d = (ny == 1);
-  }
-
-
-  static void get_constants(core::Coupler const &coupler, real &R_d, real &R_v, real &cp_d, real &cp_v, real &p0,
-                                                          real &grav, real &kappa, real &gamma, real &C0) {
-    R_d  = coupler.R_d ;
-    R_v  = coupler.R_v ;
-    cp_d = coupler.cp_d;
-    cp_v = coupler.cp_v;
-    p0   = coupler.p0  ;
-    grav = coupler.grav;
-    kappa = R_d / cp_d;
-    gamma = cp_d / (cp_d - R_d);
-    C0    = pow( R_d * pow( p0 , -kappa ) , gamma );
+  YAKL_INLINE static real saturation_vapor_pressure(real temp) {
+    real tc = temp - 273.15;
+    return 610.94 * std::exp( 17.625*tc / (243.04+tc) );
   }
 
 };
