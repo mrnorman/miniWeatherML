@@ -45,12 +45,12 @@ int main(int argc, char** argv) {
 
     real dtphys = dtphys_in;
     while (etime < sim_time) {
-      // if (dtphys_in == 0.) { dtphys = dycore.compute_time_step(coupler); }
+      if (dtphys_in <= 0.) { dtphys = dycore.compute_time_step(coupler); }
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
-      // yakl::timer_start("dycore");
-      // dycore.timeStep( coupler , dtphys );
-      // yakl::timer_stop("dycore");
+      yakl::timer_start("dycore");
+      dycore.time_step( coupler , dtphys );
+      yakl::timer_stop("dycore");
 
       etime += dtphys;
       real maxw = maxval(abs(coupler.dm.get_collapsed<real const>("wvel")));

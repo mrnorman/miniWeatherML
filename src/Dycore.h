@@ -6,28 +6,224 @@
 class Dycore {
   public:
 
-  int static constexpr num_state = 5;
+  int  static constexpr num_state = 5;
+  int  static constexpr hs        = 2;
+  int  static constexpr sten_size = 4;
+  real static constexpr hv_beta   = 0.05;
 
-  int static constexpr hs = 2;
+  int  static constexpr idR       = 0;
+  int  static constexpr idU       = 1;
+  int  static constexpr idV       = 2;
+  int  static constexpr idW       = 3;
+  int  static constexpr idT       = 4;
 
-  int static constexpr idR = 0;
-  int static constexpr idU = 1;
-  int static constexpr idV = 2;
-  int static constexpr idW = 3;
-  int static constexpr idT = 4;
-
-
-  real1d      hyDensCells;
-  real1d      hyDensThetaCells;
-  real1d      hyDensEdges;
-  real1d      hyDensThetaEdges;
+  real1d      hy_dens_cells;
+  real1d      hy_dens_theta_cells;
+  real1d      hy_dens_edges;
+  real1d      hy_dens_theta_edges;
   real        etime;
   std::string fname;
+
+
+  real compute_time_step( core::Coupler const &coupler ) {
+    real constexpr maxwave = 350 + 30;
+    real constexpr cfl = 0.3;
+    real dt_dyn = cfl * std::min( std::min( coupler.get_dx() , coupler.get_dy() ) , coupler.get_dz() ) / maxwave;
+    return dt_dyn;
+  }
+
+
+  void time_step(core::Coupler &coupler, real &dt_phys) {
+    using yakl::c::parallel_for;
+    using yakl::c::Bounds;
+
+    int  nx, ny, nz;
+    real xlen, ylen, zlen, dx, dy, dz;
+    bool sim2d;
+    get_grid(coupler,nx,ny,nz,xlen,ylen,zlen,dx,dy,dz,sim2d);
+
+    real4d state("state",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
+    convert_coupler_to_dynamics( coupler , state );
+
+    real dt_dyn = compute_time_step( coupler );
+
+    int ncycles = (int) std::ceil( dt_phys / dt_dyn );
+    dt_dyn = dt_phys / ncycles;
+    
+    for (int icycle = 0; icycle < ncycles; icycle++) {
+      real4d state_tmp("state_tmp",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
+      real4d tend     ("tend"     ,num_state,nz     ,ny     ,nx     );
+      // Stage 1
+      compute_tendencies( coupler , state , tend , dt_dyn/3._fp );
+      parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
+        state_tmp(l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn/3._fp * tend(l,k,j,i);
+      });
+      // Stage 2
+      compute_tendencies( coupler , state_tmp , tend , dt_dyn/2._fp );
+      parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
+        state_tmp(l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn/2._fp * tend(l,k,j,i);
+      });
+      // Stage 3
+      compute_tendencies( coupler , state_tmp , tend , dt_dyn/1._fp );
+      parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
+        state(l,hs+k,hs+j,hs+i) = state(l,hs+k,hs+j,hs+i) + dt_dyn/1._fp * tend(l,k,j,i);
+      });
+    }
+
+    convert_dynamics_to_coupler( coupler , state );
+    etime += dt_phys;
+    output( coupler , etime );
+  }
+
+
+  void compute_tendencies( core::Coupler const &coupler , real4d const &state , real4d const &tend , real dt ) {
+    using yakl::c::parallel_for;
+    using yakl::c::Bounds;
+
+    int  nx, ny, nz;
+    real xlen, ylen, zlen, dx, dy, dz;
+    bool sim2d;
+    get_grid(coupler,nx,ny,nz,xlen,ylen,zlen,dx,dy,dz,sim2d);
+
+    real R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
+    get_constants(coupler, R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0);
+
+    real4d flux_x("flux_x",num_state,nz  ,ny  ,nx+1);
+    real4d flux_y("flux_y",num_state,nz  ,ny+1,nx  );
+    real4d flux_z("flux_z",num_state,nz+1,ny  ,nx  );
+
+    parallel_for( Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i ) {
+      ////////////////////////////////////////////////////////
+      // X-direction
+      ////////////////////////////////////////////////////////
+      if (j < ny && k < nz) {
+        SArray<real,1,4        > stencil;
+        SArray<real,1,num_state> d3_vals;
+        SArray<real,1,num_state> vals;
+        //Compute the hyperviscosity coeficient
+        real hv_coef = -hv_beta * dx / (16*dt);
+
+        //Use fourth-order interpolation from four cell averages to compute the value at the interface in question
+        for (int l=0; l < num_state; l++) {
+          for (int s=0; s < sten_size; s++) {
+            int ind = i+s;   if (ind < hs) ind += nx;   if (ind > nx+hs) ind -= nx;
+            stencil(s) = state(l,hs+k,hs+j,ind);
+          }
+          //Fourth-order-accurate interpolation of the state
+          vals   (l) = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
+          //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
+          d3_vals(l) = -stencil(0)    + 3*stencil(1)    - 3*stencil(2)    + stencil(3);
+        }
+
+        //Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
+        real r = vals(idR) + hy_dens_cells(k);
+        real u = vals(idU) / r;
+        real v = vals(idV) / r;
+        real w = vals(idW) / r;
+        real t = ( vals(idT) + hy_dens_theta_cells(k) ) / r;
+        real p = C0*pow( r*t  , gamma );
+
+        //Compute the flux vector
+        flux_x(idR,k,j,i) = r*u     - hv_coef*d3_vals(idR);
+        flux_x(idU,k,j,i) = r*u*u+p - hv_coef*d3_vals(idU);
+        flux_x(idV,k,j,i) = r*u*v   - hv_coef*d3_vals(idV);
+        flux_x(idW,k,j,i) = r*u*w   - hv_coef*d3_vals(idW);
+        flux_x(idT,k,j,i) = r*u*t   - hv_coef*d3_vals(idT);
+      }
+
+      ////////////////////////////////////////////////////////
+      // Y-direction
+      ////////////////////////////////////////////////////////
+      if ( (! sim2d) && i < nx && k < nz) {
+        SArray<real,1,4        > stencil;
+        SArray<real,1,num_state> d3_vals;
+        SArray<real,1,num_state> vals;
+        //Compute the hyperviscosity coeficient
+        real hv_coef = -hv_beta * dy / (16*dt);
+
+        //Use fourth-order interpolation from four cell averages to compute the value at the interface in question
+        for (int l=0; l < num_state; l++) {
+          for (int s=0; s < sten_size; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
+          //Fourth-order-accurate interpolation of the state
+          vals   (l) = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
+          //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
+          d3_vals(l) = -stencil(0)    + 3*stencil(1)    - 3*stencil(2)    + stencil(3);
+        }
+
+        //Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
+        real r = vals(idR) + hy_dens_cells(k);
+        real u = vals(idU) / r;
+        real v = vals(idV) / r;
+        real w = vals(idW) / r;
+        real t = ( vals(idT) + hy_dens_theta_cells(k) ) / r;
+        real p = C0*pow( r*t  , gamma );
+
+        //Compute the flux vector
+        flux_y(idR,k,j,i) = r*v     - hv_coef*d3_vals(idR);
+        flux_y(idU,k,j,i) = r*v*u   - hv_coef*d3_vals(idU);
+        flux_y(idV,k,j,i) = r*v*v+p - hv_coef*d3_vals(idV);
+        flux_y(idW,k,j,i) = r*v*w   - hv_coef*d3_vals(idW);
+        flux_y(idT,k,j,i) = r*v*t   - hv_coef*d3_vals(idT);
+      } else if (i < nx && k < nz) {
+        flux_y(idR,k,j,i) = 0;
+        flux_y(idU,k,j,i) = 0;
+        flux_y(idV,k,j,i) = 0;
+        flux_y(idW,k,j,i) = 0;
+        flux_y(idT,k,j,i) = 0;
+      }
+
+      ////////////////////////////////////////////////////////
+      // Z-direction
+      ////////////////////////////////////////////////////////
+      if (i < nx && j < ny) {
+        SArray<real,1,4        > stencil;
+        SArray<real,1,num_state> d3_vals;
+        SArray<real,1,num_state> vals;
+        //Compute the hyperviscosity coeficient
+        real hv_coef = -hv_beta * dz / (16*dt);
+
+        //Use fourth-order interpolation from four cell averages to compute the value at the interface in question
+        for (int l=0; l < num_state; l++) {
+          for (int s=0; s < sten_size; s++) {
+            int ind = std::min( nz+hs-1 , std::max( hs , k+s ) );
+            stencil(s) = state(l,ind,hs+j,hs+i);
+          }
+          //Fourth-order-accurate interpolation of the state
+          vals   (l) = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
+          //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
+          d3_vals(l) = -stencil(0)    + 3*stencil(1)    - 3*stencil(2)    + stencil(3);
+        }
+        if (k == 0 || k == nz) { vals(idW) = 0;   d3_vals(idW) = 0; }
+
+        //Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
+        real r = vals(idR) + hy_dens_edges(k);
+        real u = vals(idU) / r;
+        real v = vals(idV) / r;
+        real w = vals(idW) / r;
+        real t = ( vals(idT) + hy_dens_theta_edges(k) ) / r;
+        real p = C0*pow( r*t  , gamma );
+
+        //Compute the flux vector
+        flux_z(idR,k,j,i) = r*w     - hv_coef*d3_vals(idR);
+        flux_z(idU,k,j,i) = r*w*u   - hv_coef*d3_vals(idU);
+        flux_z(idV,k,j,i) = r*w*v   - hv_coef*d3_vals(idV);
+        flux_z(idW,k,j,i) = r*w*w+p - hv_coef*d3_vals(idW);
+        flux_z(idT,k,j,i) = r*w*t   - hv_coef*d3_vals(idT);
+      }
+    });
+
+    parallel_for( Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA ( int l, int k, int j, int i ) {
+      tend(l,k,j,i) = -( flux_x(l,k  ,j  ,i+1) - flux_x(l,k,j,i) ) / dx
+                      -( flux_y(l,k  ,j+1,i  ) - flux_y(l,k,j,i) ) / dy
+                      -( flux_z(l,k+1,j  ,i  ) - flux_z(l,k,j,i) ) / dz;
+      if (l == idW) tend(l,k,j,i) += -grav * ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+    });
+  }
+
 
   void init(core::Coupler &coupler) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
-    using yakl::c::SimpleBounds;
     auto inFile = coupler.get_option<std::string>( "standalone_input_file" );
     YAML::Node config = YAML::LoadFile(inFile);
     auto init_data = config["init_data"].as<std::string>();
@@ -59,7 +255,7 @@ class Dycore {
     // Compute the state that the dycore uses
     real4d state("state",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
 
-    parallel_for( SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+    parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
       for (int l=0; l < num_state; l++) {
         state(l,hs+k,hs+j,hs+i) = 0.;
       }
@@ -88,33 +284,33 @@ class Dycore {
       }
     });
 
-    hyDensCells      = real1d("hyDensCells"     ,nz  );
-    hyDensThetaCells = real1d("hyDensThetaCells",nz  );
-    hyDensEdges      = real1d("hyDensEdges"     ,nz+1);
-    hyDensThetaEdges = real1d("hyDensThetaEdges",nz+1);
+    hy_dens_cells       = real1d("hy_dens_cells"      ,nz  );
+    hy_dens_theta_cells = real1d("hy_dens_theta_cells",nz  );
+    hy_dens_edges       = real1d("hy_dens_edges"      ,nz+1);
+    hy_dens_theta_edges = real1d("hy_dens_theta_edges",nz+1);
 
-    parallel_for( SimpleBounds<1>(nz) , YAKL_LAMBDA (int k) {
-      hyDensCells     (k) = 0.;
-      hyDensThetaCells(k) = 0.;
+    parallel_for( Bounds<1>(nz) , YAKL_LAMBDA (int k) {
+      hy_dens_cells      (k) = 0.;
+      hy_dens_theta_cells(k) = 0.;
       for (int kk=0; kk<nqpoints; kk++) {
         real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
         real hr, ht;
 
         if (init_data == "thermal") { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
 
-        hyDensCells     (k) += hr    * qweights(kk);
-        hyDensThetaCells(k) += hr*ht * qweights(kk);
+        hy_dens_cells      (k) += hr    * qweights(kk);
+        hy_dens_theta_cells(k) += hr*ht * qweights(kk);
       }
     });
 
-    parallel_for( SimpleBounds<1>(nz+1) , YAKL_LAMBDA (int k) {
+    parallel_for( Bounds<1>(nz+1) , YAKL_LAMBDA (int k) {
       real z = k*dz;
       real hr, ht;
 
       if (init_data == "thermal") { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
 
-      hyDensEdges     (k) = hr   ;
-      hyDensThetaEdges(k) = hr*ht;
+      hy_dens_edges      (k) = hr   ;
+      hy_dens_theta_edges(k) = hr*ht;
     });
 
     convert_dynamics_to_coupler( coupler , state );
@@ -126,7 +322,6 @@ class Dycore {
   void convert_dynamics_to_coupler( core::Coupler &coupler , realConst4d state ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
-    using yakl::c::SimpleBounds;
     int  nx, ny, nz;
     real xlen, ylen, zlen, dx, dy, dz;
     bool sim2d;
@@ -135,8 +330,8 @@ class Dycore {
     real R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
     get_constants(coupler, R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0);
 
-    YAKL_SCOPE( hyDensCells      , this->hyDensCells      );
-    YAKL_SCOPE( hyDensThetaCells , this->hyDensThetaCells );
+    YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells      );
+    YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
 
     auto rho_d = coupler.dm.get<real,3>("density_dry");
     auto uvel  = coupler.dm.get<real,3>("uvel"       );
@@ -144,12 +339,12 @@ class Dycore {
     auto wvel  = coupler.dm.get<real,3>("wvel"       );
     auto temp  = coupler.dm.get<real,3>("temp"       );
 
-    parallel_for( SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-      real r  = state(idR,hs+k,hs+j,hs+i) + hyDensCells(k);
+    parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+      real r  = state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k);
       real ru = state(idU,hs+k,hs+j,hs+i);
       real rv = state(idV,hs+k,hs+j,hs+i);
       real rw = state(idW,hs+k,hs+j,hs+i);
-      real rt = state(idT,hs+k,hs+j,hs+i) + hyDensThetaCells(k);
+      real rt = state(idT,hs+k,hs+j,hs+i) + hy_dens_theta_cells(k);
       real p  = C0 * pow( rt , gamma );
 
       rho_d(k,j,i) = r;
@@ -164,7 +359,6 @@ class Dycore {
   void convert_coupler_to_dynamics( core::Coupler const &coupler , real4d &state ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
-    using yakl::c::SimpleBounds;
     int  nx, ny, nz;
     real xlen, ylen, zlen, dx, dy, dz;
     bool sim2d;
@@ -173,8 +367,8 @@ class Dycore {
     real R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
     get_constants(coupler, R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0);
 
-    YAKL_SCOPE( hyDensCells      , this->hyDensCells      );
-    YAKL_SCOPE( hyDensThetaCells , this->hyDensThetaCells );
+    YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
+    YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
 
     auto rho_d = coupler.dm.get<real const,3>("density_dry");
     auto uvel  = coupler.dm.get<real const,3>("uvel"       );
@@ -182,7 +376,7 @@ class Dycore {
     auto wvel  = coupler.dm.get<real const,3>("wvel"       );
     auto temp  = coupler.dm.get<real const,3>("temp"       );
 
-    parallel_for( SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+    parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
       real r  = rho_d(k,j,i);
       real ru = uvel(k,j,i) * r;
       real rv = vvel(k,j,i) * r;
@@ -191,11 +385,11 @@ class Dycore {
       real p  = rho_d(k,j,i) * R_d * T;
       real rt = pow( p/C0 , 1._fp / gamma );
 
-      state(idR,hs+k,hs+j,hs+i) = r - hyDensCells(k);
+      state(idR,hs+k,hs+j,hs+i) = r - hy_dens_cells(k);
       state(idU,hs+k,hs+j,hs+i) = ru;
       state(idV,hs+k,hs+j,hs+i) = rv;
       state(idW,hs+k,hs+j,hs+i) = rw;
-      state(idT,hs+k,hs+j,hs+i) = rt - hyDensThetaCells(k);
+      state(idT,hs+k,hs+j,hs+i) = rt - hy_dens_theta_cells(k);
     });
   }
 
@@ -203,7 +397,6 @@ class Dycore {
   void output( core::Coupler const &coupler , real etime ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
-    using yakl::c::SimpleBounds;
 
     int  nz = coupler.get_nz();   int  ny = coupler.get_ny();   int  nx = coupler.get_nx();
     real dz = coupler.get_dz();   real dy = coupler.get_dy();   real dx = coupler.get_dx();
@@ -232,8 +425,8 @@ class Dycore {
       parallel_for( "Spatial.h output 3" , nz , YAKL_LAMBDA (int i) { zloc(i) = (i+0.5)*dz; });
       nc.write(zloc.createHostCopy(),"z",{"z"});
 
-      nc.write(hyDensCells     .createHostCopy(),"hydrostatic_density"      ,{"z"});
-      nc.write(hyDensThetaCells.createHostCopy(),"hydrostatic_density_theta",{"z"});
+      nc.write(hy_dens_cells      .createHostCopy(),"hydrostatic_density"      ,{"z"});
+      nc.write(hy_dens_theta_cells.createHostCopy(),"hydrostatic_density_theta",{"z"});
 
       // Elapsed time
       nc.write1(0._fp,"t",0,"t");
@@ -258,8 +451,8 @@ class Dycore {
     });
     nc.write1(data,"density_pert",{"z","y","x"},ulIndex,"t");
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-      real hy_r  = hyDensCells     (k);
-      real hy_rt = hyDensThetaCells(k);
+      real hy_r  = hy_dens_cells      (k);
+      real hy_rt = hy_dens_theta_cells(k);
       real r     = state(idR,hs+k,hs+j,hs+i) + hy_r;
       real rt    = state(idT,hs+k,hs+j,hs+i) + hy_rt;
       data(k,j,i) = rt / r - hy_rt / hy_r;
