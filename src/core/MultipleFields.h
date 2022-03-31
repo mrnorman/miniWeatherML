@@ -56,28 +56,36 @@ namespace core {
 
     YAKL_INLINE int get_num_fields() const { return num_fields; }
 
-    YAKL_INLINE auto operator() (int tr, int i1) const -> decltype(fields(tr)(i1)) {
+    YAKL_INLINE auto operator() (int tr, int i1) const ->
+                                decltype(fields(tr)(i1)) {
       return this->fields(tr)(i1);
     }
-    YAKL_INLINE auto operator() (int tr, int i1, int i2) const -> decltype(fields(tr)(i1,i2)) {
+    YAKL_INLINE auto operator() (int tr, int i1, int i2) const ->
+                                decltype(fields(tr)(i1,i2)) {
       return this->fields(tr)(i1,i2);
     }
-    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3) const -> decltype(fields(tr)(i1,i2,i3)) {
+    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3) const ->
+                                decltype(fields(tr)(i1,i2,i3)) {
       return this->fields(tr)(i1,i2,i3);
     }
-    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4) const -> decltype(fields(tr)(i1,i2,i3,i4)) {
+    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4) const ->
+                                decltype(fields(tr)(i1,i2,i3,i4)) {
       return this->fields(tr)(i1,i2,i3,i4);
     }
-    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4, int i5) const -> decltype(fields(tr)(i1,i2,i3,i4,i5)) {
+    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4, int i5) const ->
+                                decltype(fields(tr)(i1,i2,i3,i4,i5)) {
       return this->fields(tr)(i1,i2,i3,i4,i5);
     }
-    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4, int i5, int i6) const -> decltype(fields(tr)(i1,i2,i3,i4,i5,i6)) {
+    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4, int i5, int i6) const ->
+                                decltype(fields(tr)(i1,i2,i3,i4,i5,i6)) {
       return this->fields(tr)(i1,i2,i3,i4,i5,i6);
     }
-    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4, int i5, int i6, int i7) const -> decltype(fields(tr)(i1,i2,i3,i4,i5,i6,i7)) {
+    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4, int i5, int i6, int i7) const ->
+                                decltype(fields(tr)(i1,i2,i3,i4,i5,i6,i7)) {
       return this->fields(tr)(i1,i2,i3,i4,i5,i6,i7);
     }
-    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4, int i5, int i6, int i7, int i8) const -> decltype(fields(tr)(i1,i2,i3,i4,i5,i6,i7,i8)) {
+    YAKL_INLINE auto operator() (int tr, int i1, int i2, int i3, int i4, int i5, int i6, int i7, int i8) const ->
+                                decltype(fields(tr)(i1,i2,i3,i4,i5,i6,i7,i8)) {
       return this->fields(tr)(i1,i2,i3,i4,i5,i6,i7,i8);
     }
   };

@@ -67,6 +67,7 @@ public:
     // Register and allocation non-tracer quantities used by the microphysics
     coupler.dm.register_and_allocate<real>( "precl" , "precipitation rate" , {ny,nx} , {"y","x"} );
 
+    // Initialize all micro data to zero
     auto rho_v = coupler.dm.get<real,3>("water_vapor"  );
     auto rho_c = coupler.dm.get<real,3>("cloud_liquid" );
     auto rho_p = coupler.dm.get<real,3>("precip_liquid");
@@ -88,12 +89,14 @@ public:
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
+    // Grab the data
     auto rho_v   = coupler.dm.get_lev_col<real      >("water_vapor"  );
     auto rho_c   = coupler.dm.get_lev_col<real      >("cloud_liquid" );
     auto rho_r   = coupler.dm.get_lev_col<real      >("precip_liquid");
     auto rho_dry = coupler.dm.get_lev_col<real const>("density_dry"  );
     auto temp    = coupler.dm.get_lev_col<real      >("temp"         );
 
+    // Grab the dimension sizes
     real dz   = coupler.get_dz();
     int  nz   = coupler.get_nz();
     int  ny   = coupler.get_ny();
@@ -192,6 +195,7 @@ public:
     #endif
 
 
+    // Post-process microphysics changes back to the coupler state
     parallel_for( "kessler timeStep 3" , Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
       rho_v   (k,i) = qv(k,i)*rho_dry(k,i);
       rho_c   (k,i) = qc(k,i)*rho_dry(k,i);

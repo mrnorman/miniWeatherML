@@ -6,6 +6,9 @@
 #include "YAKL_netcdf.h"
 #include "Options.h"
 
+// The Coupler class holds everything a component or module of this model would need in order to perform its
+// changes to the model state
+
 
 namespace core {
 

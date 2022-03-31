@@ -6,53 +6,75 @@
 #include "TransformMatrices.h"
 #include "WenoLimiter.h"
 
+// This clas simplements an A-grid (collocated) cell-centered Finite-Volume method with an upwind Godunov Riemanns
+// solver at cell edges, high-order-accurate reconstruction, Weighted Essentially Non-Oscillatory (WENO) limiting,
+// and a third-order-accurate three-stage Strong Stability Preserving Runge-Kutta time stepping.
+// The dycore prognoses full density, u-, v-, and w-momenta, and mass-weighted potential temperature
+// Since the coupler state is dry density, u-, v-, and w-velocity, and temperature, we need to convert to and from
+// the coupler state.
+
 class Dycore {
   public:
 
+  // Order of accuracy (numerical convergence for smooth flows) for the dynamical core
   int  static constexpr ord = 5;
+  int  static constexpr hs  = (ord-1)/2; // Number of halo cells ("hs" == "halo size")
 
   int  static constexpr num_state = 5;
-  int  static constexpr hs        = (ord-1)/2;
 
-  int  static constexpr idR = 0;
-  int  static constexpr idU = 1;
-  int  static constexpr idV = 2;
-  int  static constexpr idW = 3;
-  int  static constexpr idT = 4;
+  // IDs for the variables in the state vector
+  int  static constexpr idR = 0;  // Density
+  int  static constexpr idU = 1;  // u-momentum
+  int  static constexpr idV = 2;  // v-momentum
+  int  static constexpr idW = 3;  // w-momentum
+  int  static constexpr idT = 4;  // Density * potential temperature
 
+  // IDs for the test cases
   int  static constexpr DATA_THERMAL   = 0;
   int  static constexpr DATA_SUPERCELL = 1;
 
+  // Hydrostatic background profiles for density and potential temperature as cell averages and cell edge values
   real1d      hy_dens_cells;
   real1d      hy_dens_theta_cells;
   real1d      hy_dens_edges;
   real1d      hy_dens_theta_edges;
-  real        etime;
-  real        out_freq;
-  int         num_out;
-  std::string fname;
-  int         init_data_int;
+  real        etime;         // Elapsed time
+  real        out_freq;      // Frequency out file output
+  int         num_out;       // Number of outputs produced thus far
+  std::string fname;         // File name for file output
+  int         init_data_int; // Integer representation of the type of initial data to use (test case)
 
-  int         nx  , ny  , nz  ;
-  real        dx  , dy  , dz  ;
-  real        xlen, ylen, zlen;
-  bool        sim2d;
+  int         nx  , ny  , nz  ;  // # cells in each dimension
+  real        dx  , dy  , dz  ;  // grid spacing in each dimension
+  real        xlen, ylen, zlen;  // length of domain in each dimension
+  bool        sim2d;             // Whether we're simulating in 2-D
 
-  real        R_d, R_v, cp_d, cp_v, p0, grav, kappa, gamma, C0;
+  // Physical constants
+  real        R_d;    // Dry air ideal gas constant
+  real        R_v;    // Water vapor ideal gas constant
+  real        cp_d;   // Specific heat of dry air at constant pressure
+  real        cp_v;   // Specific heat of water vapor at constant pressure
+  real        p0;     // Reference pressure (Pa); also typically surface pressure for dry simulations
+  real        grav;   // Acceleration due to gravity
+  real        kappa;  // R_d / c_p
+  real        gamma;  // cp_d / (cp_d - R_d)
+  real        C0;     // pow( R_d * pow( p0 , -kappa ) , gamma )
 
-  int         num_tracers;
-  int         idWV;
-  bool1d      tracer_adds_mass;
-  bool1d      tracer_positive;
+  int         num_tracers;       // Number of tracers we are using
+  int         idWV;              // Index number for water vapor in the tracers array
+  bool1d      tracer_adds_mass;  // Whether a tracer adds mass to the full density
+  bool1d      tracer_positive;   // Whether a tracer needs to remain non-negative
 
-  SArray<real,1,ord>            gll_pts;
-  SArray<real,1,ord>            gll_wts;
-  SArray<real,2,ord,ord>        sten_to_coefs;
-  SArray<real,2,ord,2  >        coefs_to_gll;
-  SArray<real,3,hs+1,hs+1,hs+1> weno_recon_lower;
-  SArray<real,1,hs+2>           weno_idl;   // Ideal weights for WENO
-  real                          weno_sigma; // WENO sigma parameter (handicap high-order TV estimate)
+  SArray<real,1,ord>            gll_pts;          // GLL point locations in domain [-0.5 , 0.5]
+  SArray<real,1,ord>            gll_wts;          // GLL weights normalized to sum to 1
+  SArray<real,2,ord,ord>        sten_to_coefs;    // Matrix to convert ord stencil avgs to ord poly coefs
+  SArray<real,2,ord,2  >        coefs_to_gll;     // Matrix to convert ord poly coefs to two GLL points
+  SArray<real,3,hs+1,hs+1,hs+1> weno_recon_lower; // WENO's lower-order reconstruction matrices (sten_to_coefs)
+  SArray<real,1,hs+2>           weno_idl;         // Ideal weights for WENO
+  real                          weno_sigma;       // WENO sigma parameter (handicap high-order TV estimate)
 
+
+  // Compute the maximum stable time step using very conservative assumptions about max wind speed
   real compute_time_step( core::Coupler const &coupler ) {
     real constexpr maxwave = 350 + 80;
     real cfl = 0.3;
@@ -61,32 +83,42 @@ class Dycore {
   }
 
 
+  // Perform a single time step using SSPRK3 time stepping
   void time_step(core::Coupler &coupler, real &dt_phys) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
     using yakl::intrinsics::maxval;
     using yakl::intrinsics::abs;
 
+    // Create arrays to hold state and tracers with halos on the left and right of the domain
+    // Cells [0:hs-1] are the left halos, and cells [nx+hs:nx+2*hs-1] are the right halos
     real4d state  ("state"  ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs);
     real4d tracers("tracers",num_tracers,nz+2*hs,ny+2*hs,nx+2*hs);
 
+    // Populate the state and tracers arrays using data from the coupler, convert to the dycore's desired state
     convert_coupler_to_dynamics( coupler , state , tracers );
 
+    // Get the max stable time step for the dynamics. dt_phys might be > dt_dyn, meaning we would need to sub-cycle
     real dt_dyn = compute_time_step( coupler );
 
+    // Get the number of sub-cycles we need, and set the dynamics time step accordingly
     int ncycles = (int) std::ceil( dt_phys / dt_dyn );
     dt_dyn = dt_phys / ncycles;
 
-    YAKL_SCOPE( num_tracers                , this->num_tracers                );
-    YAKL_SCOPE( tracer_positive            , this->tracer_positive            );
+    YAKL_SCOPE( num_tracers     , this->num_tracers     );
+    YAKL_SCOPE( tracer_positive , this->tracer_positive );
     
     for (int icycle = 0; icycle < ncycles; icycle++) {
+      // SSPRK3 requires temporary arrays to hold intermediate state and tracers arrays
       real4d state_tmp   ("state_tmp"   ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs);
       real4d state_tend  ("state_tend"  ,num_state  ,nz     ,ny     ,nx     );
       real4d tracers_tmp ("tracers_tmp" ,num_tracers,nz+2*hs,ny+2*hs,nx+2*hs);
       real4d tracers_tend("tracers_tend",num_tracers,nz     ,ny     ,nx     );
+      //////////////
       // Stage 1
+      //////////////
       compute_tendencies( coupler , state     , state_tend , tracers     , tracers_tend , dt_dyn );
+      // Apply tendencies
       parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         for (int l = 0; l < num_state  ; l++) {
           state_tmp  (l,hs+k,hs+j,hs+i) = state  (l,hs+k,hs+j,hs+i) + dt_dyn * state_tend  (l,k,j,i);
@@ -99,8 +131,11 @@ class Dycore {
           }
         }
       });
+      //////////////
       // Stage 2
+      //////////////
       compute_tendencies( coupler , state_tmp , state_tend , tracers_tmp , tracers_tend , (1._fp/4._fp) * dt_dyn );
+      // Apply tendencies
       parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         for (int l = 0; l < num_state  ; l++) {
           state_tmp  (l,hs+k,hs+j,hs+i) = (3._fp/4._fp) * state      (l,hs+k,hs+j,hs+i) + 
@@ -117,8 +152,11 @@ class Dycore {
           }
         }
       });
+      //////////////
       // Stage 3
+      //////////////
       compute_tendencies( coupler , state_tmp , state_tend , tracers_tmp , tracers_tend , (2._fp/3._fp) * dt_dyn );
+      // Apply tendencies
       parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         for (int l = 0; l < num_state  ; l++) {
           state      (l,hs+k,hs+j,hs+i) = (1._fp/3._fp) * state      (l,hs+k,hs+j,hs+i) +
@@ -137,14 +175,18 @@ class Dycore {
       });
     }
 
+    // Convert the dycore's state back to the coupler's state
     convert_dynamics_to_coupler( coupler , state , tracers );
 
+    // Advance the dycore's tracking of total ellapsed time
     etime += dt_phys;
+    // Do output and inform the user if it's time to do output
     if (out_freq >= 0. && etime / out_freq >= num_out+1) {
       yakl::timer_start("output");
       output( coupler , etime );
       yakl::timer_stop("output");
       num_out++;
+      // Let the user know what the max vertical velocity is to ensure the model hasn't crashed
       real maxw = maxval(abs(coupler.dm.get_collapsed<real const>("wvel")));
       std::cout << "Etime , dtphys, maxw: " << std::scientific << std::setw(10) << etime  << " , " 
                                             << std::scientific << std::setw(10) << dt_phys << " , "
@@ -153,6 +195,8 @@ class Dycore {
   }
 
 
+  // Compute the tendencies for state and tracers for one semi-discretized step inside the RK integrator
+  // Tendencies are the time rate of change for a quantity
   void compute_tendencies( core::Coupler const &coupler , real4d const &state   , real4d const &state_tend   ,
                                                           real4d const &tracers , real4d const &tracers_tend , real dt ) {
     using yakl::c::parallel_for;
@@ -160,14 +204,15 @@ class Dycore {
     using std::min;
     using std::max;
 
+    // These arrays store high-order-accurate samples of the state and tracers at cell edges after cell-centered recon
     real5d state_limits_x  ("state_limits_x"  ,num_state  ,2,nz  ,ny  ,nx+1);
     real5d state_limits_y  ("state_limits_y"  ,num_state  ,2,nz  ,ny+1,nx  );
     real5d state_limits_z  ("state_limits_z"  ,num_state  ,2,nz+1,ny  ,nx  );
-
     real5d tracers_limits_x("tracers_limits_x",num_tracers,2,nz  ,ny  ,nx+1);
     real5d tracers_limits_y("tracers_limits_y",num_tracers,2,nz  ,ny+1,nx  );
     real5d tracers_limits_z("tracers_limits_z",num_tracers,2,nz+1,ny  ,nx  );
 
+    // A slew of things to bring from class scope into local scope so that lambdas copy them by value to the GPU
     YAKL_SCOPE( hy_dens_cells              , this->hy_dens_cells              );
     YAKL_SCOPE( hy_dens_theta_cells        , this->hy_dens_theta_cells        );
     YAKL_SCOPE( hy_dens_edges              , this->hy_dens_edges              );
@@ -190,17 +235,21 @@ class Dycore {
     YAKL_SCOPE( gamma                      , this->gamma                      );
     YAKL_SCOPE( grav                       , this->grav                       );
 
+    // Since tracers are full mass, it's helpful before reconstruction to remove the background density for potentially
+    // more accurate reconstructions of tracer concentrations
     parallel_for( Bounds<4>(num_tracers,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i ) {
       tracers(l,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
     });
 
-    // Reconstruct state and tracers and set the cell-edge limits of the sampled state and tracers
+    // Compute samples of state and tracers at cell edges using cell-centered reconstructions at high-order with WENO
+    // At the end of this, we will have two samples per cell edge in each dimension, one from each adjacent cell.
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i ) {
       ////////////////////////////////////////////////////////
       // X-direction
       ////////////////////////////////////////////////////////
       // State
       for (int l=0; l < num_state; l++) {
+        // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
         SArray<real,1,ord> stencil;
         SArray<real,1,2>   gll;
         for (int s=0; s < ord; s++) {
@@ -211,6 +260,7 @@ class Dycore {
         state_limits_x(l,1,k,j,i  ) = gll(0);
         state_limits_x(l,0,k,j,i+1) = gll(1);
       }
+      // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
       state_limits_x(idR,1,k,j,i  ) += hy_dens_cells(k);
       state_limits_x(idR,0,k,j,i+1) += hy_dens_cells(k);
       state_limits_x(idT,1,k,j,i  ) += hy_dens_theta_cells(k);
@@ -218,6 +268,7 @@ class Dycore {
 
       // Tracers
       for (int l=0; l < num_tracers; l++) {
+        // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
         SArray<real,1,ord> stencil;
         SArray<real,1,2>   gll;
         for (int s=0; s < ord; s++) {
@@ -232,9 +283,11 @@ class Dycore {
       ////////////////////////////////////////////////////////
       // Y-direction
       ////////////////////////////////////////////////////////
+      // If we're simulating in only 2-D, then do not compute y-direction tendencies
       if (!sim2d) {
         // State
         for (int l=0; l < num_state; l++) {
+          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) {
@@ -245,6 +298,7 @@ class Dycore {
           state_limits_y(l,1,k,j  ,i) = gll(0);
           state_limits_y(l,0,k,j+1,i) = gll(1);
         }
+        // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
         state_limits_y(idR,1,k,j  ,i) += hy_dens_cells(k);
         state_limits_y(idR,0,k,j+1,i) += hy_dens_cells(k);
         state_limits_y(idT,1,k,j  ,i) += hy_dens_theta_cells(k);
@@ -252,6 +306,7 @@ class Dycore {
 
         // Tracers
         for (int l=0; l < num_tracers; l++) {
+          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) {
@@ -278,9 +333,11 @@ class Dycore {
       ////////////////////////////////////////////////////////
       // State
       for (int l=0; l < num_state; l++) {
+        // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
         SArray<real,1,ord> stencil;
         SArray<real,1,2>   gll;
         for (int s=0; s < ord; s++) {
+          // We wet w-momentum to zero in the boundaries
           if ( l == idW && (k+s < hs) || (k+s >= nz+hs) ) {
             stencil(s) = 0;
           } else {
@@ -292,15 +349,18 @@ class Dycore {
         state_limits_z(l,1,k  ,j,i) = gll(0);
         state_limits_z(l,0,k+1,j,i) = gll(1);
       }
+      // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
       state_limits_z(idR,1,k  ,j,i) += hy_dens_edges(k  );
       state_limits_z(idR,0,k+1,j,i) += hy_dens_edges(k+1);
       state_limits_z(idT,1,k  ,j,i) += hy_dens_theta_edges(k  );
       state_limits_z(idT,0,k+1,j,i) += hy_dens_theta_edges(k+1);
+      // We wet w-momentum to zero at the boundaries
       if (k == 0   ) { state_limits_z(idW,1,k  ,j,i) = 0; }
       if (k == nz-1) { state_limits_z(idW,0,k+1,j,i) = 0; }
 
       // Tracers
       for (int l=0; l < num_tracers; l++) {
+        // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
         SArray<real,1,ord> stencil;
         SArray<real,1,2>   gll;
         for (int s=0; s < ord; s++) {
@@ -313,19 +373,20 @@ class Dycore {
       }
     });
 
+    // The store a single values flux at cell edges
     real4d state_flux_x  ("state_flux_x"  ,num_state  ,nz  ,ny  ,nx+1);
     real4d state_flux_y  ("state_flux_y"  ,num_state  ,nz  ,ny+1,nx  );
     real4d state_flux_z  ("state_flux_z"  ,num_state  ,nz+1,ny  ,nx  );
-
     real4d tracers_flux_x("tracers_flux_x",num_tracers,nz  ,ny  ,nx+1);
     real4d tracers_flux_y("tracers_flux_y",num_tracers,nz  ,ny+1,nx  );
     real4d tracers_flux_z("tracers_flux_z",num_tracers,nz+1,ny  ,nx  );
 
-    // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edge
+    // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
     parallel_for( Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i ) {
       ////////////////////////////////////////////////////////
       // X-direction
       ////////////////////////////////////////////////////////
+      // Boundary conditions
       if (j < ny && k < nz) {
         if (i == 0 ) {
           for (int l=0; l < num_state  ; l++) { state_limits_x  (l,0,k,j,0 ) = state_limits_x  (l,0,k,j,nx); }
@@ -401,7 +462,9 @@ class Dycore {
       ////////////////////////////////////////////////////////
       // Y-direction
       ////////////////////////////////////////////////////////
+      // If we are simulating in 2-D, then do not do Riemann in the y-direction
       if ( (! sim2d) && i < nx && k < nz) {
+        // Boundary conditions
         if (j == 0 ) {
           for (int l=0; l < num_state  ; l++) { state_limits_y  (l,0,k,0 ,i) = state_limits_y  (l,0,k,ny,i); }
           for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,0,k,0 ,i) = tracers_limits_y(l,0,k,ny,i); }
@@ -484,6 +547,7 @@ class Dycore {
       // Z-direction
       ////////////////////////////////////////////////////////
       if (i < nx && j < ny) {
+        // Boundary conditions
         if (k == 0) {
           for (int l = 0; l < num_state  ; l++) { state_limits_z  (l,0,0 ,j,i) = state_limits_z  (l,1,0 ,j,i); }
           for (int l = 0; l < num_tracers; l++) { tracers_limits_z(l,0,0 ,j,i) = tracers_limits_z(l,1,0 ,j,i); }
@@ -554,6 +618,7 @@ class Dycore {
       }
     });
 
+    // Deallocate state and tracer limits because they are no longer needed
     state_limits_x   = real5d();
     state_limits_y   = real5d();
     state_limits_z   = real5d();
@@ -602,10 +667,12 @@ class Dycore {
   }
 
 
+  // Initialize the class data as well as the state and tracers arrays and convert them back into the coupler state
   void init(core::Coupler &coupler) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
+    // Set class data from # grid points, grid spacing, domain sizes, whether it's 2-D, and physical constants
     nx    = coupler.get_nx();
     ny    = coupler.get_ny();
     nz    = coupler.get_nz();
@@ -630,6 +697,7 @@ class Dycore {
     gamma = cp_d / (cp_d - R_d);
     C0    = pow( R_d * pow( p0 , -kappa ) , gamma );
 
+    // Use TransformMatrices class to create matrices & GLL points to convert degrees of freedom as needed
     TransformMatrices::get_gll_points          (gll_pts         );
     TransformMatrices::get_gll_weights         (gll_wts         );
     TransformMatrices::sten_to_coefs           (sten_to_coefs   );
@@ -637,57 +705,47 @@ class Dycore {
     TransformMatrices::weno_lower_sten_to_coefs(weno_recon_lower);
     weno::wenoSetIdealSigma<ord>( weno_idl , weno_sigma );
 
+    // Create arrays to determine whether we should add mass for a tracer or whether it should remain non-negative
     num_tracers = coupler.get_num_tracers();
     tracer_adds_mass = bool1d("tracer_adds_mass",num_tracers);
     tracer_positive  = bool1d("tracer_positive" ,num_tracers);
 
+    // Must assign on the host to avoid segfaults
     auto tracer_adds_mass_host = tracer_adds_mass.createHostCopy();
     auto tracer_positive_host  = tracer_positive .createHostCopy();
 
-    auto tracer_names = coupler.get_tracer_names();
+    auto tracer_names = coupler.get_tracer_names();  // Get a list of tracer names
     for (int tr=0; tr < num_tracers; tr++) {
       std::string tracer_desc;
       bool        tracer_found, positive, adds_mass;
       coupler.get_tracer_info( tracer_names[tr] , tracer_desc, tracer_found , positive , adds_mass);
       tracer_positive_host (tr) = positive;
       tracer_adds_mass_host(tr) = adds_mass;
-      if (tracer_names[tr] == "water_vapor") idWV = tr;
+      if (tracer_names[tr] == "water_vapor") idWV = tr;  // Be sure to track which index belongs to water vapor
     }
     tracer_positive_host .deep_copy_to(tracer_positive );
     tracer_adds_mass_host.deep_copy_to(tracer_adds_mass);
 
+    // Read initial data, output filename, and output frequency from YAML input file
     auto inFile = coupler.get_option<std::string>( "standalone_input_file" );
     YAML::Node config = YAML::LoadFile(inFile);
     auto init_data = config["init_data"].as<std::string>();
     fname          = config["out_fname"].as<std::string>();
     out_freq       = config["out_freq" ].as<real>();
 
+    // Set an integer version of the input_data so we can test it inside GPU kernels
     if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
     else if (init_data == "supercell") { init_data_int = DATA_SUPERCELL; }
     else { endrun("ERROR: Invalid init_data in yaml input file"); }
 
-    auto rho_v = coupler.dm.get<real,3>("water_vapor");
-
     etime   = 0;
     num_out = 0;
 
-    // Define quadrature weights and points
-    const int nqpoints = 3;
-    SArray<real,1,nqpoints> qpoints;
-    SArray<real,1,nqpoints> qweights;
-
-    qpoints(0) = 0.112701665379258311482073460022;
-    qpoints(1) = 0.500000000000000000000000000000;
-    qpoints(2) = 0.887298334620741688517926539980;
-
-    qweights(0) = 0.277777777777777777777777777779;
-    qweights(1) = 0.444444444444444444444444444444;
-    qweights(2) = 0.277777777777777777777777777779;
-
-    // Compute the state that the dycore uses
+    // Allocate temp arrays to hold state and tracers before we convert it back to the coupler state
     real4d state  ("state"  ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs);
     real4d tracers("tracers",num_tracers,nz+2*hs,ny+2*hs,nx+2*hs);
 
+    // Allocate arrays for hydrostatic background states
     hy_dens_cells       = real1d("hy_dens_cells"      ,nz  );
     hy_dens_theta_cells = real1d("hy_dens_theta_cells",nz  );
     hy_dens_edges       = real1d("hy_dens_edges"      ,nz+1);
@@ -698,6 +756,19 @@ class Dycore {
       init_supercell( coupler , state , tracers );
 
     } else {
+
+      // Define quadrature weights and points for 3-point rules
+      const int nqpoints = 3;
+      SArray<real,1,nqpoints> qpoints;
+      SArray<real,1,nqpoints> qweights;
+
+      qpoints(0) = 0.112701665379258311482073460022;
+      qpoints(1) = 0.500000000000000000000000000000;
+      qpoints(2) = 0.887298334620741688517926539980;
+
+      qweights(0) = 0.277777777777777777777777777779;
+      qweights(1) = 0.444444444444444444444444444444;
+      qweights(2) = 0.277777777777777777777777777779;
 
       YAKL_SCOPE( init_data_int       , this->init_data_int       );
       YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
@@ -720,6 +791,7 @@ class Dycore {
       YAKL_SCOPE( num_tracers         , this->num_tracers         );
       YAKL_SCOPE( idWV                , this->idWV                );
 
+      // Use quadrature to initialize state and tracer data
       parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         for (int l=0; l < num_state; l++) {
           state(l,hs+k,hs+j,hs+i) = 0.;
@@ -758,6 +830,7 @@ class Dycore {
       });
 
 
+      // Compute hydrostatic background cell averages using quadrature
       parallel_for( Bounds<1>(nz) , YAKL_LAMBDA (int k) {
         hy_dens_cells      (k) = 0.;
         hy_dens_theta_cells(k) = 0.;
@@ -772,6 +845,7 @@ class Dycore {
         }
       });
 
+      // Compute hydrostatic background cell edge values
       parallel_for( Bounds<1>(nz+1) , YAKL_LAMBDA (int k) {
         real z = k*dz;
         real hr, ht;
@@ -784,12 +858,15 @@ class Dycore {
 
     }
 
+    // Convert the initialized state and tracers arrays back to the coupler state
     convert_dynamics_to_coupler( coupler , state , tracers );
 
+    // Output the initial state
     output( coupler , etime );
   }
 
 
+  // Initialize the supercell test case
   void init_supercell( core::Coupler &coupler , real4d &state , real4d &tracers ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
@@ -800,18 +877,7 @@ class Dycore {
     real constexpr T_top  = 213;
     real constexpr p_0    = 100000;
 
-    gll_pts(0)=-0.50000000000000000000000000000000000000;
-    gll_pts(1)=-0.32732683535398857189914622812342917778;
-    gll_pts(2)=0.00000000000000000000000000000000000000;
-    gll_pts(3)=0.32732683535398857189914622812342917778;
-    gll_pts(4)=0.50000000000000000000000000000000000000;
-
-    gll_wts(0)=0.050000000000000000000000000000000000000;
-    gll_wts(1)=0.27222222222222222222222222222222222222;
-    gll_wts(2)=0.35555555555555555555555555555555555556;
-    gll_wts(3)=0.27222222222222222222222222222222222222;
-    gll_wts(4)=0.050000000000000000000000000000000000000;
-
+    // Temporary arrays used to compute the initial state for high-CAPE supercell conditions
     real3d quad_temp       ("quad_temp"       ,nz,ord-1,ord);
     real2d hyDensGLL       ("hyDensGLL"       ,nz,ord);
     real2d hyDensThetaGLL  ("hyDensThetaGLL"  ,nz,ord);
@@ -1012,16 +1078,19 @@ class Dycore {
   }
 
 
+  // Convert dynamics state and tracers arrays to the coupler state and write to the coupler's data
   void convert_dynamics_to_coupler( core::Coupler &coupler , realConst4d state , realConst4d tracers ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
+    // Get state from the coupler
     auto dm_rho_d = coupler.dm.get<real,3>("density_dry");
     auto dm_uvel  = coupler.dm.get<real,3>("uvel"       );
     auto dm_vvel  = coupler.dm.get<real,3>("vvel"       );
     auto dm_wvel  = coupler.dm.get<real,3>("wvel"       );
     auto dm_temp  = coupler.dm.get<real,3>("temp"       );
 
+    // Get tracers from the coupler
     core::MultiField<real,3> dm_tracers;
     auto tracer_names = coupler.get_tracer_names();
     for (int tr=0; tr < num_tracers; tr++) {
@@ -1038,6 +1107,7 @@ class Dycore {
     YAKL_SCOPE( idWV                , this->idWV                );
     YAKL_SCOPE( tracer_adds_mass    , this->tracer_adds_mass    );
 
+    // Convert from state and tracers arrays to the coupler's data
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
       real rho   = state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k);
       real u     = state(idU,hs+k,hs+j,hs+i) / rho;
@@ -1065,16 +1135,19 @@ class Dycore {
   }
 
 
+  // Convert coupler's data to state and tracers arrays
   void convert_coupler_to_dynamics( core::Coupler const &coupler , real4d &state , real4d &tracers ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
+    // Get the coupler's state (as const because it's read-only)
     auto dm_rho_d = coupler.dm.get<real const,3>("density_dry");
     auto dm_uvel  = coupler.dm.get<real const,3>("uvel"       );
     auto dm_vvel  = coupler.dm.get<real const,3>("vvel"       );
     auto dm_wvel  = coupler.dm.get<real const,3>("wvel"       );
     auto dm_temp  = coupler.dm.get<real const,3>("temp"       );
 
+    // Get the coupler's tracers (as const because it's read-only)
     core::MultiField<real const,3> dm_tracers;
     auto tracer_names = coupler.get_tracer_names();
     for (int tr=0; tr < num_tracers; tr++) {
@@ -1091,6 +1164,7 @@ class Dycore {
     YAKL_SCOPE( idWV                , this->idWV                );
     YAKL_SCOPE( tracer_adds_mass    , this->tracer_adds_mass    );
 
+    // Convert from the coupler's state to the dycore's state and tracers arrays
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
       real rho_d = dm_rho_d(k,j,i);
       real u     = dm_uvel (k,j,i);
@@ -1118,6 +1192,7 @@ class Dycore {
   }
 
 
+  // Perform file output
   void output( core::Coupler const &coupler , real etime ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
@@ -1172,6 +1247,7 @@ class Dycore {
     nc.write1(dm.get<real const,3>("vvel"       ).createHostCopy(),"vvel"       ,{"z","y","x"},ulIndex,"t");
     nc.write1(dm.get<real const,3>("wvel"       ).createHostCopy(),"wvel"       ,{"z","y","x"},ulIndex,"t");
     nc.write1(dm.get<real const,3>("temp"       ).createHostCopy(),"temperature",{"z","y","x"},ulIndex,"t");
+    // Write the tracers to file
     auto tracer_names = coupler.get_tracer_names();
     for (int tr = 0; tr < num_tracers; tr++) {
       nc.write1(dm.get<real const,3>(tracer_names[tr]).createHostCopy(),tracer_names[tr],{"z","y","x"},ulIndex,"t");
@@ -1196,6 +1272,7 @@ class Dycore {
   }
 
 
+  // Creates initial data at a point in space for the rising moist thermal test case
   YAKL_INLINE static void thermal(real x, real y, real z, real xlen, real ylen, real grav, real C0, real gamma,
                                   real cp, real p0, real R_d, real R_v, real &rho, real &u, real &v, real &w,
                                   real &theta, real &rho_v, real &hr, real &ht) {
@@ -1216,6 +1293,8 @@ class Dycore {
   }
 
 
+  // Computes a hydrostatic background density and potential temperature using c constant potential temperature
+  // backgrounda for a single vertical location
   YAKL_INLINE static void hydro_const_theta( real z, real grav, real C0, real cp, real p0, real gamma, real rd,
                                              real &r, real &t ) {
     const real theta0 = 300.;  //Background potential temperature
@@ -1228,6 +1307,7 @@ class Dycore {
   }
 
 
+  // Samples a 3-D ellipsoid at a point in space
   YAKL_INLINE static real sample_ellipse_cosine(real amp, real x   , real y   , real z   ,
                                                           real x0  , real y0  , real z0  ,
                                                           real xrad, real yrad, real zrad) {
@@ -1250,6 +1330,7 @@ class Dycore {
   }
 
 
+  // Compute supercell temperature profile at a vertical location
   YAKL_INLINE real init_supercell_temperature(real z, real z_0, real z_trop, real z_top,
                                                       real T_0, real T_trop, real T_top) {
     if (z <= z_trop) {
@@ -1262,6 +1343,7 @@ class Dycore {
   }
 
 
+  // Compute supercell dry pressure profile at a vertical location
   YAKL_INLINE real init_supercell_pressure_dry(real z, real z_0, real z_trop, real z_top,
                                                        real T_0, real T_trop, real T_top,
                                                        real p_0, real R_d, real grav) {
@@ -1285,6 +1367,7 @@ class Dycore {
   }
 
   
+  // Compute supercell relative humidity profile at a vertical location
   YAKL_INLINE real init_supercell_relhum(real z, real z_0, real z_trop) {
     if (z <= z_trop) {
       return 1._fp - 0.75_fp * pow(z / z_trop , 1.25_fp );
@@ -1293,32 +1376,14 @@ class Dycore {
     }
   }
 
-  
-  YAKL_INLINE real init_supercell_relhum_d_dz(real z, real z_0, real z_trop) {
-    if (z <= z_trop) {
-      return -0.9375_fp*pow(z/z_trop, 0.25_fp)/z_trop;
-    } else {
-      return 0;
-    }
-  }
 
-
+  // Computes dry saturation mixing ratio
   YAKL_INLINE real init_supercell_sat_mix_dry( real press , real T ) {
     return 380/(press) * exp( 17.27_fp * (T-273)/(T-36) );
   }
 
 
-  YAKL_INLINE real init_supercell_sat_mix_dry_d_dT( real p , real T ) {
-    return 2205033.6*exp(17.27*T/(T - 36) - 6424.44/(T - 36))/(p*(T*T - 72*T + 1296));
-  }
-
-
-  YAKL_INLINE real init_supercell_sat_mix_dry_d_dp( real p , real T ) {
-    return -380*exp(17.27*T/(T - 36) - 6424.44/(T - 36))/(p*p);
-  }
-
-
-  // ord stencil values to ngll GLL values
+  // ord stencil cell averages to two GLL point values via high-order reconstruction and WENO limiting
   YAKL_INLINE static void reconstruct_gll_values( SArray<real,1,ord> const stencil                      ,
                                                   SArray<real,1,2> &gll                                 ,
                                                   SArray<real,2,ord,2> const &coefs_to_gll              ,

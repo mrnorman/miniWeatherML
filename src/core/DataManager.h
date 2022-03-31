@@ -4,6 +4,12 @@
 #include "main_header.h"
 #include <typeinfo>
 
+// The DataManager class is intended to hold arrays of varying dimensions and types so that a coupler can have all
+// data of all types in one place. 
+// The user is expected to use the following types that are typedef'd at the bottom:
+//       typedef DataManagerTemplate<yakl::memDevice> DataManager;
+//       typedef DataManagerTemplate<yakl::memHost> DataManagerHost;
+
 namespace core {
 
   using yakl::Array;
@@ -518,6 +524,7 @@ namespace core {
 
   };
 
+  // Some useful typedefs for the user to use
   typedef DataManagerTemplate<yakl::memDevice> DataManager;
   typedef DataManagerTemplate<yakl::memHost> DataManagerHost;
 

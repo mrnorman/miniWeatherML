@@ -3,6 +3,9 @@
 
 #include "main_header.h"
 
+// The Options class creates a way for users to set key,value pairs in the coupler
+// where the key is always a string, and the value can be different types
+
 namespace core {
 
   class Options {
