@@ -4,6 +4,7 @@
 #include "Microphysics.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
+#include "column_nudging.h"
 
 int main(int argc, char** argv) {
   yakl::init();
@@ -27,8 +28,9 @@ int main(int argc, char** argv) {
     real zlen      = config["zlen"    ].as<real>();
     real dtphys_in = config["dt_phys" ].as<real>();
 
-    Microphysics micro;
-    Dycore       dycore;
+    modules::ColumnNudger column_nudger;
+    Microphysics          micro;
+    Dycore                dycore;
 
     coupler.set_phys_constants( micro.R_d , micro.R_v , micro.cp_d , micro.cp_v , micro.grav , micro.p0 );
 
@@ -41,10 +43,8 @@ int main(int argc, char** argv) {
 
     micro .init                 ( coupler );
     dycore.init                 ( coupler ); // Dycore should initialize its own state here
+    column_nudger.set_column    ( coupler );
     modules::perturb_temperature( coupler );
-
-    // Now that we have an initial state, define hydrostasis for each ensemble member
-    // if (use_coupler_hydrostasis) coupler.update_hydrostasis( coupler.compute_pressure_array() );
 
     real etime = 0;
 
@@ -53,15 +53,12 @@ int main(int argc, char** argv) {
       if (dtphys_in <= 0.) { dtphys = dycore.compute_time_step(coupler); }
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
-      dycore.time_step     ( coupler , dtphys );
-      micro .time_step     ( coupler , dtphys );
-      modules::sponge_layer( coupler , dtphys );
+      dycore.time_step             ( coupler , dtphys );
+      micro .time_step             ( coupler , dtphys );
+      modules::sponge_layer        ( coupler , dtphys );
+      column_nudger.nudge_to_column( coupler , dtphys );
 
       etime += dtphys;
-      real maxw = maxval(abs(coupler.dm.get_collapsed<real const>("wvel")));
-      std::cout << "Etime , dtphys, maxw: " << std::scientific << std::setw(10) << etime  << " , " 
-                                            << std::scientific << std::setw(10) << dtphys << " , "
-                                            << std::scientific << std::setw(10) << maxw << "\n";
     }
 
     std::cout << "Elapsed Time: " << etime << "\n";

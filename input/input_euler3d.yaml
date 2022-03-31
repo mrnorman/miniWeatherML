@@ -1,15 +1,15 @@
 ---
 # Simulation time in seconds
-sim_time: 7200
+sim_time: 86400
 
 # Number of cells to use in the CRMs
-nx: 200
-ny: 1
+nx: 25
+ny: 25
 nz: 40
 
 # Domain size of the CRMs
-xlen: 128000
-ylen: 128000
+xlen: 100000
+ylen: 100000
 zlen: 20000
 
 init_data: supercell

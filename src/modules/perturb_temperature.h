@@ -12,9 +12,9 @@ namespace modules {
     int  constexpr num_levels = 10;
     real constexpr magnitude  = 10.;
 
-    int nz   = coupler.get_nz  ();
-    int ny   = coupler.get_ny  ();
-    int nx   = coupler.get_nx  ();
+    int nz = coupler.get_nz();
+    int ny = coupler.get_ny();
+    int nx = coupler.get_nx();
 
     size_t seed = static_cast<size_t>(nz*nx*ny);
 
