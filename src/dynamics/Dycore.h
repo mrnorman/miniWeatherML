@@ -188,9 +188,11 @@ class Dycore {
       num_out++;
       // Let the user know what the max vertical velocity is to ensure the model hasn't crashed
       real maxw = maxval(abs(coupler.dm.get_collapsed<real const>("wvel")));
-      std::cout << "Etime , dtphys, maxw: " << std::scientific << std::setw(10) << etime  << " , " 
-                                            << std::scientific << std::setw(10) << dt_phys << " , "
-                                            << std::scientific << std::setw(10) << maxw << "\n";
+      real maxu = maxval(abs(coupler.dm.get_collapsed<real const>("uvel")));
+      std::cout << "Etime , dtphys, maxw, maxu: " << std::scientific << std::setw(10) << etime   << " , " 
+                                                  << std::scientific << std::setw(10) << dt_phys << " , "
+                                                  << std::scientific << std::setw(10) << maxw    << " , "
+                                                  << std::scientific << std::setw(10) << maxu    << "\n";
     }
   }
 
