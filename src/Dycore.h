@@ -10,7 +10,7 @@ class Dycore {
   int  static constexpr num_state = 5;
   int  static constexpr hs        = 2;
   int  static constexpr sten_size = 4;
-  real static constexpr hv_beta   = 0.01;
+  real static constexpr hv_beta   = 0.03;
 
   int  static constexpr idR = 0;
   int  static constexpr idU = 1;
@@ -18,7 +18,8 @@ class Dycore {
   int  static constexpr idW = 3;
   int  static constexpr idT = 4;
 
-  int  static constexpr DATA_THERMAL = 0;
+  int  static constexpr DATA_THERMAL   = 0;
+  int  static constexpr DATA_SUPERCELL = 1;
 
   real1d      hy_dens_cells;
   real1d      hy_dens_theta_cells;
@@ -411,7 +412,8 @@ class Dycore {
     fname          = config["out_fname"].as<std::string>();
     out_freq       = config["out_freq" ].as<real>();
 
-    if (init_data == "thermal") { init_data_int = DATA_THERMAL; }
+    if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
+    else if (init_data == "supercell") { init_data_int = DATA_SUPERCELL; }
     else { endrun("ERROR: Invalid init_data in yaml input file"); }
 
     auto rho_v = coupler.dm.get<real,3>("water_vapor");
@@ -436,81 +438,298 @@ class Dycore {
     real4d state  ("state"  ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs);
     real4d tracers("tracers",num_tracers,nz+2*hs,ny+2*hs,nx+2*hs);
 
-    YAKL_SCOPE( init_data_int       , this->init_data_int       );
-
-    parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-      for (int l=0; l < num_state; l++) {
-        state(l,hs+k,hs+j,hs+i) = 0.;
-      }
-      for (int l=0; l < num_tracers; l++) {
-        tracers(l,hs+k,hs+j,hs+i) = 0.;
-      }
-      //Use Gauss-Legendre quadrature
-      for (int kk=0; kk<nqpoints; kk++) {
-        for (int jj=0; jj<nqpoints; jj++) {
-          for (int ii=0; ii<nqpoints; ii++) {
-            real x = (i+0.5)*dx + (qpoints(ii)-0.5)*dx;
-            real y = (j+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
-            real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
-            real rho, u, v, w, theta, rho_v, hr, ht;
-
-            if (init_data_int == DATA_THERMAL) { thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,R_v,rho,u,v,w,theta,rho_v,hr,ht); }
-            else { endrun("ERROR: init_data not supported"); }
-
-            if (sim2d) v = 0;
-
-            real wt = qweights(ii)*qweights(jj)*qweights(kk);
-            state(idR,hs+k,hs+j,hs+i) += ( rho - hr )          * wt;
-            state(idU,hs+k,hs+j,hs+i) += rho*u                 * wt;
-            state(idV,hs+k,hs+j,hs+i) += rho*v                 * wt;
-            state(idW,hs+k,hs+j,hs+i) += rho*w                 * wt;
-            state(idT,hs+k,hs+j,hs+i) += ( rho*theta - hr*ht ) * wt;
-            for (int tr=0; tr < num_tracers; tr++) {
-              if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i) += rho_v * wt; }
-              else            { tracers(tr,hs+k,hs+j,hs+i) += 0     * wt; }
-            }
-          }
-        }
-      }
-    });
-
     hy_dens_cells       = real1d("hy_dens_cells"      ,nz  );
     hy_dens_theta_cells = real1d("hy_dens_theta_cells",nz  );
     hy_dens_edges       = real1d("hy_dens_edges"      ,nz+1);
     hy_dens_theta_edges = real1d("hy_dens_theta_edges",nz+1);
 
-    YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-    YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
-    YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
-    YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
+    if (init_data_int == DATA_SUPERCELL) {
 
-    parallel_for( Bounds<1>(nz) , YAKL_LAMBDA (int k) {
-      hy_dens_cells      (k) = 0.;
-      hy_dens_theta_cells(k) = 0.;
-      for (int kk=0; kk<nqpoints; kk++) {
-        real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+      init_supercell( coupler , state , tracers );
+
+    } else {
+
+      YAKL_SCOPE( init_data_int       , this->init_data_int       );
+      YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
+      YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
+      YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
+      YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
+
+      parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+        for (int l=0; l < num_state; l++) {
+          state(l,hs+k,hs+j,hs+i) = 0.;
+        }
+        for (int l=0; l < num_tracers; l++) {
+          tracers(l,hs+k,hs+j,hs+i) = 0.;
+        }
+        //Use Gauss-Legendre quadrature
+        for (int kk=0; kk<nqpoints; kk++) {
+          for (int jj=0; jj<nqpoints; jj++) {
+            for (int ii=0; ii<nqpoints; ii++) {
+              real x = (i+0.5)*dx + (qpoints(ii)-0.5)*dx;
+              real y = (j+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
+              real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+              real rho, u, v, w, theta, rho_v, hr, ht;
+
+              if (init_data_int == DATA_THERMAL) {
+                thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,R_v,rho,u,v,w,theta,rho_v,hr,ht);
+              }
+
+              if (sim2d) v = 0;
+
+              real wt = qweights(ii)*qweights(jj)*qweights(kk);
+              state(idR,hs+k,hs+j,hs+i) += ( rho - hr )          * wt;
+              state(idU,hs+k,hs+j,hs+i) += rho*u                 * wt;
+              state(idV,hs+k,hs+j,hs+i) += rho*v                 * wt;
+              state(idW,hs+k,hs+j,hs+i) += rho*w                 * wt;
+              state(idT,hs+k,hs+j,hs+i) += ( rho*theta - hr*ht ) * wt;
+              for (int tr=0; tr < num_tracers; tr++) {
+                if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i) += rho_v * wt; }
+                else            { tracers(tr,hs+k,hs+j,hs+i) += 0     * wt; }
+              }
+            }
+          }
+        }
+      });
+
+
+      parallel_for( Bounds<1>(nz) , YAKL_LAMBDA (int k) {
+        hy_dens_cells      (k) = 0.;
+        hy_dens_theta_cells(k) = 0.;
+        for (int kk=0; kk<nqpoints; kk++) {
+          real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+          real hr, ht;
+
+          if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
+
+          hy_dens_cells      (k) += hr    * qweights(kk);
+          hy_dens_theta_cells(k) += hr*ht * qweights(kk);
+        }
+      });
+
+      parallel_for( Bounds<1>(nz+1) , YAKL_LAMBDA (int k) {
+        real z = k*dz;
         real hr, ht;
 
         if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
 
-        hy_dens_cells      (k) += hr    * qweights(kk);
-        hy_dens_theta_cells(k) += hr*ht * qweights(kk);
-      }
-    });
+        hy_dens_edges      (k) = hr   ;
+        hy_dens_theta_edges(k) = hr*ht;
+      });
 
-    parallel_for( Bounds<1>(nz+1) , YAKL_LAMBDA (int k) {
-      real z = k*dz;
-      real hr, ht;
-
-      if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
-
-      hy_dens_edges      (k) = hr   ;
-      hy_dens_theta_edges(k) = hr*ht;
-    });
+    }
 
     convert_dynamics_to_coupler( coupler , state , tracers );
 
     output( coupler , etime );
+  }
+
+
+  void init_supercell( core::Coupler &coupler , real4d &state , real4d &tracers ) {
+    using yakl::c::parallel_for;
+    using yakl::c::Bounds;
+    real constexpr z_0    = 0;
+    real constexpr z_trop = 12000;
+    real constexpr T_0    = 300;
+    real constexpr T_trop = 213;
+    real constexpr T_top  = 213;
+    real constexpr p_0    = 100000;
+
+    int constexpr ngll = 5;
+
+    SArray<real,1,ngll> gll_pts;
+    SArray<real,1,ngll> gll_wts;
+
+    gll_pts(0)=-0.50000000000000000000000000000000000000;
+    gll_pts(1)=-0.32732683535398857189914622812342917778;
+    gll_pts(2)=0.00000000000000000000000000000000000000;
+    gll_pts(3)=0.32732683535398857189914622812342917778;
+    gll_pts(4)=0.50000000000000000000000000000000000000;
+
+    gll_wts(0)=0.050000000000000000000000000000000000000;
+    gll_wts(1)=0.27222222222222222222222222222222222222;
+    gll_wts(2)=0.35555555555555555555555555555555555556;
+    gll_wts(3)=0.27222222222222222222222222222222222222;
+    gll_wts(4)=0.050000000000000000000000000000000000000;
+
+    real3d quad_temp       ("quad_temp"       ,nz,ngll-1,ngll);
+    real2d hyDensGLL       ("hyDensGLL"       ,nz,ngll);
+    real2d hyDensThetaGLL  ("hyDensThetaGLL"  ,nz,ngll);
+    real2d hyDensVapGLL    ("hyDensVapGLL"    ,nz,ngll);
+    real2d hyPressureGLL   ("hyPressureGLL"   ,nz,ngll);
+    real1d hyDensCells     ("hyDensCells"     ,nz);
+    real1d hyDensThetaCells("hyDensThetaCells",nz);
+
+    real ztop = coupler.get_zlen();
+
+    // Compute quadrature term to integrate to get pressure at GLL points
+    parallel_for( "Spatial.h init_state 4" , Bounds<3>(nz,ngll-1,ngll) ,
+                  YAKL_LAMBDA (int k, int kk, int kkk) {
+      // Middle of this cell
+      real cellmid   = (k+0.5_fp) * dz;
+      // Bottom, top, and middle of the space between these two ngll GLL points
+      real ngll_b    = cellmid + gll_pts(kk  )*dz;
+      real ngll_t    = cellmid + gll_pts(kk+1)*dz;
+      real ngll_m    = 0.5_fp * (ngll_b + ngll_t);
+      // Compute grid spacing between these ngll GLL points
+      real ngll_dz   = dz * ( gll_pts(kk+1) - gll_pts(kk) );
+      // Compute the locate of this GLL point within the ngll GLL points
+      real zloc      = ngll_m + ngll_dz * gll_pts(kkk);
+      // Compute full density at this location
+      real temp      = init_supercell_temperature (zloc, z_0, z_trop, ztop, T_0, T_trop, T_top);
+      real press_dry = init_supercell_pressure_dry(zloc, z_0, z_trop, ztop, T_0, T_trop, T_top, p_0, R_d, grav);
+      real qvs       = init_supercell_sat_mix_dry(press_dry, temp);
+      real relhum    = init_supercell_relhum(zloc, z_0, z_trop);
+      if (relhum * qvs > 0.014_fp) relhum = 0.014_fp / qvs;
+      real qv        = std::min( 0.014_fp , qvs*relhum );
+      quad_temp(k,kk,kkk) = -(1+qv)*grav/(R_d+qv*R_v)/temp;
+    });
+
+    // Compute pressure at GLL points
+    parallel_for( "Spatial.h init_state 5" , 1 , YAKL_LAMBDA (int dummy) {
+      hyPressureGLL(0,0) = p_0;
+      for (int k=0; k < nz; k++) {
+        for (int kk=0; kk < ngll-1; kk++) {
+          real tot = 0;
+          for (int kkk=0; kkk < ngll; kkk++) {
+            tot += quad_temp(k,kk,kkk) * gll_wts(kkk);
+          }
+          tot *= dz * ( gll_pts(kk+1) - gll_pts(kk) );
+          hyPressureGLL(k,kk+1) = hyPressureGLL(k,kk) * exp( tot );
+          if (kk == ngll-2 && k < nz-1) {
+            hyPressureGLL(k+1,0) = hyPressureGLL(k,ngll-1);
+          }
+        }
+      }
+    });
+
+    // Compute hydrostatic background state at GLL points
+    parallel_for( "Spatial.h init_state 6" , Bounds<2>(nz,ngll) , YAKL_LAMBDA (int k, int kk) {
+      real zloc = (k+0.5_fp)*dz + gll_pts(kk)*dz;
+      real temp       = init_supercell_temperature (zloc, z_0, z_trop, ztop, T_0, T_trop, T_top);
+      real press_tmp  = init_supercell_pressure_dry(zloc, z_0, z_trop, ztop, T_0, T_trop, T_top, p_0, R_d, grav);
+      real qvs        = init_supercell_sat_mix_dry(press_tmp, temp);
+      real relhum     = init_supercell_relhum(zloc, z_0, z_trop);
+      if (relhum * qvs > 0.014_fp) relhum = 0.014_fp / qvs;
+      real qv         = std::min( 0.014_fp , qvs*relhum );
+      real press      = hyPressureGLL(k,kk);
+      real dens_dry   = press / (R_d+qv*R_v) / temp;
+      real dens_vap   = qv * dens_dry;
+      real dens       = dens_dry + dens_vap;
+      real dens_theta = pow( press / C0 , 1._fp / gamma );
+      hyDensGLL     (k,kk) = dens;
+      hyDensThetaGLL(k,kk) = dens_theta;
+      hyDensVapGLL  (k,kk) = dens_vap;
+      if (kk == 0) {
+        hy_dens_edges      (k) = dens;
+        hy_dens_theta_edges(k) = dens_theta;
+      }
+      if (k == nz-1 && kk == ngll-1) {
+        hy_dens_edges      (k+1) = dens;
+        hy_dens_theta_edges(k+1) = dens_theta;
+      }
+    });
+
+    // Compute hydrostatic background state over cells
+    parallel_for( "Spatial.h init_state 7" , Bounds<1>(nz) , YAKL_LAMBDA (int k) {
+      real press_tot      = 0;
+      real dens_tot       = 0;
+      real dens_vap_tot   = 0;
+      real dens_theta_tot = 0;
+      for (int kk=0; kk < ngll; kk++) {
+        press_tot      += hyPressureGLL (k,kk) * gll_wts(kk);
+        dens_tot       += hyDensGLL     (k,kk) * gll_wts(kk);
+        dens_vap_tot   += hyDensVapGLL  (k,kk) * gll_wts(kk);
+        dens_theta_tot += hyDensThetaGLL(k,kk) * gll_wts(kk);
+      }
+      real press      = press_tot;
+      real dens       = dens_tot;
+      real dens_vap   = dens_vap_tot;
+      real dens_theta = dens_theta_tot;
+      real dens_dry   = dens - dens_vap;
+      real R          = dens_dry / dens * R_d + dens_vap / dens * R_v;
+      real temp       = press / (dens * R);
+      real qv         = dens_vap / dens_dry;
+      real zloc       = (k+0.5_fp)*dz;
+      real press_tmp  = init_supercell_pressure_dry(zloc, z_0, z_trop, ztop, T_0, T_trop, T_top, p_0, R_d, grav);
+      real qvs        = init_supercell_sat_mix_dry(press_tmp, temp);
+      real relhum     = qv / qvs;
+      real T          = temp - 273;
+      real a          = 17.27;
+      real b          = 237.7;
+      real tdew       = b * ( a*T / (b + T) + log(relhum) ) / ( a - ( a*T / (b+T) + log(relhum) ) );
+      // These are used in the rest of the model
+      hy_dens_cells      (k) = dens;
+      hy_dens_theta_cells(k) = dens_theta;
+    });
+
+    // Initialize the state
+    parallel_for( "Spatial.h init_state 12" , Bounds<3>(nz,ny,nx) ,
+                  YAKL_LAMBDA (int k, int j, int i) {
+      state  (idR ,hs+k,hs+j,hs+i) = 0;
+      state  (idU ,hs+k,hs+j,hs+i) = 0;
+      state  (idV ,hs+k,hs+j,hs+i) = 0;
+      state  (idW ,hs+k,hs+j,hs+i) = 0;
+      state  (idT ,hs+k,hs+j,hs+i) = 0;
+      for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i) = 0; }
+      for (int kk=0; kk < ngll; kk++) {
+        for (int jj=0; jj < ngll; jj++) {
+          for (int ii=0; ii < ngll; ii++) {
+            real xloc = (i+0.5_fp)*dx + gll_pts(ii)*dx;
+            real yloc = (j+0.5_fp)*dy + gll_pts(jj)*dy;
+            real zloc = (k+0.5_fp)*dz + gll_pts(kk)*dz;
+
+            if (sim2d) yloc = ylen/2;
+
+            real dens = hyDensGLL(k,kk);
+
+            real uvel;
+            real constexpr zs = 5000;
+            real constexpr us = 30;
+            real constexpr uc = 15;
+            if (zloc < zs) {
+              uvel = us * (zloc / zs) - uc;
+            } else {
+              uvel = us - uc;
+            }
+
+            real vvel       = 0;
+            real wvel       = 0;
+            real dens_vap   = hyDensVapGLL  (k,kk);
+            real dens_theta = hyDensThetaGLL(k,kk);
+
+            // real x0 = xlen / 2;
+            // real y0 = ylen / 2;
+            // real z0 = 1500;
+            // real radx = 10000;
+            // real rady = 10000;
+            // real radz = 1500;
+            // real amp  = 3;
+
+            // real xn = (xloc - x0) / radx;
+            // real yn = (yloc - y0) / rady;
+            // real zn = (zloc - z0) / radz;
+
+            // real rad = sqrt( xn*xn + yn*yn + zn*zn );
+
+            // TODO: enable this whenever you want the standalone idealize non-MMF test for supercell
+            // real theta_pert = 0;
+            // if (rad < 1) {
+            //   theta_pert = amp * pow( cos(M_PI*rad/2) , 2._fp );
+            // }
+            // dens_theta += dens * theta_pert;
+
+            real factor = gll_wts(ii) * gll_wts(jj) * gll_wts(kk);
+            state  (idR ,hs+k,hs+j,hs+i) += (dens - hyDensGLL(k,kk))            * factor;
+            state  (idU ,hs+k,hs+j,hs+i) += dens * uvel                         * factor;
+            state  (idV ,hs+k,hs+j,hs+i) += dens * vvel                         * factor;
+            state  (idW ,hs+k,hs+j,hs+i) += dens * wvel                         * factor;
+            state  (idT ,hs+k,hs+j,hs+i) += (dens_theta - hyDensThetaGLL(k,kk)) * factor;
+            tracers(idWV,hs+k,hs+j,hs+i) += dens_vap                            * factor;
+          }
+        }
+      }
+    });
   }
 
 
@@ -732,6 +951,74 @@ class Dycore {
   YAKL_INLINE static real saturation_vapor_pressure(real temp) {
     real tc = temp - 273.15;
     return 610.94 * std::exp( 17.625*tc / (243.04+tc) );
+  }
+
+
+  YAKL_INLINE real init_supercell_temperature(real z, real z_0, real z_trop, real z_top,
+                                                      real T_0, real T_trop, real T_top) {
+    if (z <= z_trop) {
+      real lapse = - (T_trop - T_0) / (z_trop - z_0);
+      return T_0 - lapse * (z - z_0);
+    } else {
+      real lapse = - (T_top - T_trop) / (z_top - z_trop);
+      return T_trop - lapse * (z - z_trop);
+    }
+  }
+
+
+  YAKL_INLINE real init_supercell_pressure_dry(real z, real z_0, real z_trop, real z_top,
+                                                       real T_0, real T_trop, real T_top,
+                                                       real p_0, real R_d, real grav) {
+    if (z <= z_trop) {
+      real lapse = - (T_trop - T_0) / (z_trop - z_0);
+      real T = init_supercell_temperature(z, z_0, z_trop, z_top, T_0, T_trop, T_top);
+      return p_0 * pow( T / T_0 , grav/(R_d*lapse) );
+    } else {
+      // Get pressure at the tropopause
+      real lapse = - (T_trop - T_0) / (z_trop - z_0);
+      real p_trop = p_0 * pow( T_trop / T_0 , grav/(R_d*lapse) );
+      // Get pressure at requested height
+      lapse = - (T_top - T_trop) / (z_top - z_trop);
+      if (lapse != 0) {
+        real T = init_supercell_temperature(z, z_0, z_trop, z_top, T_0, T_trop, T_top);
+        return p_trop * pow( T / T_trop , grav/(R_d*lapse) );
+      } else {
+        return p_trop * exp(-grav*(z-z_trop)/(R_d*T_trop));
+      }
+    }
+  }
+
+  
+  YAKL_INLINE real init_supercell_relhum(real z, real z_0, real z_trop) {
+    if (z <= z_trop) {
+      return 1._fp - 0.75_fp * pow(z / z_trop , 1.25_fp );
+    } else {
+      return 0.25_fp;
+    }
+  }
+
+  
+  YAKL_INLINE real init_supercell_relhum_d_dz(real z, real z_0, real z_trop) {
+    if (z <= z_trop) {
+      return -0.9375_fp*pow(z/z_trop, 0.25_fp)/z_trop;
+    } else {
+      return 0;
+    }
+  }
+
+
+  YAKL_INLINE real init_supercell_sat_mix_dry( real press , real T ) {
+    return 380/(press) * exp( 17.27_fp * (T-273)/(T-36) );
+  }
+
+
+  YAKL_INLINE real init_supercell_sat_mix_dry_d_dT( real p , real T ) {
+    return 2205033.6*exp(17.27*T/(T - 36) - 6424.44/(T - 36))/(p*(T*T - 72*T + 1296));
+  }
+
+
+  YAKL_INLINE real init_supercell_sat_mix_dry_d_dp( real p , real T ) {
+    return -380*exp(17.27*T/(T - 36) - 6424.44/(T - 36))/(p*p);
   }
 
 };

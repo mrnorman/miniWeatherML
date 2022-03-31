@@ -10,7 +10,7 @@ namespace modules {
     using yakl::c::Bounds;
 
     int  constexpr num_levels = 10;
-    real constexpr magnitude  = 3.;
+    real constexpr magnitude  = 10.;
 
     int nz   = coupler.get_nz  ();
     int ny   = coupler.get_ny  ();

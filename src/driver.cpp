@@ -53,8 +53,8 @@ int main(int argc, char** argv) {
       if (dtphys_in <= 0.) { dtphys = dycore.compute_time_step(coupler); }
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
-      micro .time_step     ( coupler , dtphys );
       dycore.time_step     ( coupler , dtphys );
+      micro .time_step     ( coupler , dtphys );
       modules::sponge_layer( coupler , dtphys );
 
       etime += dtphys;
