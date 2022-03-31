@@ -2,7 +2,8 @@
 #include "coupler.h"
 #include "Dycore.h"
 #include "Microphysics.h"
-
+#include "sponge_layer.h"
+#include "perturb_temperature.h"
 
 int main(int argc, char** argv) {
   yakl::init();
@@ -38,8 +39,9 @@ int main(int argc, char** argv) {
     // This is for the dycore to pull out to determine how to do idealized test cases
     coupler.set_option<std::string>( "standalone_input_file" , inFile );
 
-    micro .init( coupler );
-    dycore.init( coupler ); // Dycore should initialize its own state here
+    micro .init                 ( coupler );
+    dycore.init                 ( coupler ); // Dycore should initialize its own state here
+    modules::perturb_temperature( coupler );
 
     // Now that we have an initial state, define hydrostasis for each ensemble member
     // if (use_coupler_hydrostasis) coupler.update_hydrostasis( coupler.compute_pressure_array() );
@@ -51,8 +53,9 @@ int main(int argc, char** argv) {
       if (dtphys_in <= 0.) { dtphys = dycore.compute_time_step(coupler); }
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
-      micro .time_step( coupler , dtphys );
-      dycore.time_step( coupler , dtphys );
+      micro .time_step     ( coupler , dtphys );
+      dycore.time_step     ( coupler , dtphys );
+      modules::sponge_layer( coupler , dtphys );
 
       etime += dtphys;
       real maxw = maxval(abs(coupler.dm.get_collapsed<real const>("wvel")));
@@ -69,3 +72,5 @@ int main(int argc, char** argv) {
   }
   yakl::finalize();
 }
+
+

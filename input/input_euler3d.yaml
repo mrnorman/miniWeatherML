@@ -5,12 +5,12 @@ sim_time: 1000
 # Number of cells to use in the CRMs
 nx: 100
 ny: 1
-nz: 100
+nz: 50
 
 # Domain size of the CRMs
 xlen: 20000
 ylen: 20000
-zlen: 20000
+zlen: 10000
 
 init_data: thermal
 
@@ -24,6 +24,6 @@ dt_gcm: 900
 dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 20.
+out_freq: 10.
 
 
