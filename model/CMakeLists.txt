@@ -1,15 +1,8 @@
-cmake_minimum_required(VERSION 3.0)
-project(miniCloudML)
-
-enable_language(Fortran)
-enable_language(CXX)
-enable_language(C)
-if ("${YAKL_ARCH}" STREQUAL "CUDA")
-  enable_language(CUDA)
-endif()
 
 set(YAKL_HOME ${CMAKE_CURRENT_SOURCE_DIR}/../external/YAKL)
+set(YAKL_HOME ${CMAKE_CURRENT_SOURCE_DIR}/../external/YAKL PARENT_SCOPE)
 set(YAKL_BIN  ${CMAKE_CURRENT_BINARY_DIR}/yakl)
+set(YAKL_BIN  ${CMAKE_CURRENT_BINARY_DIR}/yakl PARENT_SCOPE)
 add_subdirectory(${YAKL_HOME} ${YAKL_BIN})
 include_directories(${YAKL_BIN})
 
@@ -20,8 +13,7 @@ add_subdirectory(dynamics              dynamics)
 add_subdirectory(physics/micro/kessler micro   )
 add_subdirectory(modules               modules )
 
-add_executable(driver driver.cpp)
-include(${YAKL_HOME}/yakl_utils.cmake)
-yakl_process_target(driver)
-target_link_libraries(driver micro dynamics modules core "${NCFLAGS} -lyaml-cpp")
+add_library(model INTERFACE)
+target_link_libraries(model INTERFACE micro dynamics modules core)
+target_include_directories(model INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 

@@ -2,6 +2,21 @@
 
 ./cmakeclean.sh
 
+if [ $# -ne 1 ]; then
+  echo "Error: must pass exactly one parameter giving the directory to build"
+  exit -1
+fi
+
+if [ ! -d $1 ]; then
+  echo "Error: Passed directory does not exist"
+  exit -1
+fi
+
+if [ ! -f $1/CMakeLists.txt ]; then
+  echo "Error: Passed directory does not contain a CMakeLists.txt file"
+  exit -1
+fi
+
 cmake      \
   -DYAKL_CUDA_FLAGS="${YAKL_CUDA_FLAGS}"         \
   -DYAKL_CXX_FLAGS="${YAKL_CXX_FLAGS}"           \
@@ -12,5 +27,7 @@ cmake      \
   -DYAKL_F90_FLAGS="${YAKL_F90_FLAGS}"           \
   -DNCFLAGS="${NCFLAGS}"                         \
   -DYAKL_ARCH="${YAKL_ARCH}"                     \
-  ../src
+  $1
+
+ln -sf $1/inputs .
 
