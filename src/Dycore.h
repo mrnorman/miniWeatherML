@@ -44,7 +44,8 @@ class Dycore {
 
   real compute_time_step( core::Coupler const &coupler ) {
     real constexpr maxwave = 350 + 80;
-    real constexpr cfl = 0.3;
+    real cfl = 0.3;
+    if (coupler.get_ny() == 1) cfl = 0.5;
     return cfl * std::min( std::min( dx , dy ) , dz ) / maxwave;
   }
 
@@ -76,7 +77,10 @@ class Dycore {
         }
         for (int l = 0; l < num_tracers; l++) {
           tracers_tmp(l,hs+k,hs+j,hs+i) = tracers(l,hs+k,hs+j,hs+i) + dt_dyn * tracers_tend(l,k,j,i);
-          tracers_tmp(l,hs+k,hs+j,hs+i) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i) );
+          // For machine precision negative values after FCT-enforced positivity application
+          if (tracer_positive(l)) {
+            tracers_tmp(l,hs+k,hs+j,hs+i) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i) );
+          }
         }
       });
       // Stage 2
@@ -91,7 +95,10 @@ class Dycore {
           tracers_tmp(l,hs+k,hs+j,hs+i) = (3._fp/4._fp) * tracers    (l,hs+k,hs+j,hs+i) + 
                                           (1._fp/4._fp) * tracers_tmp(l,hs+k,hs+j,hs+i) +
                                           (1._fp/4._fp) * dt_dyn * tracers_tend(l,k,j,i);
-          tracers_tmp(l,hs+k,hs+j,hs+i) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i) );
+          // For machine precision negative values after FCT-enforced positivity application
+          if (tracer_positive(l)) {
+            tracers_tmp(l,hs+k,hs+j,hs+i) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i) );
+          }
         }
       });
       // Stage 3
@@ -106,7 +113,10 @@ class Dycore {
           tracers    (l,hs+k,hs+j,hs+i) = (1._fp/3._fp) * tracers    (l,hs+k,hs+j,hs+i) +
                                           (2._fp/3._fp) * tracers_tmp(l,hs+k,hs+j,hs+i) +
                                           (2._fp/3._fp) * dt_dyn * tracers_tend(l,k,j,i);
-          tracers    (l,hs+k,hs+j,hs+i) = std::max( 0._fp , tracers    (l,hs+k,hs+j,hs+i) );
+          // For machine precision negative values after FCT-enforced positivity application
+          if (tracer_positive(l)) {
+            tracers    (l,hs+k,hs+j,hs+i) = std::max( 0._fp , tracers    (l,hs+k,hs+j,hs+i) );
+          }
         }
       });
     }
@@ -141,6 +151,7 @@ class Dycore {
     YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
     YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
 
+    // Compute fluxes in the x, y, and z directions for state and tracers
     parallel_for( Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i ) {
       ////////////////////////////////////////////////////////
       // X-direction
@@ -188,7 +199,7 @@ class Dycore {
           real val    = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
           //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
           real d3_val = -stencil(0)    + 3*stencil(1)    - 3*stencil(2)    + stencil(3);
-          val = std::max( 0._fp , val );
+          if (tracer_positive(l)) val = std::max( 0._fp , val );
           tracers_flux_x(l,k,j,i) = u*val - hv_coef*d3_val;
         }
       }
@@ -239,7 +250,7 @@ class Dycore {
           real val    = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
           //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
           real d3_val = -stencil(0)    + 3*stencil(1)    - 3*stencil(2)    + stencil(3);
-          val = std::max( 0._fp , val );
+          if (tracer_positive(l)) val = std::max( 0._fp , val );
           tracers_flux_y(l,k,j,i) = v*val - hv_coef*d3_val;
         }
 
@@ -301,12 +312,35 @@ class Dycore {
           real val    = -stencil(0)/12 + 7*stencil(1)/12 + 7*stencil(2)/12 - stencil(3)/12;
           //First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
           real d3_val = -stencil(0)    + 3*stencil(1)    - 3*stencil(2)    + stencil(3);
-          val = std::max( 0._fp , val );
+          if (tracer_positive(l)) val = std::max( 0._fp , val );
           tracers_flux_z(l,k,j,i) = w*val - hv_coef*d3_val;
         }
       }
     });
 
+    // Flux Corrected Transport to enforce positivity for tracer species that must remain non-negative
+    // This looks like it has a race condition, but it does not. Only one of the adjacent cells can ever change
+    // a given edge flux because it's only changed if its sign oriented outward from a cell.
+    parallel_for( Bounds<4>(num_tracers,nz,ny,nx) , YAKL_LAMBDA (int tr, int k, int j, int i ) {
+      if (tracer_positive(tr)) {
+        real mass_available = std::max(tracers(tr,hs+k,hs+j,hs+i),0._fp) * dx * dy * dz;
+        real flux_out_x = ( std::max(tracers_flux_x(tr,k,j,i+1),0._fp) - std::min(tracers_flux_x(tr,k,j,i),0._fp) ) / dx;
+        real flux_out_y = ( std::max(tracers_flux_y(tr,k,j+1,i),0._fp) - std::min(tracers_flux_y(tr,k,j,i),0._fp) ) / dy;
+        real flux_out_z = ( std::max(tracers_flux_z(tr,k+1,j,i),0._fp) - std::min(tracers_flux_z(tr,k,j,i),0._fp) ) / dz;
+        real mass_out = (flux_out_x + flux_out_y + flux_out_z) * dt * dx * dy * dz;
+        if (mass_out > mass_available) {
+          real mult = mass_available / mass_out;
+          if (tracers_flux_x(tr,k,j,i+1) > 0) tracers_flux_x(tr,k,j,i+1) *= mult;
+          if (tracers_flux_x(tr,k,j,i  ) < 0) tracers_flux_x(tr,k,j,i  ) *= mult;
+          if (tracers_flux_y(tr,k,j+1,i) > 0) tracers_flux_y(tr,k,j+1,i) *= mult;
+          if (tracers_flux_y(tr,k,j  ,i) < 0) tracers_flux_y(tr,k,j  ,i) *= mult;
+          if (tracers_flux_z(tr,k+1,j,i) > 0) tracers_flux_z(tr,k+1,j,i) *= mult;
+          if (tracers_flux_z(tr,k  ,j,i) < 0) tracers_flux_z(tr,k  ,j,i) *= mult;
+        }
+      }
+    });
+
+    // Compute tendencies as the flux divergence + gravity source term
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
       for (int l = 0; l < num_state; l++) {
         state_tend  (l,k,j,i) = -( state_flux_x  (l,k  ,j  ,i+1) - state_flux_x  (l,k,j,i) ) / dx
