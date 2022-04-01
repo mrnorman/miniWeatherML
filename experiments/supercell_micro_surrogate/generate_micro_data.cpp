@@ -1,7 +1,7 @@
 
 #include "coupler.h"
-#include "Dycore.h"
-#include "Microphysics.h"
+#include "dynamics_euler_stratified_wenofv.h"
+#include "microphysics_kessler.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
 #include "column_nudging.h"
@@ -33,14 +33,13 @@ int main(int argc, char** argv) {
 
     // The column nudger nudges the column-average of the model state toward the initial column-averaged state
     // This is primarily for the supercell test case to keep the the instability persistently strong
-    modules::ColumnNudger column_nudger;
+    modules::ColumnNudger            column_nudger;
     // Microphysics performs water phase changess + hydrometeor production, transport, collision, and aggregation
-    Microphysics          micro;
+    Microphysics_Kessler             micro;
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
-    Dycore                dycore;
-
+    Dynamics_Euler_Stratified_WenoFV dycore;
     // This is the class whose methods will generate samples for micro surrogate data
-    custom_modules::DataGenerator  data_generator;
+    custom_modules::DataGenerator    data_generator;
 
     coupler.set_phys_constants( micro.R_d , micro.R_v , micro.cp_d , micro.cp_v , micro.grav , micro.p0 );
 
@@ -59,7 +58,6 @@ int main(int argc, char** argv) {
     dycore.init                 ( coupler ); // Dycore should initialize its own state here
     column_nudger.set_column    ( coupler ); // Set the column before perturbing
     modules::perturb_temperature( coupler ); // Randomly perturb bottom layers of temperature to initiate convection
-
     data_generator.init         ( coupler ); // Create the netcdf file that will hold micro surrogate data
 
     real etime = 0;   // Elapsed time
@@ -74,7 +72,7 @@ int main(int argc, char** argv) {
       // Run the runtime modules
       dycore.time_step             ( coupler , dtphys );
 
-      // Create an input coupler snapshot
+      // Create a coupler snapshot before the micro is run as inputs to the micro routine
       core::Coupler input;
       coupler.clone_into(input);
       // Run microphysics

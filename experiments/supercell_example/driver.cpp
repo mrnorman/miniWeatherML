@@ -1,7 +1,7 @@
 
 #include "coupler.h"
-#include "Dycore.h"
-#include "Microphysics.h"
+#include "dynamics_euler_stratified_wenofv.h"
+#include "microphysics_kessler.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
 #include "column_nudging.h"
@@ -32,11 +32,11 @@ int main(int argc, char** argv) {
 
     // The column nudger nudges the column-average of the model state toward the initial column-averaged state
     // This is primarily for the supercell test case to keep the the instability persistently strong
-    modules::ColumnNudger column_nudger;
+    modules::ColumnNudger            column_nudger;
     // Microphysics performs water phase changess + hydrometeor production, transport, collision, and aggregation
-    Microphysics          micro;
+    Microphysics_Kessler             micro;
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
-    Dycore                dycore;
+    Dynamics_Euler_Stratified_WenoFV dycore;
 
     coupler.set_phys_constants( micro.R_d , micro.R_v , micro.cp_d , micro.cp_v , micro.grav , micro.p0 );
 
@@ -66,10 +66,11 @@ int main(int argc, char** argv) {
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
       // Run the runtime modules
-      dycore.time_step             ( coupler , dtphys );
-      micro .time_step             ( coupler , dtphys );
+      dycore.time_step             ( coupler , dtphys );  // Move the flow forward according to the Euler equations
+      micro .time_step             ( coupler , dtphys );  // Perform phase changes for water + precipitation / falling
       modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
-      column_nudger.nudge_to_column( coupler , dtphys );
+      column_nudger.nudge_to_column( coupler , dtphys );  // Nudge slightly back toward unstable profile
+                                                          // so that supercell persists for all time
 
       etime += dtphys; // Advance elapsed time
     }

@@ -8,12 +8,10 @@ include_directories(${YAKL_BIN})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-add_subdirectory(core                  core    )
-add_subdirectory(dynamics              dynamics)
-add_subdirectory(physics/micro/kessler micro   )
-add_subdirectory(modules               modules )
+add_subdirectory(core     core   )
+add_subdirectory(modules  modules)
 
 add_library(model INTERFACE)
-target_link_libraries(model INTERFACE micro dynamics modules core)
+target_link_libraries(model INTERFACE modules core)
 target_include_directories(model INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 

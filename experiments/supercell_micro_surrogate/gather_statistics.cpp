@@ -1,7 +1,7 @@
 
 #include "coupler.h"
-#include "Dycore.h"
-#include "Microphysics.h"
+#include "dynamics_euler_stratified_wenofv.h"
+#include "microphysics_kessler.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
 #include "column_nudging.h"
@@ -33,12 +33,11 @@ int main(int argc, char** argv) {
 
     // The column nudger nudges the column-average of the model state toward the initial column-averaged state
     // This is primarily for the supercell test case to keep the the instability persistently strong
-    modules::ColumnNudger column_nudger;
+    modules::ColumnNudger              column_nudger;
     // Microphysics performs water phase changess + hydrometeor production, transport, collision, and aggregation
-    Microphysics          micro;
+    Microphysics_Kessler               micro;
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
-    Dycore                dycore;
-
+    Dynamics_Euler_Stratified_WenoFV   dycore;
     // To gather statistics on how frequently microphysics is active
     custom_modules::StatisticsGatherer statistics_gatherer;
 
@@ -72,10 +71,12 @@ int main(int argc, char** argv) {
       // Run the runtime modules
       dycore.time_step             ( coupler , dtphys );
 
-      // Get coupler state before and after microphysics
+      // Create a coupler and clone the current coupler's state into it before microphysics changes it
       core::Coupler input;
       coupler.clone_into(input);
       micro .time_step             ( coupler , dtphys );
+      // Now that micro has run, the current coupler state is the "output" of micro
+      // Let's use the custom module function below to determine what proportion of the cells have active microphysics
       statistics_gatherer.gather_micro_statistics(input,coupler,dtphys,etime);
 
       modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
