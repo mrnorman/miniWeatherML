@@ -22,6 +22,8 @@ namespace custom_modules {
     void generate_samples( core::Coupler &input , core::Coupler &output , real dt , real etime ) {
       using std::min;
       using std::max;
+      using yakl::c::parallel_for;
+      using yakl::c::Bounds;
 
       int nx = input.get_nx();
       int ny = input.get_ny();
@@ -29,63 +31,82 @@ namespace custom_modules {
 
       // This was gathered from the gather_statistics.cpp driver
       // On average, about 12.5% of the cells experience active microphysics at any given time
-      real ratio_active = 0.125;
-      real expected_num_active   =    ratio_active  * nx*ny*nz;
-      real expected_num_inactive = (1-ratio_active) * nx*ny*nz;
+      double ratio_active = 0.125;
+      double expected_num_active   =    ratio_active  * nx*ny*nz;
+      double expected_num_inactive = (1-ratio_active) * nx*ny*nz;
 
-      real desired_samples_per_time_step = 50;
+      double desired_samples_per_time_step = 50;
 
-      real desired_ratio_active = 0.5;
+      double desired_ratio_active = 0.5;
 
-      real desired_samples_active   =    desired_ratio_active  * desired_samples_per_time_step;
-      real desired_samples_inactive = (1-desired_ratio_active) * desired_samples_per_time_step;
+      double desired_samples_active   =    desired_ratio_active  * desired_samples_per_time_step;
+      double desired_samples_inactive = (1-desired_ratio_active) * desired_samples_per_time_step;
 
-      real active_threshold   = desired_samples_active   / expected_num_active;
-      real inactive_threshold = desired_samples_inactive / expected_num_inactive;
+      double active_threshold   = desired_samples_active   / expected_num_active;
+      double inactive_threshold = desired_samples_inactive / expected_num_inactive;
 
-      auto temp_in   = input .dm.get<real const,3>("temp"         ).createHostCopy();
-      auto temp_out  = output.dm.get<real const,3>("temp"         ).createHostCopy();
-      auto rho_v_in  = input .dm.get<real const,3>("water_vapor"  ).createHostCopy();
-      auto rho_v_out = output.dm.get<real const,3>("water_vapor"  ).createHostCopy();
-      auto rho_c_in  = input .dm.get<real const,3>("cloud_liquid" ).createHostCopy();
-      auto rho_c_out = output.dm.get<real const,3>("cloud_liquid" ).createHostCopy();
-      auto rho_p_in  = input .dm.get<real const,3>("precip_liquid").createHostCopy();
-      auto rho_p_out = output.dm.get<real const,3>("precip_liquid").createHostCopy();
+      auto temp_in   = input .dm.get<real const,3>("temp"         );
+      auto temp_out  = output.dm.get<real const,3>("temp"         );
+      auto rho_v_in  = input .dm.get<real const,3>("water_vapor"  );
+      auto rho_v_out = output.dm.get<real const,3>("water_vapor"  );
+      auto rho_c_in  = input .dm.get<real const,3>("cloud_liquid" );
+      auto rho_c_out = output.dm.get<real const,3>("cloud_liquid" );
+      auto rho_p_in  = input .dm.get<real const,3>("precip_liquid");
+      auto rho_p_out = output.dm.get<real const,3>("precip_liquid");
 
-      srand(time(nullptr));
+      bool3d do_sample("do_sample",nz,ny,nx);
+
+      // Seed with time, but make sure the seed magnitude will not lead to an overflow of size_t's max value
+      size_t max_mag = std::numeric_limits<size_t>::max() / ( (size_t) nz * (size_t) ny * (size_t) nx );
+      size_t seed = ( (size_t) time(nullptr) ) % max_mag;
+
+      parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+        double thresh;
+        if ( StatisticsGatherer::is_active( temp_in (k,j,i) , temp_out (k,j,i) ,
+                                            rho_v_in(k,j,i) , rho_v_out(k,j,i) ,
+                                            rho_c_in(k,j,i) , rho_c_out(k,j,i) ,
+                                            rho_p_in(k,j,i) , rho_p_out(k,j,i) ) ) {
+          thresh = active_threshold;
+        } else {
+          thresh = inactive_threshold;
+        }
+
+        double rand_num = yakl::Random(seed*nz*ny*nx + k*ny*nx + j*nx + i).genFP<double>();
+        if (rand_num < thresh) { do_sample(k,j,i) = true;  }
+        else                   { do_sample(k,j,i) = false; }
+      });
+
+      auto host_temp_in   = temp_in  .createHostCopy();
+      auto host_temp_out  = temp_out .createHostCopy();
+      auto host_rho_v_in  = rho_v_in .createHostCopy();
+      auto host_rho_v_out = rho_v_out.createHostCopy();
+      auto host_rho_c_in  = rho_c_in .createHostCopy();
+      auto host_rho_c_out = rho_c_out.createHostCopy();
+      auto host_rho_p_in  = rho_p_in .createHostCopy();
+      auto host_rho_p_out = rho_p_out.createHostCopy();
+      auto host_do_sample = do_sample.createHostCopy();
 
       yakl::SimpleNetCDF nc;
       nc.open("supercell_micro_surrogate_data.nc",yakl::NETCDF_MODE_WRITE);
       int ulindex = nc.getDimSize("nsamples");
-
+      
       for (int k=0; k < nz; k++) {
         for (int j=0; j < ny; j++) {
           for (int i=0; i < nx; i++) {
-            real thresh;
-            if ( StatisticsGatherer::is_active( temp_in (k,j,i) , temp_out (k,j,i) ,
-                                                rho_v_in(k,j,i) , rho_v_out(k,j,i) ,
-                                                rho_c_in(k,j,i) , rho_c_out(k,j,i) ,
-                                                rho_p_in(k,j,i) , rho_p_out(k,j,i) ) ) {
-              thresh = active_threshold;
-            } else {
-              thresh = inactive_threshold;
-            }
-
-            real rand_num = (double) rand() / ((double) RAND_MAX);
-            if (rand_num < thresh) {
+            if (host_do_sample(k,j,i)) {
               realHost2d input ("input" ,4,3);
               realHost1d output("output",4);
               for (int kk = -1; kk <= 1; kk++) {
-                int ind = min(nz,max(0,k+kk));
-                input(0,kk+1) = temp_in (ind,j,i);
-                input(1,kk+1) = rho_v_in(ind,j,i);
-                input(2,kk+1) = rho_c_in(ind,j,i);
-                input(3,kk+1) = rho_p_in(ind,j,i);
+                int ind = min(nz-1,max(0,k+kk));
+                input(0,kk+1) = host_temp_in (ind,j,i);
+                input(1,kk+1) = host_rho_v_in(ind,j,i);
+                input(2,kk+1) = host_rho_c_in(ind,j,i);
+                input(3,kk+1) = host_rho_p_in(ind,j,i);
               }
-              output(0) = temp_in (k,j,i);
-              output(1) = rho_v_in(k,j,i);
-              output(2) = rho_c_in(k,j,i);
-              output(3) = rho_p_in(k,j,i);
+              output(0) = host_temp_out (k,j,i);
+              output(1) = host_rho_v_out(k,j,i);
+              output(2) = host_rho_c_out(k,j,i);
+              output(3) = host_rho_p_out(k,j,i);
               nc.write1( input  , "inputs"  , {"num_vars","stencil_size"} , ulindex , "nsamples" );
               nc.write1( output , "outputs" , {"num_vars"               } , ulindex , "nsamples" );
               ulindex++;

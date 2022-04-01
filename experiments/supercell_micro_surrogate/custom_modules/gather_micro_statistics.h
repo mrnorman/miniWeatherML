@@ -60,16 +60,16 @@ namespace custom_modules {
                                 real rho_c_in , real rho_c_out ,
                                 real rho_p_in , real rho_p_out ) {
       real tol = 1.e-10;
-      real temp_diff  = abs( temp_out  - temp_in  ) / temp_in;
-      real rho_v_diff = abs( rho_v_out - rho_v_in ) / ( rho_v_in + 1.e-20 );
-      real rho_c_diff = abs( rho_c_out - rho_c_in ) / ( rho_c_in + 1.e-20 );
-      real rho_p_diff = abs( rho_p_out - rho_p_in ) / ( rho_p_in + 1.e-20 );
-      rho_v_diff = min( rho_v_diff , abs(rho_v_out - rho_v_in) );
-      rho_c_diff = min( rho_c_diff , abs(rho_c_out - rho_c_in) );
-      rho_p_diff = min( rho_p_diff , abs(rho_p_out - rho_p_in) );
-      rho_v_diff = min( rho_v_diff , rho_v_in );
-      rho_c_diff = min( rho_c_diff , rho_c_in );
-      rho_p_diff = min( rho_p_diff , rho_p_in );
+      real temp_diff  = std::abs( temp_out  - temp_in  ) / temp_in;
+      real rho_v_diff = std::abs( rho_v_out - rho_v_in ) / ( rho_v_in + 1.e-20 );
+      real rho_c_diff = std::abs( rho_c_out - rho_c_in ) / ( rho_c_in + 1.e-20 );
+      real rho_p_diff = std::abs( rho_p_out - rho_p_in ) / ( rho_p_in + 1.e-20 );
+      rho_v_diff = std::min( rho_v_diff , std::abs(rho_v_out - rho_v_in) );
+      rho_c_diff = std::min( rho_c_diff , std::abs(rho_c_out - rho_c_in) );
+      rho_p_diff = std::min( rho_p_diff , std::abs(rho_p_out - rho_p_in) );
+      rho_v_diff = std::min( rho_v_diff , rho_v_in );
+      rho_c_diff = std::min( rho_c_diff , rho_c_in );
+      rho_p_diff = std::min( rho_p_diff , rho_p_in );
 
       if (temp_diff > tol && rho_v_diff > tol && rho_c_diff > tol && rho_p_diff > tol) {  return true;  }
       return false;
