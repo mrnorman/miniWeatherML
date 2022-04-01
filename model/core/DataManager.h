@@ -26,6 +26,7 @@ namespace core {
       std::string              desc;
       size_t                   type_hash;
       void *                   ptr;
+      size_t                   bytes;
       std::vector<int>         dims;
       std::vector<std::string> dim_names;
       bool                     positive;
@@ -70,6 +71,35 @@ namespace core {
     ~DataManagerTemplate() {
       // finalize deallocates all entries and resets entries and dimensions to empty vectors
       finalize();
+    }
+
+
+    
+    // Clone this DataManager object into the given DataManager object
+    void clone_into( DataManagerTemplate<memSpace> &dm ) {
+      dm.allocate          = this->allocate;
+      dm.deallocate        = this->deallocate;
+      dm.dimensions        = this->dimensions;
+      dm.num_assigned_dims = this->num_assigned_dims;
+      for (auto &entry : this->entries) {
+        Entry loc;
+        loc.name      = entry.name;
+        loc.desc      = entry.desc;
+        loc.type_hash = entry.type_hash;
+        loc.ptr       = allocate( entry.bytes , entry.name.c_str() );
+        if (memSpace == yakl::memHost) {
+          yakl::memcpy_host_to_host_void    ( loc.ptr , entry.ptr , entry.bytes );
+        } else {
+          yakl::memcpy_device_to_device_void( loc.ptr , entry.ptr , entry.bytes );
+          yakl::fence();
+        }
+        loc.bytes     = entry.bytes;
+        loc.dims      = entry.dims;
+        loc.dim_names = entry.dim_names;
+        loc.positive  = entry.positive;
+        loc.dirty     = entry.dirty;
+        dm.entries.push_back(loc);
+      }
     }
 
 
@@ -146,6 +176,7 @@ namespace core {
       loc.desc      = desc;
       loc.type_hash = get_type_hash<T>();
       loc.ptr       = allocate( get_data_size(dims)*sizeof(T) , name.c_str() );
+      loc.bytes     = get_data_size(dims)*sizeof(T);
       loc.dims      = dims;
       loc.dim_names = dim_names;
       loc.positive  = positive;

@@ -28,8 +28,7 @@ namespace core {
     real zlen;   // Domain length in the z-direction in meters
     real dt_gcm; // Time step of the GCM for this MMF invocation
 
-    DataManager     dm;
-    DataManagerHost dm_host;
+    DataManager dm;
 
     struct Tracer {
       std::string name;
@@ -38,18 +37,6 @@ namespace core {
       bool        adds_mass;
     };
     std::vector<Tracer> tracers;
-
-    struct DycoreFunction {
-      std::string                                   name;
-      std::function< void ( Coupler & , real ) > func;
-    };
-    std::vector< DycoreFunction > dycore_functions;
-
-    struct MMFFunction {
-      std::string                                   name;
-      std::function< void ( Coupler & , real ) > func;
-    };
-    std::vector< MMFFunction > mmf_functions;
 
 
     Coupler() {
@@ -86,6 +73,22 @@ namespace core {
       this->ylen   = -1;
       this->zlen   = -1;
       this->dt_gcm = -1;
+    }
+
+
+    void clone_into( Coupler &coupler ) {
+      coupler.R_d     = this->R_d    ;
+      coupler.R_v     = this->R_v    ;
+      coupler.cp_d    = this->cp_d   ;
+      coupler.cp_v    = this->cp_v   ;
+      coupler.grav    = this->grav   ;
+      coupler.p0      = this->p0     ;
+      coupler.xlen    = this->xlen   ;
+      coupler.ylen    = this->ylen   ;
+      coupler.zlen    = this->zlen   ;
+      coupler.dt_gcm  = this->dt_gcm ;
+      coupler.tracers = this->tracers;
+      this->dm.clone_into( coupler.dm );
     }
 
 
