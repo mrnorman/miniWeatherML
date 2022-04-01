@@ -37,11 +37,11 @@ namespace custom_modules {
 
       real desired_ratio_active = 0.5;
 
-      real num_samples_active   =    desired_ratio_active  * desired_samples_per_time_step;
-      real num_samples_inactive = (1-desired_ratio_active) * desired_samples_per_time_step;
+      real desired_samples_active   =    desired_ratio_active  * desired_samples_per_time_step;
+      real desired_samples_inactive = (1-desired_ratio_active) * desired_samples_per_time_step;
 
-      real active_threshold   = num_samples_active   / expected_num_active;
-      real inactive_threshold = num_samples_inactive / expected_num_inactive;
+      real active_threshold   = desired_samples_active   / expected_num_active;
+      real inactive_threshold = desired_samples_inactive / expected_num_inactive;
 
       auto temp_in   = input .dm.get<real const,3>("temp"         ).createHostCopy();
       auto temp_out  = output.dm.get<real const,3>("temp"         ).createHostCopy();
