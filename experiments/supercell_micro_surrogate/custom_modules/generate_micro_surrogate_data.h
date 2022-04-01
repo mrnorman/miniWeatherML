@@ -4,6 +4,7 @@
 #include "coupler.h"
 #include "YAKL_netcdf.h"
 #include <time.h>
+#include "gather_micro_statistics.h"
 
 namespace custom_modules {
 
@@ -22,6 +23,26 @@ namespace custom_modules {
       using std::min;
       using std::max;
 
+      int nx = input.get_nx();
+      int ny = input.get_ny();
+      int nz = input.get_nz();
+
+      // This was gathered from the gather_statistics.cpp driver
+      // On average, about 12.5% of the cells experience active microphysics at any given time
+      real ratio_active = 0.125;
+      real expected_num_active   =    ratio_active  * nx*ny*nz;
+      real expected_num_inactive = (1-ratio_active) * nx*ny*nz;
+
+      real desired_samples_per_time_step = 50;
+
+      real desired_ratio_active = 0.5;
+
+      real num_samples_active   =    desired_ratio_active  * desired_samples_per_time_step;
+      real num_samples_inactive = (1-desired_ratio_active) * desired_samples_per_time_step;
+
+      real active_threshold   = num_samples_active   / expected_num_active;
+      real inactive_threshold = num_samples_inactive / expected_num_inactive;
+
       auto temp_in   = input .dm.get<real const,3>("temp"         ).createHostCopy();
       auto temp_out  = output.dm.get<real const,3>("temp"         ).createHostCopy();
       auto rho_v_in  = input .dm.get<real const,3>("water_vapor"  ).createHostCopy();
@@ -30,10 +51,6 @@ namespace custom_modules {
       auto rho_c_out = output.dm.get<real const,3>("cloud_liquid" ).createHostCopy();
       auto rho_p_in  = input .dm.get<real const,3>("precip_liquid").createHostCopy();
       auto rho_p_out = output.dm.get<real const,3>("precip_liquid").createHostCopy();
-
-      int nx = input.get_nx();
-      int ny = input.get_ny();
-      int nz = input.get_nz();
 
       srand(time(nullptr));
 
@@ -44,8 +61,18 @@ namespace custom_modules {
       for (int k=0; k < nz; k++) {
         for (int j=0; j < ny; j++) {
           for (int i=0; i < nx; i++) {
+            real thresh;
+            if ( StatisticsGatherer::is_active( temp_in (k,j,i) , temp_out (k,j,i) ,
+                                                rho_v_in(k,j,i) , rho_v_out(k,j,i) ,
+                                                rho_c_in(k,j,i) , rho_c_out(k,j,i) ,
+                                                rho_p_in(k,j,i) , rho_p_out(k,j,i) ) ) {
+              thresh = active_threshold;
+            } else {
+              thresh = inactive_threshold;
+            }
+
             real rand_num = (double) rand() / ((double) RAND_MAX);
-            if (rand_num < 0.0001_fp) {
+            if (rand_num < thresh) {
               realHost2d input ("input" ,4,3);
               realHost1d output("output",4);
               for (int kk = -1; kk <= 1; kk++) {
