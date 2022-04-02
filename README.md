@@ -1,6 +1,6 @@
 # miniWeatherML
 
-**Author: Matt Norman (Oak Ridge National Laboratory), https://github.com/mrnorman**
+**Author: Matt Norman (Oak Ridge National Laboratory), https://mrnorman.github.io**
 
 ## Documentation: https://github.com/mrnorman/miniWeatherML/wiki
 
