@@ -2,7 +2,7 @@
 
 **Author: Matt Norman (Oak Ridge National Laboratory), https://github.com/mrnorman**
 
-For documentation, visit https://github.com/mrnorman/miniWeatherML/wiki
+## Documentation: https://github.com/mrnorman/miniWeatherML/wiki
 
 Contributors:
 * Murali Gopalakrishnan Meena (Oak Ridge National Laboratory)
