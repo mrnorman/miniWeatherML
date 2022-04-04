@@ -3,6 +3,9 @@
 
 #include "YAKL.h"
 #include "yaml-cpp/yaml.h"
+#ifdef HAVE_MPI
+  #include "mpi.h"
+#endif
 
 
 using yakl::memHost;

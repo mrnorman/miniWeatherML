@@ -8,7 +8,7 @@
 
 int main(int argc, char** argv) {
   #ifdef HAVE_MPI
-    MPI_Initialize( &argc , &argv );
+    MPI_Init( &argc , &argv );
   #endif
   yakl::init();
   {

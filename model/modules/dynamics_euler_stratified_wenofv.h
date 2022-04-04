@@ -73,6 +73,15 @@ class Dynamics_Euler_Stratified_WenoFV {
   SArray<real,1,hs+2>           weno_idl;         // Ideal weights for WENO
   real                          weno_sigma;       // WENO sigma parameter (handicap high-order TV estimate)
 
+  realHost4d halo_send_buf_S_host;
+  realHost4d halo_send_buf_N_host;
+  realHost4d halo_send_buf_W_host;
+  realHost4d halo_send_buf_E_host;
+  realHost4d halo_recv_buf_S_host;
+  realHost4d halo_recv_buf_N_host;
+  realHost4d halo_recv_buf_W_host;
+  realHost4d halo_recv_buf_E_host;
+
 
   // Compute the maximum stable time step using very conservative assumptions about max wind speed
   real compute_time_step( core::Coupler const &coupler ) {
@@ -860,6 +869,15 @@ class Dynamics_Euler_Stratified_WenoFV {
 
     }
 
+    halo_send_buf_W_host = realHost4d("halo_send_buf_W_host",num_state+num_tracers,nz,ny,hs);
+    halo_send_buf_E_host = realHost4d("halo_send_buf_E_host",num_state+num_tracers,nz,ny,hs);
+    halo_send_buf_S_host = realHost4d("halo_send_buf_S_host",num_state+num_tracers,nz,hs,nx);
+    halo_send_buf_N_host = realHost4d("halo_send_buf_N_host",num_state+num_tracers,nz,hs,nx);
+    halo_recv_buf_S_host = realHost4d("halo_recv_buf_S_host",num_state+num_tracers,nz,hs,nx);
+    halo_recv_buf_N_host = realHost4d("halo_recv_buf_N_host",num_state+num_tracers,nz,hs,nx);
+    halo_recv_buf_W_host = realHost4d("halo_recv_buf_W_host",num_state+num_tracers,nz,ny,hs);
+    halo_recv_buf_E_host = realHost4d("halo_recv_buf_E_host",num_state+num_tracers,nz,ny,hs);
+
     // Convert the initialized state and tracers arrays back to the coupler state
     convert_dynamics_to_coupler( coupler , state , tracers );
 
@@ -1271,6 +1289,102 @@ class Dynamics_Euler_Stratified_WenoFV {
     nc.write1(data.createHostCopy(),"theta_pert",{"z","y","x"},ulIndex,"t");
 
     nc.close();
+  }
+
+
+  void halo_exchange(core::Coupler &coupler , real4d &state , real4d &tracers) {
+    using yakl::c::parallel_for;
+    using yakl::c::Bounds;
+
+    int npack = num_state + num_tracers;
+
+    real4d halo_send_buf_W("halo_send_buf_W",npack,nz,ny,hs);
+    real4d halo_send_buf_E("halo_send_buf_E",npack,nz,ny,hs);
+
+    parallel_for( Bounds<4>(npack,nz,ny,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
+      if (v < num_state) {
+        halo_send_buf_W(v,k,j,ii) = state  (v          ,hs+k,hs+j,hs+ii);
+        halo_send_buf_E(v,k,j,ii) = state  (v          ,hs+k,hs+j,nx+ii);
+      } else {
+        halo_send_buf_W(v,k,j,ii) = tracers(v-num_state,hs+k,hs+j,hs+ii);
+        halo_send_buf_E(v,k,j,ii) = tracers(v-num_state,hs+k,hs+j,nx+ii);
+      }
+    });
+
+    real4d halo_send_buf_S("halo_send_buf_S",npack,nz,hs,nx);
+    real4d halo_send_buf_N("halo_send_buf_N",npack,nz,hs,nx);
+
+    parallel_for( Bounds<4>(npack,nz,hs,nx) , YAKL_LAMBDA (int v, int k, int jj, int i) {
+      if (v < num_state) {
+        halo_send_buf_S(v,k,jj,i) = state  (v          ,hs+k,hs+jj,hs+i);
+        halo_send_buf_N(v,k,jj,i) = state  (v          ,hs+k,ny+jj,hs+i);
+      } else {
+        halo_send_buf_S(v,k,jj,i) = tracers(v-num_state,hs+k,hs+jj,hs+i);
+        halo_send_buf_N(v,k,jj,i) = tracers(v-num_state,hs+k,ny+jj,hs+i);
+      }
+    });
+
+    yakl::fence();
+
+    real4d halo_recv_buf_S("halo_recv_buf_S",npack,nz,hs,nx);
+    real4d halo_recv_buf_N("halo_recv_buf_N",npack,nz,hs,nx);
+    real4d halo_recv_buf_W("halo_recv_buf_W",npack,nz,ny,hs);
+    real4d halo_recv_buf_E("halo_recv_buf_E",npack,nz,ny,hs);
+
+    MPI_Request sReq[4];
+    MPI_Request rReq[4];
+
+    auto &neigh = coupler.neigh;
+
+    //Pre-post the receives
+    MPI_Irecv( halo_recv_buf_W_host.data() , npack*nz*ny*hs , MPI_DOUBLE , neigh(1,0) , 0 , MPI_COMM_WORLD , &rReq[0] );
+    MPI_Irecv( halo_recv_buf_E_host.data() , npack*nz*ny*hs , MPI_DOUBLE , neigh(1,2) , 1 , MPI_COMM_WORLD , &rReq[1] );
+    MPI_Irecv( halo_recv_buf_S_host.data() , npack*nz*hs*nx , MPI_DOUBLE , neigh(0,1) , 2 , MPI_COMM_WORLD , &rReq[2] );
+    MPI_Irecv( halo_recv_buf_N_host.data() , npack*nz*hs*nx , MPI_DOUBLE , neigh(2,1) , 3 , MPI_COMM_WORLD , &rReq[3] );
+
+    halo_send_buf_W.deep_copy_to(halo_send_buf_W_host);
+    halo_send_buf_E.deep_copy_to(halo_send_buf_E_host);
+    halo_send_buf_S.deep_copy_to(halo_send_buf_S_host);
+    halo_send_buf_N.deep_copy_to(halo_send_buf_N_host);
+    yakl::fence();
+
+    //Send the data
+    MPI_Isend( halo_send_buf_W_host.data() , npack*nz*ny*hs , MPI_DOUBLE , neigh(1,0) , 1 , MPI_COMM_WORLD , &sReq[0] );
+    MPI_Isend( halo_send_buf_E_host.data() , npack*nz*ny*hs , MPI_DOUBLE , neigh(1,2) , 0 , MPI_COMM_WORLD , &sReq[1] );
+    MPI_Isend( halo_send_buf_S_host.data() , npack*nz*hs*nx , MPI_DOUBLE , neigh(0,1) , 3 , MPI_COMM_WORLD , &sReq[2] );
+    MPI_Isend( halo_send_buf_N_host.data() , npack*nz*hs*nx , MPI_DOUBLE , neigh(2,1) , 2 , MPI_COMM_WORLD , &sReq[3] );
+
+    MPI_Status  sStat[4];
+    MPI_Status  rStat[4];
+
+    //Wait for the sends and receives to finish
+    MPI_Waitall(4, sReq, sStat);
+    MPI_Waitall(4, rReq, rStat);
+
+    halo_recv_buf_W_host.deep_copy_to(halo_recv_buf_W);
+    halo_recv_buf_E_host.deep_copy_to(halo_recv_buf_E);
+    halo_recv_buf_S_host.deep_copy_to(halo_recv_buf_S);
+    halo_recv_buf_N_host.deep_copy_to(halo_recv_buf_N);
+
+    parallel_for( Bounds<4>(npack,nz,ny,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
+      if (v < num_state) {
+        state  (v          ,hs+k,hs+j,      ii) = halo_recv_buf_W(v,k,j,ii);
+        state  (v          ,hs+k,hs+j,nx+hs+ii) = halo_recv_buf_E(v,k,j,ii);
+      } else {
+        tracers(v-num_state,hs+k,hs+j,      ii) = halo_recv_buf_W(v,k,j,ii);
+        tracers(v-num_state,hs+k,hs+j,nx+hs+ii) = halo_recv_buf_E(v,k,j,ii);
+      }
+    });
+
+    parallel_for( Bounds<4>(npack,nz,hs,nx) , YAKL_LAMBDA (int v, int k, int jj, int i) {
+      if (v < num_state) {
+        state  (v          ,hs+k,      jj,hs+i) = halo_recv_buf_S(v,k,jj,i);
+        state  (v          ,hs+k,ny+hs+jj,hs+i) = halo_recv_buf_N(v,k,jj,i);
+      } else {
+        tracers(v-num_state,hs+k,      jj,hs+i) = halo_recv_buf_S(v,k,jj,i);
+        tracers(v-num_state,hs+k,ny+hs+jj,hs+i) = halo_recv_buf_N(v,k,jj,i);
+      }
+    });
   }
 
 
