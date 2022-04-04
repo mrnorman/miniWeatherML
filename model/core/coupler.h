@@ -28,6 +28,25 @@ namespace core {
     real zlen;   // Domain length in the z-direction in meters
     real dt_gcm; // Time step of the GCM for this MMF invocation
 
+    // MPI parallelization information
+    int    nranks;           // Total number of MPI ranks / processes
+    int    myrank;           // My rank # in [0,nranks-1]
+    size_t nx_glob;          // Total global number of cells in the x-direction (summing all MPI Processes)
+    size_t ny_glob;          // Total global number of cells in the y-direction (summing all MPI Processes)
+    int    nproc_x;          // Number of parallel processes distributed over the x-dimension
+    int    nproc_y;          // Number of parallel processes distributed over the y-dimension
+                             // nproc_x * nproc_y  must equal  nranks
+    int    px;               // My process ID in the x-direction
+    int    py;               // My process ID in the y-direction
+    size_t i_beg;            // Beginning of my x-direction global index
+    size_t j_beg;            // Beginning of my y-direction global index
+    size_t i_end;            // End of my x-direction global index
+    size_t j_end;            // End of my y-direction global index
+    bool    masterproc;      // myrank == 0
+    SArray<int,2,3,3> neigh; // List of neighboring task rank IDs;  1st index: y;  2nd index: x
+                             // Y: 0 = south;  1 = middle;  2 = north
+                             // X: 0 = west ;  1 = center;  3 = east 
+
     DataManager dm;
 
     struct Tracer {
@@ -89,6 +108,97 @@ namespace core {
       coupler.dt_gcm  = this->dt_gcm ;
       coupler.tracers = this->tracers;
       this->dm.clone_into( coupler.dm );
+    }
+
+
+    void distribute_mpi_and_allocate_coupled_state(int nz, size_t ny_glob, size_t nx_glob) {
+      using yakl::c::parallel_for;
+      using yakl::c::Bounds;
+
+      int nx, ny; // MPI task-local number of cells in the x- and y-directions
+
+      this->nx_glob = nx_glob;
+      this->ny_glob = ny_glob;
+
+      #ifdef HAVE_MPI
+
+        MPI_Comm_size( MPI_COMM_WORLD , &nranks );
+        MPI_Comm_rank( MPI_COMM_WORLD , &myrank );
+
+        masterproc = (myrank == 0);
+
+        // Find nproc_y * nproc_x == nranks such that nproc_y and nproc_x are as close as possible
+        int nproc_y = (int) std::ceil( std::sqrt((double) nranks) );
+        while (nproc_y > 1) {
+          if (nranks % nproc_y == 0) { break; }
+          nproc_y--;
+        }
+        int nproc_x = nranks / nproc_y;
+
+        // Get my ID within each dimension's number of ranks
+        py = myrank / nproc_y;
+        px = myrank % nproc_y;
+
+        // Get my beginning and ending indices in the x- and y- directions
+        double nper;
+        nper = ((double) nx_glob)/nproc_x;
+        i_beg = static_cast<size_t>( round( nper* px    )   );
+        i_end = static_cast<size_t>( round( nper*(px+1) )-1 );
+        nper = ((double) ny_glob)/nproc_y;
+        j_beg = static_cast<size_t>( round( nper* py    )   );
+        j_end = static_cast<size_t>( round( nper*(py+1) )-1 );
+        //Determine my number of grid cells
+        nx = i_end - i_beg + 1;
+        ny = j_end - j_beg + 1;
+        for (int j = 0; j < 3; j++) {
+          for (int i = 0; i < 3; i++) {
+            int pxloc = px+i-1;
+            if (pxloc < 0            ) pxloc = pxloc + nproc_x;
+            if (pxloc > nproc_x-1) pxloc = pxloc - nproc_x;
+            int pyloc = py+j-1;
+            if (pyloc < 0            ) pyloc = pyloc + nproc_y;
+            if (pyloc > nproc_y-1) pyloc = pyloc - nproc_y;
+            neigh(j,i) = pyloc * nproc_x + pxloc;
+          }
+        }
+
+      #else
+
+        nranks     = 1;
+        myrank     = 0;
+        masterproc = true;
+        nproc_y    = 1;
+        nproc_x    = 1;
+        py         = 0;
+        px         = 0;
+        i_beg      = 0;
+        j_beg      = 0;
+        i_end      = nx_glob-1;
+        j_end      = ny_glob-1;
+        nx         = nx_glob;
+        ny         = ny_glob;
+        
+      #endif
+
+      dm.register_and_allocate<real>("density_dry","dry density"         ,{nz,ny,nx},{"z","y","x"});
+      dm.register_and_allocate<real>("uvel"       ,"x-direction velocity",{nz,ny,nx},{"z","y","x"});
+      dm.register_and_allocate<real>("vvel"       ,"y-direction velocity",{nz,ny,nx},{"z","y","x"});
+      dm.register_and_allocate<real>("wvel"       ,"z-direction velocity",{nz,ny,nx},{"z","y","x"});
+      dm.register_and_allocate<real>("temp"       ,"temperature"         ,{nz,ny,nx},{"z","y","x"});
+
+      auto density_dry  = dm.get_collapsed<real>("density_dry");
+      auto uvel         = dm.get_collapsed<real>("uvel"       );
+      auto vvel         = dm.get_collapsed<real>("vvel"       );
+      auto wvel         = dm.get_collapsed<real>("wvel"       );
+      auto temp         = dm.get_collapsed<real>("temp"       );
+
+      parallel_for( "coupler zero" , Bounds<1>(nz*ny*nx) , YAKL_LAMBDA (int i) {
+        density_dry(i) = 0;
+        uvel       (i) = 0;
+        vvel       (i) = 0;
+        wvel       (i) = 0;
+        temp       (i) = 0;
+      });
     }
 
 
@@ -223,28 +333,6 @@ namespace core {
 
 
     void allocate_coupler_state( int nz, int ny, int nx ) {
-      using yakl::c::parallel_for;
-      using yakl::c::Bounds;
-      using yakl::c::SimpleBounds;
-      dm.register_and_allocate<real>("density_dry","dry density"         ,{nz,ny,nx},{"z","y","x"});
-      dm.register_and_allocate<real>("uvel"       ,"x-direction velocity",{nz,ny,nx},{"z","y","x"});
-      dm.register_and_allocate<real>("vvel"       ,"y-direction velocity",{nz,ny,nx},{"z","y","x"});
-      dm.register_and_allocate<real>("wvel"       ,"z-direction velocity",{nz,ny,nx},{"z","y","x"});
-      dm.register_and_allocate<real>("temp"       ,"temperature"         ,{nz,ny,nx},{"z","y","x"});
-
-      auto density_dry  = dm.get_collapsed<real>("density_dry");
-      auto uvel         = dm.get_collapsed<real>("uvel"       );
-      auto vvel         = dm.get_collapsed<real>("vvel"       );
-      auto wvel         = dm.get_collapsed<real>("wvel"       );
-      auto temp         = dm.get_collapsed<real>("temp"       );
-
-      parallel_for( "coupler zero" , SimpleBounds<1>(nz*ny*nx) , YAKL_LAMBDA (int i) {
-        density_dry(i) = 0;
-        uvel       (i) = 0;
-        vvel       (i) = 0;
-        wvel       (i) = 0;
-        temp       (i) = 0;
-      });
     }
 
 
