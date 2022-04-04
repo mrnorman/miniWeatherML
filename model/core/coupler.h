@@ -217,6 +217,12 @@ namespace core {
     real get_zlen() const { return this->zlen; }
 
 
+    size_t get_nx_glob() const { return this->nx_glob; }
+
+
+    size_t get_ny_glob() const { return this->ny_glob; }
+
+
     int get_nx() const {
       if (dm.find_dimension("x") == -1) return -1;
       return dm.get_dimension_size("x");
