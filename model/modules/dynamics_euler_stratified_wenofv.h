@@ -1223,8 +1223,6 @@ class Dynamics_Euler_Stratified_WenoFV {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
-    YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-    YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
     YAKL_SCOPE( dx                  , this->dx                  );
     YAKL_SCOPE( dy                  , this->dy                  );
     YAKL_SCOPE( dz                  , this->dz                  );
@@ -1316,6 +1314,9 @@ class Dynamics_Euler_Stratified_WenoFV {
   void halo_exchange(core::Coupler const &coupler , real4d const &state , real4d const &tracers) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
+
+    YAKL_SCOPE( nx    , this->nx    );
+    YAKL_SCOPE( ny    , this->ny    );
 
     int npack = num_state + num_tracers;
 
@@ -1431,6 +1432,9 @@ class Dynamics_Euler_Stratified_WenoFV {
                                                     real5d const &state_limits_y , real5d const &tracers_limits_y ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
+
+    YAKL_SCOPE( nx    , this->nx    );
+    YAKL_SCOPE( ny    , this->ny    );
 
     int npack = num_state + num_tracers;
 
