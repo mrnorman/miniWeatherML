@@ -22,14 +22,17 @@ namespace custom_modules {
       using std::min;
       using std::abs;
 
-      auto temp_in   = input .dm.get<real const,3>("temp"         );
-      auto temp_out  = output.dm.get<real const,3>("temp"         );
-      auto rho_v_in  = input .dm.get<real const,3>("water_vapor"  );
-      auto rho_v_out = output.dm.get<real const,3>("water_vapor"  );
-      auto rho_c_in  = input .dm.get<real const,3>("cloud_liquid" );
-      auto rho_c_out = output.dm.get<real const,3>("cloud_liquid" );
-      auto rho_p_in  = input .dm.get<real const,3>("precip_liquid");
-      auto rho_p_out = output.dm.get<real const,3>("precip_liquid");
+      auto &dm_in  = input .get_data_manager_readonly();
+      auto &dm_out = output.get_data_manager_readonly();
+
+      auto temp_in   = dm_in .get<real const,3>("temp"         );
+      auto temp_out  = dm_out.get<real const,3>("temp"         );
+      auto rho_v_in  = dm_in .get<real const,3>("water_vapor"  );
+      auto rho_v_out = dm_out.get<real const,3>("water_vapor"  );
+      auto rho_c_in  = dm_in .get<real const,3>("cloud_liquid" );
+      auto rho_c_out = dm_out.get<real const,3>("cloud_liquid" );
+      auto rho_p_in  = dm_in .get<real const,3>("precip_liquid");
+      auto rho_p_out = dm_out.get<real const,3>("precip_liquid");
 
       int nx = input.get_nx();
       int ny = input.get_ny();
@@ -48,7 +51,7 @@ namespace custom_modules {
         }
       });
 
-      if (etime > (num_out+1)*3600) { print(); num_out++; }
+      if (etime > (num_out+1)*200) { print(input.is_mainproc()); num_out++; }
 
       numer += yakl::intrinsics::sum( active );
       denom += nx*ny*nz;
@@ -76,12 +79,18 @@ namespace custom_modules {
     }
 
 
-    void print() {
-      std::cout << "*** Ratio Active ***:  " << std::scientific << std::setw(10) << numer / denom << std::endl;
+    void print(bool mainproc) {
+      double numer_all;
+      double denom_all;
+      MPI_Reduce( &numer , &numer_all , 1 , MPI_DOUBLE , MPI_SUM , 0 , MPI_COMM_WORLD );
+      MPI_Reduce( &denom , &denom_all , 1 , MPI_DOUBLE , MPI_SUM , 0 , MPI_COMM_WORLD );
+      if (mainproc) {
+        std::cout << "*** Ratio Active ***:  " << std::scientific << std::setw(10) << numer_all/denom_all << std::endl;
+      }
     }
 
 
-    void finalize( core::Coupler &coupler ) {  print();  }
+    void finalize( core::Coupler &coupler ) {  print(coupler.is_mainproc());  }
 
   };
 

@@ -7,9 +7,7 @@
 #include "column_nudging.h"
 
 int main(int argc, char** argv) {
-  #ifdef HAVE_MPI
-    MPI_Initialize( &argc , &argv );
-  #endif
+  MPI_Init( &argc , &argv );
   yakl::init();
   {
     using yakl::intrinsics::abs;
@@ -83,9 +81,7 @@ int main(int argc, char** argv) {
     yakl::timer_stop("main");
   }
   yakl::finalize();
-  #ifdef HAVE_MPI
-    MPI_Finalize();
-  #endif
+  MPI_Finalize();
 }
 
 

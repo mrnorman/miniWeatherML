@@ -73,12 +73,30 @@ class Dynamics_Euler_Stratified_WenoFV {
   SArray<real,1,hs+2>           weno_idl;         // Ideal weights for WENO
   real                          weno_sigma;       // WENO sigma parameter (handicap high-order TV estimate)
 
+  realHost4d halo_send_buf_S_host;
+  realHost4d halo_send_buf_N_host;
+  realHost4d halo_send_buf_W_host;
+  realHost4d halo_send_buf_E_host;
+  realHost4d halo_recv_buf_S_host;
+  realHost4d halo_recv_buf_N_host;
+  realHost4d halo_recv_buf_W_host;
+  realHost4d halo_recv_buf_E_host;
+
+  realHost3d edge_send_buf_S_host;
+  realHost3d edge_send_buf_N_host;
+  realHost3d edge_send_buf_W_host;
+  realHost3d edge_send_buf_E_host;
+  realHost3d edge_recv_buf_S_host;
+  realHost3d edge_recv_buf_N_host;
+  realHost3d edge_recv_buf_W_host;
+  realHost3d edge_recv_buf_E_host;
+
 
   // Compute the maximum stable time step using very conservative assumptions about max wind speed
   real compute_time_step( core::Coupler const &coupler ) {
     real constexpr maxwave = 350 + 80;
     real cfl = 0.3;
-    if (coupler.get_ny() == 1) cfl = 0.5;
+    if (coupler.get_ny_glob() == 1) cfl = 0.5;
     return cfl * std::min( std::min( dx , dy ) , dz ) / maxwave;
   }
 
@@ -187,12 +205,15 @@ class Dynamics_Euler_Stratified_WenoFV {
       yakl::timer_stop("output");
       num_out++;
       // Let the user know what the max vertical velocity is to ensure the model hasn't crashed
-      real maxw = maxval(abs(coupler.dm.get_collapsed<real const>("wvel")));
-      real maxu = maxval(abs(coupler.dm.get_collapsed<real const>("uvel")));
-      std::cout << "Etime , dtphys, maxw, maxu: " << std::scientific << std::setw(10) << etime   << " , " 
-                                                  << std::scientific << std::setw(10) << dt_phys << " , "
-                                                  << std::scientific << std::setw(10) << maxw    << " , "
-                                                  << std::scientific << std::setw(10) << maxu    << "\n";
+      auto &dm = coupler.get_data_manager_readonly();
+      real maxw_loc = maxval(abs(dm.get_collapsed<real const>("wvel")));
+      real maxw;
+      MPI_Reduce( &maxw_loc , &maxw , 1 , MPI_DOUBLE , MPI_MAX , 0 , MPI_COMM_WORLD );
+      if (coupler.is_mainproc()) {
+        std::cout << "Etime , dtphys, maxw: " << std::scientific << std::setw(10) << etime   << " , " 
+                                              << std::scientific << std::setw(10) << dt_phys << " , "
+                                              << std::scientific << std::setw(10) << maxw    << "\n";
+      }
     }
   }
 
@@ -243,6 +264,8 @@ class Dynamics_Euler_Stratified_WenoFV {
       tracers(l,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
     });
 
+    halo_exchange( coupler , state , tracers );
+
     // Compute samples of state and tracers at cell edges using cell-centered reconstructions at high-order with WENO
     // At the end of this, we will have two samples per cell edge in each dimension, one from each adjacent cell.
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i ) {
@@ -254,10 +277,7 @@ class Dynamics_Euler_Stratified_WenoFV {
         // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
         SArray<real,1,ord> stencil;
         SArray<real,1,2>   gll;
-        for (int s=0; s < ord; s++) {
-          int ind = i+s;   if (ind < hs) ind += nx;   if (ind >= nx+hs) ind -= nx;
-          stencil(s) = state(l,hs+k,hs+j,ind);
-        }
+        for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s); }
         reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
         state_limits_x(l,1,k,j,i  ) = gll(0);
         state_limits_x(l,0,k,j,i+1) = gll(1);
@@ -273,10 +293,7 @@ class Dynamics_Euler_Stratified_WenoFV {
         // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
         SArray<real,1,ord> stencil;
         SArray<real,1,2>   gll;
-        for (int s=0; s < ord; s++) {
-          int ind = i+s;   if (ind < hs) ind += nx;   if (ind >= nx+hs) ind -= nx;
-          stencil(s) = tracers(l,hs+k,hs+j,ind);
-        }
+        for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,hs+j,i+s); }
         reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
         tracers_limits_x(l,1,k,j,i  ) = gll(0) * state_limits_x(idR,1,k,j,i  );
         tracers_limits_x(l,0,k,j,i+1) = gll(1) * state_limits_x(idR,0,k,j,i+1);
@@ -292,10 +309,7 @@ class Dynamics_Euler_Stratified_WenoFV {
           // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) {
-            int ind = j+s;   if (ind < hs) ind += ny;   if (ind >= ny+hs) ind -= ny;
-            stencil(s) = state(l,hs+k,ind,hs+i);
-          }
+          for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
           reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
           state_limits_y(l,1,k,j  ,i) = gll(0);
           state_limits_y(l,0,k,j+1,i) = gll(1);
@@ -311,10 +325,7 @@ class Dynamics_Euler_Stratified_WenoFV {
           // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) {
-            int ind = j+s;   if (ind < hs) ind += ny;   if (ind >= ny+hs) ind -= ny;
-            stencil(s) = tracers(l,hs+k,ind,hs+i);
-          }
+          for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,j+s,hs+i); }
           reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
           tracers_limits_y(l,1,k,j  ,i) = gll(0) * state_limits_y(idR,1,k,j  ,i);
           tracers_limits_y(l,0,k,j+1,i) = gll(1) * state_limits_y(idR,0,k,j+1,i);
@@ -375,10 +386,13 @@ class Dynamics_Euler_Stratified_WenoFV {
       }
     });
 
+    edge_exchange( coupler , state_limits_x , tracers_limits_x , state_limits_y , tracers_limits_y );
+
     // The store a single values flux at cell edges
     real4d state_flux_x  ("state_flux_x"  ,num_state  ,nz  ,ny  ,nx+1);
     real4d state_flux_y  ("state_flux_y"  ,num_state  ,nz  ,ny+1,nx  );
     real4d state_flux_z  ("state_flux_z"  ,num_state  ,nz+1,ny  ,nx  );
+
     real4d tracers_flux_x("tracers_flux_x",num_tracers,nz  ,ny  ,nx+1);
     real4d tracers_flux_y("tracers_flux_y",num_tracers,nz  ,ny+1,nx  );
     real4d tracers_flux_z("tracers_flux_z",num_tracers,nz+1,ny  ,nx  );
@@ -388,16 +402,7 @@ class Dynamics_Euler_Stratified_WenoFV {
       ////////////////////////////////////////////////////////
       // X-direction
       ////////////////////////////////////////////////////////
-      // Boundary conditions
       if (j < ny && k < nz) {
-        if (i == 0 ) {
-          for (int l=0; l < num_state  ; l++) { state_limits_x  (l,0,k,j,0 ) = state_limits_x  (l,0,k,j,nx); }
-          for (int l=0; l < num_tracers; l++) { tracers_limits_x(l,0,k,j,0 ) = tracers_limits_x(l,0,k,j,nx); }
-        }
-        if (i == nx) {
-          for (int l=0; l < num_state  ; l++) { state_limits_x  (l,1,k,j,nx) = state_limits_x  (l,1,k,j,0 ); }
-          for (int l=0; l < num_tracers; l++) { tracers_limits_x(l,1,k,j,nx) = tracers_limits_x(l,1,k,j,0 ); }
-        }
         // Get left and right state
         real r_L = state_limits_x(idR,0,k,j,i)    ;   real r_R = state_limits_x(idR,1,k,j,i)    ;
         real u_L = state_limits_x(idU,0,k,j,i)/r_L;   real u_R = state_limits_x(idU,1,k,j,i)/r_R;
@@ -466,15 +471,6 @@ class Dynamics_Euler_Stratified_WenoFV {
       ////////////////////////////////////////////////////////
       // If we are simulating in 2-D, then do not do Riemann in the y-direction
       if ( (! sim2d) && i < nx && k < nz) {
-        // Boundary conditions
-        if (j == 0 ) {
-          for (int l=0; l < num_state  ; l++) { state_limits_y  (l,0,k,0 ,i) = state_limits_y  (l,0,k,ny,i); }
-          for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,0,k,0 ,i) = tracers_limits_y(l,0,k,ny,i); }
-        }
-        if (j == ny) {
-          for (int l=0; l < num_state  ; l++) { state_limits_y  (l,1,k,ny,i) = state_limits_y  (l,1,k,0 ,i); }
-          for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,1,k,ny,i) = tracers_limits_y(l,1,k,0 ,i); }
-        }
         // Get left and right state
         real r_L = state_limits_y(idR,0,k,j,i)    ;   real r_R = state_limits_y(idR,1,k,j,i)    ;
         real u_L = state_limits_y(idU,0,k,j,i)/r_L;   real u_R = state_limits_y(idU,1,k,j,i)/r_R;
@@ -687,14 +683,14 @@ class Dynamics_Euler_Stratified_WenoFV {
     ylen  = coupler.get_ylen();
     zlen  = coupler.get_zlen();
 
-    sim2d = (ny == 1);
+    sim2d = (coupler.get_ny_glob() == 1);
 
-    R_d   = coupler.R_d ;
-    R_v   = coupler.R_v ;
-    cp_d  = coupler.cp_d;
-    cp_v  = coupler.cp_v;
-    p0    = coupler.p0  ;
-    grav  = coupler.grav;
+    R_d   = coupler.get_R_d ();
+    R_v   = coupler.get_R_v ();
+    cp_d  = coupler.get_cp_d();
+    cp_v  = coupler.get_cp_v();
+    p0    = coupler.get_p0  ();
+    grav  = coupler.get_grav();
     kappa = R_d / cp_d;
     gamma = cp_d / (cp_d - R_d);
     C0    = pow( R_d * pow( p0 , -kappa ) , gamma );
@@ -793,6 +789,9 @@ class Dynamics_Euler_Stratified_WenoFV {
       YAKL_SCOPE( num_tracers         , this->num_tracers         );
       YAKL_SCOPE( idWV                , this->idWV                );
 
+      size_t i_beg = coupler.get_i_beg();
+      size_t j_beg = coupler.get_j_beg();
+
       // Use quadrature to initialize state and tracer data
       parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         for (int l=0; l < num_state; l++) {
@@ -805,9 +804,9 @@ class Dynamics_Euler_Stratified_WenoFV {
         for (int kk=0; kk<nqpoints; kk++) {
           for (int jj=0; jj<nqpoints; jj++) {
             for (int ii=0; ii<nqpoints; ii++) {
-              real x = (i+0.5)*dx + (qpoints(ii)-0.5)*dx;
-              real y = (j+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
-              real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+              real x = (i+i_beg+0.5)*dx + (qpoints(ii)-0.5)*dx;
+              real y = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
+              real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
               real rho, u, v, w, theta, rho_v, hr, ht;
 
               if (init_data_int == DATA_THERMAL) {
@@ -859,6 +858,24 @@ class Dynamics_Euler_Stratified_WenoFV {
       });
 
     }
+
+    halo_send_buf_W_host = realHost4d("halo_send_buf_W_host",num_state+num_tracers,nz,ny,hs);
+    halo_send_buf_E_host = realHost4d("halo_send_buf_E_host",num_state+num_tracers,nz,ny,hs);
+    halo_send_buf_S_host = realHost4d("halo_send_buf_S_host",num_state+num_tracers,nz,hs,nx);
+    halo_send_buf_N_host = realHost4d("halo_send_buf_N_host",num_state+num_tracers,nz,hs,nx);
+    halo_recv_buf_S_host = realHost4d("halo_recv_buf_S_host",num_state+num_tracers,nz,hs,nx);
+    halo_recv_buf_N_host = realHost4d("halo_recv_buf_N_host",num_state+num_tracers,nz,hs,nx);
+    halo_recv_buf_W_host = realHost4d("halo_recv_buf_W_host",num_state+num_tracers,nz,ny,hs);
+    halo_recv_buf_E_host = realHost4d("halo_recv_buf_E_host",num_state+num_tracers,nz,ny,hs);
+
+    edge_send_buf_S_host = realHost3d("edge_send_buf_S_host",num_state+num_tracers,nz,nx);
+    edge_send_buf_N_host = realHost3d("edge_send_buf_N_host",num_state+num_tracers,nz,nx);
+    edge_send_buf_W_host = realHost3d("edge_send_buf_W_host",num_state+num_tracers,nz,ny);
+    edge_send_buf_E_host = realHost3d("edge_send_buf_E_host",num_state+num_tracers,nz,ny);
+    edge_recv_buf_S_host = realHost3d("edge_recv_buf_S_host",num_state+num_tracers,nz,nx);
+    edge_recv_buf_N_host = realHost3d("edge_recv_buf_N_host",num_state+num_tracers,nz,nx);
+    edge_recv_buf_W_host = realHost3d("edge_recv_buf_W_host",num_state+num_tracers,nz,ny);
+    edge_recv_buf_E_host = realHost3d("edge_recv_buf_E_host",num_state+num_tracers,nz,ny);
 
     // Convert the initialized state and tracers arrays back to the coupler state
     convert_dynamics_to_coupler( coupler , state , tracers );
@@ -1011,6 +1028,9 @@ class Dynamics_Euler_Stratified_WenoFV {
       hy_dens_theta_cells(k) = dens_theta;
     });
 
+    size_t i_beg = coupler.get_i_beg();
+    size_t j_beg = coupler.get_j_beg();
+
     // Initialize the state
     parallel_for( "Spatial.h init_state 12" , Bounds<3>(nz,ny,nx) ,
                   YAKL_LAMBDA (int k, int j, int i) {
@@ -1023,9 +1043,9 @@ class Dynamics_Euler_Stratified_WenoFV {
       for (int kk=0; kk < ord; kk++) {
         for (int jj=0; jj < ord; jj++) {
           for (int ii=0; ii < ord; ii++) {
-            real xloc = (i+0.5_fp)*dx + gll_pts(ii)*dx;
-            real yloc = (j+0.5_fp)*dy + gll_pts(jj)*dy;
-            real zloc = (k+0.5_fp)*dz + gll_pts(kk)*dz;
+            real xloc = (i+i_beg+0.5_fp)*dx + gll_pts(ii)*dx;
+            real yloc = (j+j_beg+0.5_fp)*dy + gll_pts(jj)*dy;
+            real zloc = (k      +0.5_fp)*dz + gll_pts(kk)*dz;
 
             if (sim2d) yloc = ylen/2;
 
@@ -1085,18 +1105,20 @@ class Dynamics_Euler_Stratified_WenoFV {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
+    auto &dm = coupler.get_data_manager_readwrite();
+
     // Get state from the coupler
-    auto dm_rho_d = coupler.dm.get<real,3>("density_dry");
-    auto dm_uvel  = coupler.dm.get<real,3>("uvel"       );
-    auto dm_vvel  = coupler.dm.get<real,3>("vvel"       );
-    auto dm_wvel  = coupler.dm.get<real,3>("wvel"       );
-    auto dm_temp  = coupler.dm.get<real,3>("temp"       );
+    auto dm_rho_d = dm.get<real,3>("density_dry");
+    auto dm_uvel  = dm.get<real,3>("uvel"       );
+    auto dm_vvel  = dm.get<real,3>("vvel"       );
+    auto dm_wvel  = dm.get<real,3>("wvel"       );
+    auto dm_temp  = dm.get<real,3>("temp"       );
 
     // Get tracers from the coupler
     core::MultiField<real,3> dm_tracers;
     auto tracer_names = coupler.get_tracer_names();
     for (int tr=0; tr < num_tracers; tr++) {
-      dm_tracers.add_field( coupler.dm.get<real,3>(tracer_names[tr]) );
+      dm_tracers.add_field( dm.get<real,3>(tracer_names[tr]) );
     }
 
     YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
@@ -1142,18 +1164,20 @@ class Dynamics_Euler_Stratified_WenoFV {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
+    auto &dm = coupler.get_data_manager_readonly();
+
     // Get the coupler's state (as const because it's read-only)
-    auto dm_rho_d = coupler.dm.get<real const,3>("density_dry");
-    auto dm_uvel  = coupler.dm.get<real const,3>("uvel"       );
-    auto dm_vvel  = coupler.dm.get<real const,3>("vvel"       );
-    auto dm_wvel  = coupler.dm.get<real const,3>("wvel"       );
-    auto dm_temp  = coupler.dm.get<real const,3>("temp"       );
+    auto dm_rho_d = dm.get<real const,3>("density_dry");
+    auto dm_uvel  = dm.get<real const,3>("uvel"       );
+    auto dm_vvel  = dm.get<real const,3>("vvel"       );
+    auto dm_wvel  = dm.get<real const,3>("wvel"       );
+    auto dm_temp  = dm.get<real const,3>("temp"       );
 
     // Get the coupler's tracers (as const because it's read-only)
     core::MultiField<real const,3> dm_tracers;
     auto tracer_names = coupler.get_tracer_names();
     for (int tr=0; tr < num_tracers; tr++) {
-      dm_tracers.add_field( coupler.dm.get<real const,3>(tracer_names[tr]) );
+      dm_tracers.add_field( dm.get<real const,3>(tracer_names[tr]) );
     }
 
     YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
@@ -1199,8 +1223,6 @@ class Dynamics_Euler_Stratified_WenoFV {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
-    YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-    YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
     YAKL_SCOPE( dx                  , this->dx                  );
     YAKL_SCOPE( dy                  , this->dy                  );
     YAKL_SCOPE( dz                  , this->dz                  );
@@ -1209,68 +1231,318 @@ class Dynamics_Euler_Stratified_WenoFV {
     real4d tracers("tracers",num_tracers,hs+nz,hs+ny,hs+nx);
     convert_coupler_to_dynamics( coupler , state , tracers );
 
-    yakl::SimpleNetCDF nc;
-    int ulIndex = 0; // Unlimited dimension index to place this data at
+    yakl::SimplePNetCDF nc;
+    MPI_Offset ulIndex = 0; // Unlimited dimension index to place this data at
+
+    int i_beg = coupler.get_i_beg();
+    int j_beg = coupler.get_j_beg();
 
     if (etime == 0) {
       nc.create(fname);
 
+      nc.create_dim( "x" , coupler.get_nx_glob() );
+      nc.create_dim( "y" , coupler.get_ny_glob() );
+      nc.create_dim( "z" , nz );
+      nc.create_unlim_dim( "t" );
+
+      nc.create_var<real>( "x" , {"x"} );
+      nc.create_var<real>( "y" , {"y"} );
+      nc.create_var<real>( "z" , {"z"} );
+      nc.create_var<real>( "t" , {"t"} );
+      nc.create_var<real>( "density_dry" , {"t","z","y","x"} );
+      nc.create_var<real>( "uvel"        , {"t","z","y","x"} );
+      nc.create_var<real>( "vvel"        , {"t","z","y","x"} );
+      nc.create_var<real>( "wvel"        , {"t","z","y","x"} );
+      nc.create_var<real>( "temperature" , {"t","z","y","x"} );
+      auto tracer_names = coupler.get_tracer_names();
+      for (int tr = 0; tr < num_tracers; tr++) {
+        nc.create_var<real>( tracer_names[tr] , {"t","z","y","x"} );
+      }
+
+      nc.enddef();
+
       // x-coordinate
       real1d xloc("xloc",nx);
-      parallel_for( "Spatial.h output 1" , nx , YAKL_LAMBDA (int i) { xloc(i) = (i+0.5)*dx; });
-      nc.write(xloc.createHostCopy(),"x",{"x"});
+      parallel_for( nx , YAKL_LAMBDA (int i) { xloc(i) = (i+i_beg+0.5)*dx; });
+      nc.write_all( xloc.createHostCopy() , "x" , {i_beg} );
 
       // y-coordinate
       real1d yloc("yloc",ny);
-      parallel_for( "Spatial.h output 2" , ny , YAKL_LAMBDA (int i) { yloc(i) = (i+0.5)*dy; });
-      nc.write(yloc.createHostCopy(),"y",{"y"});
+      parallel_for( ny , YAKL_LAMBDA (int j) { yloc(j) = (j+j_beg+0.5)*dy; });
+      nc.write_all( yloc.createHostCopy() , "y" , {j_beg} );
 
       // z-coordinate
       real1d zloc("zloc",nz);
-      parallel_for( "Spatial.h output 3" , nz , YAKL_LAMBDA (int i) { zloc(i) = (i+0.5)*dz; });
-      nc.write(zloc.createHostCopy(),"z",{"z"});
+      parallel_for( nz , YAKL_LAMBDA (int k) { zloc(k) = (k      +0.5)*dz; });
+      nc.begin_indep_data();
+      if (coupler.is_mainproc()) {
+        nc.write( zloc.createHostCopy() , "z" );
+        nc.write1( 0._fp , "t" , 0 , "t" );
+      }
+      nc.end_indep_data();
 
-      nc.write(hy_dens_cells      .createHostCopy(),"hydrostatic_density"      ,{"z"});
-      nc.write(hy_dens_theta_cells.createHostCopy(),"hydrostatic_density_theta",{"z"});
-
-      // Elapsed time
-      nc.write1(0._fp,"t",0,"t");
     } else {
-      nc.open(fname,yakl::NETCDF_MODE_WRITE);
-      ulIndex = nc.getDimSize("t");
+
+      nc.open(fname);
+      ulIndex = nc.get_dim_size("t");
 
       // Write the elapsed time
-      nc.write1(etime,"t",ulIndex,"t");
+      nc.begin_indep_data();
+      if (coupler.is_mainproc()) {
+        nc.write1(etime,"t",ulIndex,"t");
+      }
+      nc.end_indep_data();
+
     }
 
-    auto &dm = coupler.dm;
-    nc.write1(dm.get<real const,3>("density_dry").createHostCopy(),"density_dry",{"z","y","x"},ulIndex,"t");
-    nc.write1(dm.get<real const,3>("uvel"       ).createHostCopy(),"uvel"       ,{"z","y","x"},ulIndex,"t");
-    nc.write1(dm.get<real const,3>("vvel"       ).createHostCopy(),"vvel"       ,{"z","y","x"},ulIndex,"t");
-    nc.write1(dm.get<real const,3>("wvel"       ).createHostCopy(),"wvel"       ,{"z","y","x"},ulIndex,"t");
-    nc.write1(dm.get<real const,3>("temp"       ).createHostCopy(),"temperature",{"z","y","x"},ulIndex,"t");
+    auto &dm = coupler.get_data_manager_readonly();
+    nc.write1_all(dm.get<real const,3>("density_dry").createHostCopy(),"density_dry",ulIndex,{0,j_beg,i_beg},"t");
+    nc.write1_all(dm.get<real const,3>("uvel"       ).createHostCopy(),"uvel"       ,ulIndex,{0,j_beg,i_beg},"t");
+    nc.write1_all(dm.get<real const,3>("vvel"       ).createHostCopy(),"vvel"       ,ulIndex,{0,j_beg,i_beg},"t");
+    nc.write1_all(dm.get<real const,3>("wvel"       ).createHostCopy(),"wvel"       ,ulIndex,{0,j_beg,i_beg},"t");
+    nc.write1_all(dm.get<real const,3>("temp"       ).createHostCopy(),"temperature",ulIndex,{0,j_beg,i_beg},"t");
     // Write the tracers to file
     auto tracer_names = coupler.get_tracer_names();
     for (int tr = 0; tr < num_tracers; tr++) {
-      nc.write1(dm.get<real const,3>(tracer_names[tr]).createHostCopy(),tracer_names[tr],{"z","y","x"},ulIndex,"t");
+      nc.write1_all(dm.get<real const,3>(tracer_names[tr]).createHostCopy(),tracer_names[tr],ulIndex,{0,j_beg,i_beg},"t");
     }
 
-    real3d data("data",nz,ny,nx);
-    parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-      data(k,j,i) = state(idR,hs+k,hs+j,hs+i);
-    });
-    nc.write1(data.createHostCopy(),"density_pert",{"z","y","x"},ulIndex,"t");
-
-    parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-      real hy_r  = hy_dens_cells      (k);
-      real hy_rt = hy_dens_theta_cells(k);
-      real r     = state(idR,hs+k,hs+j,hs+i) + hy_r;
-      real rt    = state(idT,hs+k,hs+j,hs+i) + hy_rt;
-      data(k,j,i) = rt / r - hy_rt / hy_r;
-    });
-    nc.write1(data.createHostCopy(),"theta_pert",{"z","y","x"},ulIndex,"t");
-
     nc.close();
+  }
+
+
+  void halo_exchange(core::Coupler const &coupler , real4d const &state , real4d const &tracers) {
+    using yakl::c::parallel_for;
+    using yakl::c::Bounds;
+
+    YAKL_SCOPE( nx    , this->nx    );
+    YAKL_SCOPE( ny    , this->ny    );
+
+    int npack = num_state + num_tracers;
+
+    real4d halo_send_buf_W("halo_send_buf_W",npack,nz,ny,hs);
+    real4d halo_send_buf_E("halo_send_buf_E",npack,nz,ny,hs);
+
+    parallel_for( Bounds<4>(npack,nz,ny,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
+      if (v < num_state) {
+        halo_send_buf_W(v,k,j,ii) = state  (v          ,hs+k,hs+j,hs+ii);
+        halo_send_buf_E(v,k,j,ii) = state  (v          ,hs+k,hs+j,nx+ii);
+      } else {
+        halo_send_buf_W(v,k,j,ii) = tracers(v-num_state,hs+k,hs+j,hs+ii);
+        halo_send_buf_E(v,k,j,ii) = tracers(v-num_state,hs+k,hs+j,nx+ii);
+      }
+    });
+
+    real4d halo_send_buf_S("halo_send_buf_S",npack,nz,hs,nx);
+    real4d halo_send_buf_N("halo_send_buf_N",npack,nz,hs,nx);
+
+    if (!sim2d) {
+      parallel_for( Bounds<4>(npack,nz,hs,nx) , YAKL_LAMBDA (int v, int k, int jj, int i) {
+        if (v < num_state) {
+          halo_send_buf_S(v,k,jj,i) = state  (v          ,hs+k,hs+jj,hs+i);
+          halo_send_buf_N(v,k,jj,i) = state  (v          ,hs+k,ny+jj,hs+i);
+        } else {
+          halo_send_buf_S(v,k,jj,i) = tracers(v-num_state,hs+k,hs+jj,hs+i);
+          halo_send_buf_N(v,k,jj,i) = tracers(v-num_state,hs+k,ny+jj,hs+i);
+        }
+      });
+    }
+
+    yakl::fence();
+
+    real4d halo_recv_buf_W("halo_recv_buf_W",npack,nz,ny,hs);
+    real4d halo_recv_buf_E("halo_recv_buf_E",npack,nz,ny,hs);
+    real4d halo_recv_buf_S("halo_recv_buf_S",npack,nz,hs,nx);
+    real4d halo_recv_buf_N("halo_recv_buf_N",npack,nz,hs,nx);
+
+    MPI_Request sReq[4];
+    MPI_Request rReq[4];
+
+    auto &neigh = coupler.get_neighbor_rankid_matrix();
+
+    //Pre-post the receives
+    MPI_Irecv( halo_recv_buf_W_host.data() , npack*nz*ny*hs , MPI_DOUBLE , neigh(1,0) , 0 , MPI_COMM_WORLD , &rReq[0] );
+    MPI_Irecv( halo_recv_buf_E_host.data() , npack*nz*ny*hs , MPI_DOUBLE , neigh(1,2) , 1 , MPI_COMM_WORLD , &rReq[1] );
+    if (!sim2d) {
+      MPI_Irecv( halo_recv_buf_S_host.data() , npack*nz*hs*nx , MPI_DOUBLE , neigh(0,1) , 2 , MPI_COMM_WORLD , &rReq[2] );
+      MPI_Irecv( halo_recv_buf_N_host.data() , npack*nz*hs*nx , MPI_DOUBLE , neigh(2,1) , 3 , MPI_COMM_WORLD , &rReq[3] );
+    }
+
+    halo_send_buf_W.deep_copy_to(halo_send_buf_W_host);
+    halo_send_buf_E.deep_copy_to(halo_send_buf_E_host);
+    if (!sim2d) {
+      halo_send_buf_S.deep_copy_to(halo_send_buf_S_host);
+      halo_send_buf_N.deep_copy_to(halo_send_buf_N_host);
+    }
+
+    yakl::fence();
+
+    //Send the data
+    MPI_Isend( halo_send_buf_W_host.data() , npack*nz*ny*hs , MPI_DOUBLE , neigh(1,0) , 1 , MPI_COMM_WORLD , &sReq[0] );
+    MPI_Isend( halo_send_buf_E_host.data() , npack*nz*ny*hs , MPI_DOUBLE , neigh(1,2) , 0 , MPI_COMM_WORLD , &sReq[1] );
+    if (!sim2d) {
+      MPI_Isend( halo_send_buf_S_host.data() , npack*nz*hs*nx , MPI_DOUBLE , neigh(0,1) , 3 , MPI_COMM_WORLD , &sReq[2] );
+      MPI_Isend( halo_send_buf_N_host.data() , npack*nz*hs*nx , MPI_DOUBLE , neigh(2,1) , 2 , MPI_COMM_WORLD , &sReq[3] );
+    }
+
+    MPI_Status  sStat[4];
+    MPI_Status  rStat[4];
+
+    //Wait for the sends and receives to finish
+    if (sim2d) {
+      MPI_Waitall(2, sReq, sStat);
+      MPI_Waitall(2, rReq, rStat);
+    } else {
+      MPI_Waitall(4, sReq, sStat);
+      MPI_Waitall(4, rReq, rStat);
+    }
+
+    halo_recv_buf_W_host.deep_copy_to(halo_recv_buf_W);
+    halo_recv_buf_E_host.deep_copy_to(halo_recv_buf_E);
+    if (!sim2d) {
+      halo_recv_buf_S_host.deep_copy_to(halo_recv_buf_S);
+      halo_recv_buf_N_host.deep_copy_to(halo_recv_buf_N);
+    }
+
+    parallel_for( Bounds<4>(npack,nz,ny,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
+      if (v < num_state) {
+        state  (v          ,hs+k,hs+j,      ii) = halo_recv_buf_W(v,k,j,ii);
+        state  (v          ,hs+k,hs+j,nx+hs+ii) = halo_recv_buf_E(v,k,j,ii);
+      } else {
+        tracers(v-num_state,hs+k,hs+j,      ii) = halo_recv_buf_W(v,k,j,ii);
+        tracers(v-num_state,hs+k,hs+j,nx+hs+ii) = halo_recv_buf_E(v,k,j,ii);
+      }
+    });
+
+    if (!sim2d) {
+      parallel_for( Bounds<4>(npack,nz,hs,nx) , YAKL_LAMBDA (int v, int k, int jj, int i) {
+        if (v < num_state) {
+          state  (v          ,hs+k,      jj,hs+i) = halo_recv_buf_S(v,k,jj,i);
+          state  (v          ,hs+k,ny+hs+jj,hs+i) = halo_recv_buf_N(v,k,jj,i);
+        } else {
+          tracers(v-num_state,hs+k,      jj,hs+i) = halo_recv_buf_S(v,k,jj,i);
+          tracers(v-num_state,hs+k,ny+hs+jj,hs+i) = halo_recv_buf_N(v,k,jj,i);
+        }
+      });
+    }
+  }
+
+
+  void edge_exchange(core::Coupler const &coupler , real5d const &state_limits_x , real5d const &tracers_limits_x ,
+                                                    real5d const &state_limits_y , real5d const &tracers_limits_y ) {
+    using yakl::c::parallel_for;
+    using yakl::c::Bounds;
+
+    YAKL_SCOPE( nx    , this->nx    );
+    YAKL_SCOPE( ny    , this->ny    );
+
+    int npack = num_state + num_tracers;
+
+    real3d edge_send_buf_W("edge_send_buf_W",npack,nz,ny);
+    real3d edge_send_buf_E("edge_send_buf_E",npack,nz,ny);
+
+    parallel_for( Bounds<3>(npack,nz,ny) , YAKL_LAMBDA (int v, int k, int j) {
+      if (v < num_state) {
+        edge_send_buf_W(v,k,j) = state_limits_x  (v          ,1,k,j,0 );
+        edge_send_buf_E(v,k,j) = state_limits_x  (v          ,0,k,j,nx);
+      } else {
+        edge_send_buf_W(v,k,j) = tracers_limits_x(v-num_state,1,k,j,0 );
+        edge_send_buf_E(v,k,j) = tracers_limits_x(v-num_state,0,k,j,nx);
+      }
+    });
+
+    real3d edge_send_buf_S("edge_send_buf_S",npack,nz,nx);
+    real3d edge_send_buf_N("edge_send_buf_N",npack,nz,nx);
+
+    if (!sim2d) {
+      parallel_for( Bounds<3>(npack,nz,nx) , YAKL_LAMBDA (int v, int k, int i) {
+        if (v < num_state) {
+          edge_send_buf_S(v,k,i) = state_limits_y  (v          ,1,k,0 ,i);
+          edge_send_buf_N(v,k,i) = state_limits_y  (v          ,0,k,ny,i);
+        } else {
+          edge_send_buf_S(v,k,i) = tracers_limits_y(v-num_state,1,k,0 ,i);
+          edge_send_buf_N(v,k,i) = tracers_limits_y(v-num_state,0,k,ny,i);
+        }
+      });
+    }
+
+    yakl::fence();
+
+    real3d edge_recv_buf_W("edge_recv_buf_W",npack,nz,ny);
+    real3d edge_recv_buf_E("edge_recv_buf_E",npack,nz,ny);
+    real3d edge_recv_buf_S("edge_recv_buf_S",npack,nz,nx);
+    real3d edge_recv_buf_N("edge_recv_buf_N",npack,nz,nx);
+
+    MPI_Request sReq[4];
+    MPI_Request rReq[4];
+
+    auto &neigh = coupler.get_neighbor_rankid_matrix();
+
+    //Pre-post the receives
+    MPI_Irecv( edge_recv_buf_W_host.data() , npack*nz*ny , MPI_DOUBLE , neigh(1,0) , 0 , MPI_COMM_WORLD , &rReq[0] );
+    MPI_Irecv( edge_recv_buf_E_host.data() , npack*nz*ny , MPI_DOUBLE , neigh(1,2) , 1 , MPI_COMM_WORLD , &rReq[1] );
+    if (!sim2d) {
+      MPI_Irecv( edge_recv_buf_S_host.data() , npack*nz*nx , MPI_DOUBLE , neigh(0,1) , 2 , MPI_COMM_WORLD , &rReq[2] );
+      MPI_Irecv( edge_recv_buf_N_host.data() , npack*nz*nx , MPI_DOUBLE , neigh(2,1) , 3 , MPI_COMM_WORLD , &rReq[3] );
+    }
+
+    edge_send_buf_W.deep_copy_to(edge_send_buf_W_host);
+    edge_send_buf_E.deep_copy_to(edge_send_buf_E_host);
+    if (!sim2d) {
+      edge_send_buf_S.deep_copy_to(edge_send_buf_S_host);
+      edge_send_buf_N.deep_copy_to(edge_send_buf_N_host);
+    }
+
+    yakl::fence();
+
+    //Send the data
+    MPI_Isend( edge_send_buf_W_host.data() , npack*nz*ny , MPI_DOUBLE , neigh(1,0) , 1 , MPI_COMM_WORLD , &sReq[0] );
+    MPI_Isend( edge_send_buf_E_host.data() , npack*nz*ny , MPI_DOUBLE , neigh(1,2) , 0 , MPI_COMM_WORLD , &sReq[1] );
+    if (!sim2d) {
+      MPI_Isend( edge_send_buf_S_host.data() , npack*nz*nx , MPI_DOUBLE , neigh(0,1) , 3 , MPI_COMM_WORLD , &sReq[2] );
+      MPI_Isend( edge_send_buf_N_host.data() , npack*nz*nx , MPI_DOUBLE , neigh(2,1) , 2 , MPI_COMM_WORLD , &sReq[3] );
+    }
+
+    MPI_Status  sStat[4];
+    MPI_Status  rStat[4];
+
+    //Wait for the sends and receives to finish
+    if (sim2d) {
+      MPI_Waitall(2, sReq, sStat);
+      MPI_Waitall(2, rReq, rStat);
+    } else {
+      MPI_Waitall(4, sReq, sStat);
+      MPI_Waitall(4, rReq, rStat);
+    }
+
+    edge_recv_buf_W_host.deep_copy_to(edge_recv_buf_W);
+    edge_recv_buf_E_host.deep_copy_to(edge_recv_buf_E);
+    if (!sim2d) {
+      edge_recv_buf_S_host.deep_copy_to(edge_recv_buf_S);
+      edge_recv_buf_N_host.deep_copy_to(edge_recv_buf_N);
+    }
+
+    parallel_for( Bounds<3>(npack,nz,ny) , YAKL_LAMBDA (int v, int k, int j) {
+      if (v < num_state) {
+        state_limits_x  (v          ,0,k,j,0 ) = edge_recv_buf_W(v,k,j);
+        state_limits_x  (v          ,1,k,j,nx) = edge_recv_buf_E(v,k,j);
+      } else {
+        tracers_limits_x(v-num_state,0,k,j,0 ) = edge_recv_buf_W(v,k,j);
+        tracers_limits_x(v-num_state,1,k,j,nx) = edge_recv_buf_E(v,k,j);
+      }
+    });
+
+    if (!sim2d) {
+      parallel_for( Bounds<3>(npack,nz,nx) , YAKL_LAMBDA (int v, int k, int i) {
+        if (v < num_state) {
+          state_limits_y  (v          ,0,k,0 ,i) = edge_recv_buf_S(v,k,i);
+          state_limits_y  (v          ,1,k,ny,i) = edge_recv_buf_N(v,k,i);
+        } else {
+          tracers_limits_y(v-num_state,0,k,0 ,i) = edge_recv_buf_S(v,k,i);
+          tracers_limits_y(v-num_state,1,k,ny,i) = edge_recv_buf_N(v,k,i);
+        }
+      });
+    }
   }
 
 

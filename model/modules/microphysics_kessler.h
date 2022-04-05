@@ -61,14 +61,16 @@ public:
     coupler.add_tracer("cloud_liquid"  , "Cloud liquid"  , true     , true);
     coupler.add_tracer("precip_liquid" , "precip_liquid" , true     , true);
 
+    auto &dm = coupler.get_data_manager_readwrite();
+
     // Register and allocation non-tracer quantities used by the microphysics
-    coupler.dm.register_and_allocate<real>( "precl" , "precipitation rate" , {ny,nx} , {"y","x"} );
+    dm.register_and_allocate<real>( "precl" , "precipitation rate" , {ny,nx} , {"y","x"} );
 
     // Initialize all micro data to zero
-    auto rho_v = coupler.dm.get<real,3>("water_vapor"  );
-    auto rho_c = coupler.dm.get<real,3>("cloud_liquid" );
-    auto rho_p = coupler.dm.get<real,3>("precip_liquid");
-    auto precl = coupler.dm.get<real,2>("precl"        );
+    auto rho_v = dm.get<real,3>("water_vapor"  );
+    auto rho_c = dm.get<real,3>("cloud_liquid" );
+    auto rho_p = dm.get<real,3>("precip_liquid");
+    auto precl = dm.get<real,2>("precl"        );
 
     parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
       rho_v(k,j,i) = 0;
@@ -86,12 +88,14 @@ public:
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
+    auto &dm = coupler.get_data_manager_readwrite();
+
     // Grab the data
-    auto rho_v   = coupler.dm.get_lev_col<real      >("water_vapor"  );
-    auto rho_c   = coupler.dm.get_lev_col<real      >("cloud_liquid" );
-    auto rho_r   = coupler.dm.get_lev_col<real      >("precip_liquid");
-    auto rho_dry = coupler.dm.get_lev_col<real const>("density_dry"  );
-    auto temp    = coupler.dm.get_lev_col<real      >("temp"         );
+    auto rho_v   = dm.get_lev_col<real      >("water_vapor"  );
+    auto rho_c   = dm.get_lev_col<real      >("cloud_liquid" );
+    auto rho_r   = dm.get_lev_col<real      >("precip_liquid");
+    auto rho_dry = dm.get_lev_col<real const>("density_dry"  );
+    auto temp    = dm.get_lev_col<real      >("temp"         );
 
     // Grab the dimension sizes
     real dz   = coupler.get_dz();
@@ -126,7 +130,7 @@ public:
       theta   (k,i) = temp(k,i) / exner(k,i);
     });
 
-    auto precl = coupler.dm.get_collapsed<real>("precl");
+    auto precl = dm.get_collapsed<real>("precl");
 
     ////////////////////////////////////////////
     // Call Kessler code

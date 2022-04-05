@@ -35,15 +35,17 @@ namespace modules {
       havg_fields.add_field( real1d(name,nz) );
     }
 
+    auto &dm = coupler.get_data_manager_readwrite();
+
     // Create MultiField of all state and tracer full variables, since we're doing the same operation on each
     core::MultiField<real,3> full_fields;
-    full_fields.add_field( coupler.dm.get<real,3>("density_dry") );
-    full_fields.add_field( coupler.dm.get<real,3>("uvel"       ) );
-    full_fields.add_field( coupler.dm.get<real,3>("vvel"       ) );
-    full_fields.add_field( coupler.dm.get<real,3>("wvel"       ) );
-    full_fields.add_field( coupler.dm.get<real,3>("temp"       ) );
+    full_fields.add_field( dm.get<real,3>("density_dry") );
+    full_fields.add_field( dm.get<real,3>("uvel"       ) );
+    full_fields.add_field( dm.get<real,3>("vvel"       ) );
+    full_fields.add_field( dm.get<real,3>("wvel"       ) );
+    full_fields.add_field( dm.get<real,3>("temp"       ) );
     for (int tr=0; tr < num_tracers; tr++) {
-      full_fields.add_field( coupler.dm.get<real,3>(tracer_names[tr]) );
+      full_fields.add_field( dm.get<real,3>(tracer_names[tr]) );
     }
 
     int num_fields = havg_fields.get_num_fields();
