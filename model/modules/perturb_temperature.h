@@ -9,12 +9,12 @@ namespace modules {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
-    int  constexpr num_levels = 10;
-    real constexpr magnitude  = 10.;
-
     int nz = coupler.get_nz();
     int ny = coupler.get_ny();
     int nx = coupler.get_nx();
+
+    int  num_levels = nz / 4;
+    real magnitude  = 10.;
 
     size_t seed = static_cast<size_t>(coupler.get_myrank()*nz*nx*ny);
 
