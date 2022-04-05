@@ -201,7 +201,7 @@ class Dynamics_Euler_Stratified_WenoFV {
     // Do output and inform the user if it's time to do output
     if (out_freq >= 0. && etime / out_freq >= num_out+1) {
       yakl::timer_start("output");
-      output( coupler , etime );
+      // output( coupler , etime );
       yakl::timer_stop("output");
       num_out++;
       // Let the user know what the max vertical velocity is to ensure the model hasn't crashed
@@ -893,7 +893,7 @@ class Dynamics_Euler_Stratified_WenoFV {
     convert_dynamics_to_coupler( coupler , state , tracers );
 
     // Output the initial state
-    output( coupler , etime );
+    // output( coupler , etime );
   }
 
 

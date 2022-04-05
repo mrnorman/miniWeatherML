@@ -129,6 +129,7 @@ namespace core {
 
         // Find nproc_y * nproc_x == nranks such that nproc_y and nproc_x are as close as possible
         int nproc_y = (int) std::ceil( std::sqrt((double) nranks) );
+        nproc_y = std::max( 1 ,  std::min( nproc_y , (int) (ny_glob / 5) ) );
         while (nproc_y > 1) {
           if (nranks % nproc_y == 0) { break; }
           nproc_y--;
