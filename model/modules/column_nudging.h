@@ -23,12 +23,14 @@ namespace modules {
       column = real2d("column",num_fields,nz);
       yakl::memset(column,0._fp);
 
+      auto &dm = coupler.get_data_manager_readonly();
+
       core::MultiField<real const,3> state;
-      state.add_field( coupler.dm.get<real const,3>("density_dry") );
-      state.add_field( coupler.dm.get<real const,3>("uvel"       ) );
-      state.add_field( coupler.dm.get<real const,3>("vvel"       ) );
-      state.add_field( coupler.dm.get<real const,3>("temp"       ) );
-      state.add_field( coupler.dm.get<real const,3>("water_vapor") );
+      state.add_field( dm.get<real const,3>("density_dry") );
+      state.add_field( dm.get<real const,3>("uvel"       ) );
+      state.add_field( dm.get<real const,3>("vvel"       ) );
+      state.add_field( dm.get<real const,3>("temp"       ) );
+      state.add_field( dm.get<real const,3>("water_vapor") );
 
       YAKL_SCOPE( column , this->column );
 
@@ -47,12 +49,14 @@ namespace modules {
       int ny = coupler.get_ny();
       int nz = coupler.get_nz();
 
+      auto &dm = coupler.get_data_manager_readwrite();
+
       core::MultiField<real,3> state;
-      state.add_field( coupler.dm.get<real,3>("density_dry") );
-      state.add_field( coupler.dm.get<real,3>("uvel"       ) );
-      state.add_field( coupler.dm.get<real,3>("vvel"       ) );
-      state.add_field( coupler.dm.get<real,3>("temp"       ) );
-      state.add_field( coupler.dm.get<real,3>("water_vapor") );
+      state.add_field( dm.get<real,3>("density_dry") );
+      state.add_field( dm.get<real,3>("uvel"       ) );
+      state.add_field( dm.get<real,3>("vvel"       ) );
+      state.add_field( dm.get<real,3>("temp"       ) );
+      state.add_field( dm.get<real,3>("water_vapor") );
 
       real2d state_col_avg("state_col_avg",num_fields,nz);
       yakl::memset(state_col_avg,0._fp);

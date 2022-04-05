@@ -8,6 +8,7 @@
 #include "gather_micro_statistics.h"
 
 int main(int argc, char** argv) {
+  MPI_Init( &argc , &argv );
   yakl::init();
   {
     using yakl::intrinsics::abs;
@@ -91,6 +92,7 @@ int main(int argc, char** argv) {
     yakl::timer_stop("main");
   }
   yakl::finalize();
+  MPI_Finalize();
 }
 
 

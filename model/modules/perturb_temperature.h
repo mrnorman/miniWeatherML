@@ -16,10 +16,11 @@ namespace modules {
     int ny = coupler.get_ny();
     int nx = coupler.get_nx();
 
-    size_t seed = static_cast<size_t>(nz*nx*ny);
+    size_t seed = static_cast<size_t>(coupler.get_myrank()*nz*nx*ny);
 
     // ny*nx can all be globbed together for this routine
-    auto temp = coupler.dm.get_lev_col<real>("temp");
+    auto &dm = coupler.get_data_manager_readwrite();
+    auto temp = dm.get_lev_col<real>("temp");
     int ncol = ny*nx;
 
     parallel_for( "perturb temperature" , Bounds<2>(num_levels,ncol) , YAKL_LAMBDA (int k, int i) {
