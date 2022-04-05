@@ -98,17 +98,31 @@ namespace core {
 
 
     void clone_into( Coupler &coupler ) {
-      coupler.R_d     = this->R_d    ;
-      coupler.R_v     = this->R_v    ;
-      coupler.cp_d    = this->cp_d   ;
-      coupler.cp_v    = this->cp_v   ;
-      coupler.grav    = this->grav   ;
-      coupler.p0      = this->p0     ;
-      coupler.xlen    = this->xlen   ;
-      coupler.ylen    = this->ylen   ;
-      coupler.zlen    = this->zlen   ;
-      coupler.dt_gcm  = this->dt_gcm ;
-      coupler.tracers = this->tracers;
+      coupler.R_d      = this->R_d     ;
+      coupler.R_v      = this->R_v     ;
+      coupler.cp_d     = this->cp_d    ;
+      coupler.cp_v     = this->cp_v    ;
+      coupler.grav     = this->grav    ;
+      coupler.p0       = this->p0      ;
+      coupler.xlen     = this->xlen    ;
+      coupler.ylen     = this->ylen    ;
+      coupler.zlen     = this->zlen    ;
+      coupler.dt_gcm   = this->dt_gcm  ;
+      coupler.tracers  = this->tracers ;
+      coupler.nranks   = this->nranks  ;
+      coupler.myrank   = this->myrank  ;
+      coupler.nx_glob  = this->nx_glob ;
+      coupler.ny_glob  = this->ny_glob ;
+      coupler.nproc_x  = this->nproc_x ;
+      coupler.nproc_y  = this->nproc_y ;
+      coupler.px       = this->px      ;
+      coupler.py       = this->py      ;
+      coupler.i_beg    = this->i_beg   ;
+      coupler.j_beg    = this->j_beg   ;
+      coupler.i_end    = this->i_end   ;
+      coupler.j_end    = this->j_end   ;
+      coupler.mainproc = this->mainproc;
+      coupler.neigh    = this->neigh   ;
       this->dm.clone_into( coupler.dm );
     }
 
@@ -357,10 +371,6 @@ namespace core {
         if (tracer_name == tracers[i].name) return true;
       }
       return false;
-    }
-
-
-    void allocate_coupler_state( int nz, int ny, int nx ) {
     }
 
 

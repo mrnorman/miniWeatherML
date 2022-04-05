@@ -23,14 +23,24 @@ int main(int argc, char** argv) {
     std::string inFile(argv[1]);
     YAML::Node config = YAML::LoadFile(inFile);
     if ( !config            ) { endrun("ERROR: Invalid YAML input file"); }
-    real sim_time  = config["sim_time"].as<real>();
-    int  nx        = config["nx"      ].as<int>();
-    int  ny        = config["ny"      ].as<int>();
-    int  nz        = config["nz"      ].as<int>();
-    real xlen      = config["xlen"    ].as<real>();
-    real ylen      = config["ylen"    ].as<real>();
-    real zlen      = config["zlen"    ].as<real>();
-    real dtphys_in = config["dt_phys" ].as<real>();
+    real   sim_time  = config["sim_time"].as<real>();
+    size_t nx_glob   = config["nx_glob" ].as<size_t>();
+    size_t ny_glob   = config["ny_glob" ].as<size_t>();
+    int    nz        = config["nz"      ].as<int>();
+    real   xlen      = config["xlen"    ].as<real>();
+    real   ylen      = config["ylen"    ].as<real>();
+    real   zlen      = config["zlen"    ].as<real>();
+    real   dtphys_in = config["dt_phys" ].as<real>();
+
+    // Coupler state is: (1) dry density;  (2) u-velocity;  (3) v-velocity;  (4) w-velocity;  (5) temperature
+    //                   (6+) tracer masses (*not* mixing ratios!)
+    coupler.distribute_mpi_and_allocate_coupled_state(nz, ny_glob, nx_glob);
+
+    // Just tells the coupler how big the domain is in each dimensions
+    coupler.set_grid( xlen , ylen , zlen );
+
+    // This is for the dycore to pull out to determine how to do idealized test cases
+    coupler.set_option<std::string>( "standalone_input_file" , inFile );
 
     // The column nudger nudges the column-average of the model state toward the initial column-averaged state
     // This is primarily for the supercell test case to keep the the instability persistently strong
@@ -43,16 +53,6 @@ int main(int argc, char** argv) {
     custom_modules::StatisticsGatherer statistics_gatherer;
 
     coupler.set_phys_constants( micro.R_d , micro.R_v , micro.cp_d , micro.cp_v , micro.grav , micro.p0 );
-
-    // Coupler state is: (1) dry density;  (2) u-velocity;  (3) v-velocity;  (4) w-velocity;  (5) temperature
-    //                   (6+) tracer masses (*not* mixing ratios!)
-    coupler.allocate_coupler_state( nz, ny, nx );
-
-    // Just tells the coupler how big the domain is in each dimensions
-    coupler.set_grid( xlen , ylen , zlen );
-
-    // This is for the dycore to pull out to determine how to do idealized test cases
-    coupler.set_option<std::string>( "standalone_input_file" , inFile );
 
     // Run the initialization modules
     micro .init                 ( coupler ); // Allocate micro state and register its tracers in the coupler
