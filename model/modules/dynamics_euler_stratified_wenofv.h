@@ -1074,26 +1074,6 @@ namespace modules {
               real dens_vap   = hyDensVapGLL  (k,kk);
               real dens_theta = hyDensThetaGLL(k,kk);
 
-              real x0 = xlen / 2;
-              real y0 = ylen / 2;
-              real z0 = 1500;
-              real radx = 10000;
-              real rady = 10000;
-              real radz = 1500;
-              real amp  = 3;
-
-              real xn = (xloc - x0) / radx;
-              real yn = (yloc - y0) / rady;
-              real zn = (zloc - z0) / radz;
-
-              real rad = sqrt( xn*xn + yn*yn + zn*zn );
-
-              real theta_pert = 0;
-              if (rad < 1) {
-                theta_pert = amp * pow( cos(M_PI*rad/2) , 2._fp );
-              }
-              dens_theta += dens * theta_pert;
-
               real factor = gll_wts(ii) * gll_wts(jj) * gll_wts(kk);
               state  (idR ,hs+k,hs+j,hs+i) += (dens - hyDensGLL(k,kk))            * factor;
               state  (idU ,hs+k,hs+j,hs+i) += dens * uvel                         * factor;
