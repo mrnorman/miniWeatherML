@@ -911,9 +911,13 @@ class Dynamics_Euler_Stratified_WenoFV {
     YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
     YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
     YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
+    YAKL_SCOPE( nx                  , this->nx                  );
+    YAKL_SCOPE( ny                  , this->ny                  );
+    YAKL_SCOPE( nz                  , this->nz                  );
     YAKL_SCOPE( dx                  , this->dx                  );
     YAKL_SCOPE( dy                  , this->dy                  );
     YAKL_SCOPE( dz                  , this->dz                  );
+    YAKL_SCOPE( xlen                , this->xlen                );
     YAKL_SCOPE( ylen                , this->ylen                );
     YAKL_SCOPE( sim2d               , this->sim2d               );
     YAKL_SCOPE( R_d                 , this->R_d                 );
@@ -923,7 +927,6 @@ class Dynamics_Euler_Stratified_WenoFV {
     YAKL_SCOPE( C0                  , this->C0                  );
     YAKL_SCOPE( num_tracers         , this->num_tracers         );
     YAKL_SCOPE( idWV                , this->idWV                );
-    YAKL_SCOPE( nz                  , this->nz                  );
     YAKL_SCOPE( gll_pts             , this->gll_pts             );
     YAKL_SCOPE( gll_wts             , this->gll_wts             );
 
@@ -1031,14 +1034,17 @@ class Dynamics_Euler_Stratified_WenoFV {
     size_t i_beg = coupler.get_i_beg();
     size_t j_beg = coupler.get_j_beg();
 
+
+
+
+
     // Initialize the state
-    parallel_for( "Spatial.h init_state 12" , Bounds<3>(nz,ny,nx) ,
-                  YAKL_LAMBDA (int k, int j, int i) {
-      state  (idR ,hs+k,hs+j,hs+i) = 0;
-      state  (idU ,hs+k,hs+j,hs+i) = 0;
-      state  (idV ,hs+k,hs+j,hs+i) = 0;
-      state  (idW ,hs+k,hs+j,hs+i) = 0;
-      state  (idT ,hs+k,hs+j,hs+i) = 0;
+    parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+      state(idR,hs+k,hs+j,hs+i) = 0;
+      state(idU,hs+k,hs+j,hs+i) = 0;
+      state(idV,hs+k,hs+j,hs+i) = 0;
+      state(idW,hs+k,hs+j,hs+i) = 0;
+      state(idT,hs+k,hs+j,hs+i) = 0;
       for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i) = 0; }
       for (int kk=0; kk < ord; kk++) {
         for (int jj=0; jj < ord; jj++) {
