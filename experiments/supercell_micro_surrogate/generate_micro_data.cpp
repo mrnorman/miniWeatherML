@@ -44,13 +44,13 @@ int main(int argc, char** argv) {
 
     // The column nudger nudges the column-average of the model state toward the initial column-averaged state
     // This is primarily for the supercell test case to keep the the instability persistently strong
-    modules::ColumnNudger            column_nudger;
+    modules::ColumnNudger                     column_nudger;
     // Microphysics performs water phase changess + hydrometeor production, transport, collision, and aggregation
-    Microphysics_Kessler             micro;
+    modules::Microphysics_Kessler             micro;
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
-    Dynamics_Euler_Stratified_WenoFV dycore;
+    modules::Dynamics_Euler_Stratified_WenoFV dycore;
     // This is the class whose methods will generate samples for micro surrogate data
-    custom_modules::DataGenerator    data_generator;
+    custom_modules::DataGenerator             data_generator;
 
     coupler.set_phys_constants( micro.R_d , micro.R_v , micro.cp_d , micro.cp_v , micro.grav , micro.p0 );
 
