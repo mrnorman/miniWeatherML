@@ -1,6 +1,6 @@
 # miniWeatherML
 
-Welcome to miniWeatherML: A playground for learning and developing Machine Learning (ML) surrogate models and workflows. It is based on weather-like flows such as [supercells](https://en.wikipedia.org/wiki/Supercell) that are realistic enough to be challenging and small enough for rapid prototyping in:
+Welcome to miniWeatherML: A playground for learning and developing Machine Learning (ML) surrogate models and workflows. It is based on a simplified weather model simulating flows such as [supercells](https://en.wikipedia.org/wiki/Supercell) that are realistic enough to be challenging and simple enough for rapid prototyping in:
 * Data generation and curation
 * Machine Learning model training
 * ML model deployment and analysis
