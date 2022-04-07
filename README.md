@@ -6,6 +6,8 @@ Welcome to miniWeatherML: A playground for learning and developing Machine Learn
 * ML model deployment and analysis
 * End-to-end workflows
 
+<img src="https://mrnorman.github.io/supercell_miniWeatherML.gif"/>
+
 ## Documentation: https://github.com/mrnorman/miniWeatherML/wiki
 
 Author: Matt Norman (Oak Ridge National Laboratory), https://mrnorman.github.io
