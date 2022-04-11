@@ -15,3 +15,5 @@ Author: Matt Norman (Oak Ridge National Laboratory), https://mrnorman.github.io
 Contributors:
 * Matt Norman (Oak Ridge National Laboratory)
 * Murali Gopalakrishnan Meena (Oak Ridge National Laboratory)
+
+The core infrastructure of `miniWeatherML` is less than 1K lines of code, and the minimal meaningful module set is comprised of less than 3K lines of code, very little of which needs to be understood in full detail in order to effectively use `miniWeatherML` for its intended purposes.
