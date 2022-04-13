@@ -18,7 +18,7 @@ void torch_move_module_to_gpu(int id, int devicenum);
 
 
 // Add a tensor (on the CPU)
-int torch_add_tensor( float * data , std::vector<int64_t> dims );
+int torch_add_tensor( real * data , std::vector<int64_t> dims );
 
 
 // Move a tensor to the GPU

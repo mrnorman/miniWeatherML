@@ -1,11 +1,11 @@
 
 #include "coupler.h"
 #include "dynamics_euler_stratified_wenofv.h"
-#include "microphysics_kessler.h"
+// ===================Torch================
+#include "microphysics_torch.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
 #include "column_nudging.h"
-#include "generate_micro_surrogate_data.h"
 
 int main(int argc, char** argv) {
   MPI_Init( &argc , &argv );
@@ -13,13 +13,15 @@ int main(int argc, char** argv) {
   {
     using yakl::intrinsics::abs;
     using yakl::intrinsics::maxval;
+    using yakl::c::parallel_for;
+    using yakl::c::Bounds;
     yakl::timer_start("main");
 
     // This holds all of the model's variables, dimension sizes, and options
     core::Coupler coupler;
 
     // Read the YAML input file for variables pertinent to running the driver
-    if (argc <= 1) { endrun("ERROR: Must pass the input YAML filename as a parameter"); }
+    if (argc <= 2) { endrun("ERROR: Must pass the input YAML filenames as a parameter"); }
     std::string inFile(argv[1]);
     YAML::Node config = YAML::LoadFile(inFile);
     if ( !config            ) { endrun("ERROR: Invalid YAML input file"); }
@@ -45,8 +47,11 @@ int main(int argc, char** argv) {
     // The column nudger nudges the column-average of the model state toward the initial column-averaged state
     // This is primarily for the supercell test case to keep the the instability persistently strong
     modules::ColumnNudger                     column_nudger;
+    
+    // ===================Torch================
     // Microphysics surrogate for Kessler performs water phase changess + hydrometeor production, transport, collision, and aggregation
     custom_modules::Microphysics_NN             micro_nn;
+    
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
     modules::Dynamics_Euler_Stratified_WenoFV dycore;
 
@@ -58,12 +63,17 @@ int main(int argc, char** argv) {
     column_nudger.set_column    ( coupler ); // Set the column before perturbing
     modules::perturb_temperature( coupler ); // Randomly perturb bottom layers of temperature to initiate convection
 
+    // ===================Torch================
     /////////////////////////////////////////////////////////////////
-    // Load the NN Model
+    // Load the NN variables
     /////////////////////////////////////////////////////////////////
     std::cout << "*** BEGIN: Loading NN Models ***\n";
-    std::string file_NN(argv[3]); 
-    int mod_id = torch_add_module( file_NN );
+    // Read the YAML input file for variables pertinent to the NN model
+    std::string file_nn(argv[2]);
+    YAML::Node config_nn = YAML::LoadFile(file_nn);
+    
+    // Load the NN model
+    int mod_id = torch_add_module( config_nn["in_file_nn"].as<std::string>() );
     // Set device: CPU or GPU
     int torchDevice = -1;   // custom devicenum input from user; default -1 is CPU
     if(const char* env_p = std::getenv("TORCH_DEVICE")){
@@ -81,32 +91,28 @@ int main(int argc, char** argv) {
     torch_move_module_to_gpu( mod_id , devicenum );
     std::cout << "*** END:   Loading NN Models ***\n";
 
-    /////////////////////////////////////////////////////////////////
     // Load the data scaling arrays
-    /////////////////////////////////////////////////////////////////
     std::cout << "*** BEGIN: Loading scaling arrays ***\n";
     std::ifstream file1;
     // input scaler
-    std::string file_SclrIn(argv[4]);
-    real3d scl_in("scl_in" ,4,9,2);
-    real scl_Lin[4][9][2];
-    file1.open(file_SclrIn);
+    real3d scl_in("scl_in" ,4,3,2);
+    real scl_Lin[4][3][2];
+    file1.open( config_nn["in_file_sclin"].as<std::string>() );
     for (int l = 0; l < 4; l++) {
-      for (int i = 0; i < 9; i++) {
+      for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 2; j++) { 
           file1 >> scl_Lin[l][i][j];
         }
       }
     }
-    parallel_for( Bounds<3>(4,9,2) , YAKL_LAMBDA (int l, int i, int j) {
+    parallel_for( Bounds<3>(4,3,2) , YAKL_LAMBDA (int l, int i, int j) {
         scl_in(l,i,j) = scl_Lin[l][i][j];
         });
     file1.close();
     // output scaler
-    std::string file_SclrOut(argv[5]);
     real2d scl_out("scl_out",4,2);
     real scl_Lout[4][2];
-    file1.open(file_SclrOut);
+    file1.open( config_nn["in_file_sclfi"].as<std::string>() );
     for (int i = 0; i < 4; i++) {
       for (int j = 0; j < 2; j++) {
         file1 >> scl_Lout[i][j];
@@ -117,11 +123,14 @@ int main(int argc, char** argv) {
         });
     file1.close();
     std::cout << "*** END:   Loading scaling arrays ***\n";
-    /////////////////////////////////////////////////////////////////
+    
+    // time from which Kessler is replaced by NN surrogate (move to input file)
+    real time_init_nn = config_nn["time_init_nn"].as<real>();   // time from which Kessler is replaced by NN surrogate (move to input file)
 
+    ////////////////////////////////////////////////////////////////
+    // main time iteration loop
+    ////////////////////////////////////////////////////////////////
     real etime  = 0;      // Elapsed time
-    time_initNN = 0.1;   // time from which Kessler is replaced by NN surrogate (move to input file)
-
     real dtphys = dtphys_in;
     while (etime < sim_time) {
       // If dtphys <= 0, then set it to the dynamical core's max stable time step
@@ -132,8 +141,9 @@ int main(int argc, char** argv) {
       // Run the runtime modules
       dycore.time_step             ( coupler , dtphys );
 
+      // ===================Torch================
       // Run microphysics using NN surrogate
-      micro_nn .time_step          ( coupler , dtphys, etime/sim_time , time_initNN , scl_in , scl_out , devicenum , mod_id);
+      micro_nn .time_step          ( coupler , dtphys, etime/sim_time , time_init_nn , scl_in , scl_out , devicenum , mod_id);
 
       modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
       column_nudger.nudge_to_column( coupler , dtphys );

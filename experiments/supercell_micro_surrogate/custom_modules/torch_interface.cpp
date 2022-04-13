@@ -21,7 +21,7 @@ void torch_move_module_to_gpu(int id, int devicenum) {
 }
 
 
-int torch_add_tensor( float * data , std::vector<int64_t> dims ) {
+int torch_add_tensor( real * data , std::vector<int64_t> dims ) {
   torch_tensors.push_back( torch::from_blob( data , at::ArrayRef<int64_t>(dims) ) );
   return torch_tensors.size() - 1;
 }

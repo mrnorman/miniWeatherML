@@ -3,11 +3,13 @@
 
 #include "main_header.h"
 #include "coupler.h"
+#include "YAKL_netcdf.h"
+// ===================Torch================
 #include "torch_interface.h"
 
-namespace modules {
+namespace custom_modules {
 
-  class Microphysics_Kessler {
+  class Microphysics_NN {
   public:
     int static constexpr num_tracers = 3;
 
@@ -28,7 +30,7 @@ namespace modules {
 
 
 
-    Microphysics_Kessler() {
+    Microphysics_NN() {
       R_d     = 287.;
       cp_d    = 1003.;
       cv_d    = cp_d - R_d;
@@ -139,9 +141,7 @@ namespace modules {
 
         auto precl = dm.get_collapsed<real>("precl");
 
-        ////////////////////////////////////////////
         // Call Kessler code
-        ////////////////////////////////////////////
         kessler(theta, qv, qc, qr, rho_dry, precl, zmid, exner, dt, R_d, cp_d, p0);
 
         // Post-process microphysics changes back to the coupler state
@@ -155,7 +155,7 @@ namespace modules {
             });
       } else {
         ////////////////////////////////////////////
-        // Call Torch code
+        // Use NN surrogate
         ////////////////////////////////////////////
         torch(temp, rho_v, rho_c, rho_r, scl_in, scl_out, devicenum, mod_id);
       }
@@ -368,7 +368,7 @@ namespace modules {
            input(ll,0,jj) = ( temp (ind,i) - scl_in(0,jj,0) ) / ( scl_in(0,jj,1) - scl_in(0,jj,0) );
            input(ll,1,jj) = ( rho_v(ind,i) - scl_in(1,jj,0) ) / ( scl_in(1,jj,1) - scl_in(1,jj,0) );
            input(ll,2,jj) = ( rho_c(ind,i) - scl_in(2,jj,0) ) / ( scl_in(2,jj,1) - scl_in(2,jj,0) );
-           input(ll,3,jj) = ( rho_p(ind,i) - scl_in(3,jj,0) ) / ( scl_in(3,jj,1) - scl_in(3,jj,0) );
+           input(ll,3,jj) = ( rho_r(ind,i) - scl_in(3,jj,0) ) / ( scl_in(3,jj,1) - scl_in(3,jj,0) );
            jj += 1;
          }
        });
@@ -395,18 +395,17 @@ namespace modules {
           int ll = k + (i*nz);
 
           // NN-based q_fine (re-scale output from NN-model) 
-          SArray<real,1,num_state> fine;
           temp (k,i) = ( outputNN(ll,0) * (scl_out(0,1) - scl_out(0,0)) + scl_out(0,0) );
           rho_v(k,i) = ( outputNN(ll,1) * (scl_out(1,1) - scl_out(1,0)) + scl_out(1,0) );
           rho_c(k,i) = ( outputNN(ll,2) * (scl_out(2,1) - scl_out(2,0)) + scl_out(2,0) );
-          rho_p(k,i) = ( outputNN(ll,3) * (scl_out(3,1) - scl_out(3,0)) + scl_out(3,0) );  
+          rho_r(k,i) = ( outputNN(ll,3) * (scl_out(3,1) - scl_out(3,0)) + scl_out(3,0) );  
       });
     
     }   // end torch()
 
 
 
-    std::string micro_name() const { return "kessler"; }
+    std::string micro_name() const { return "kessler, NN surrogate"; }
 
   };
 
