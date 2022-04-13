@@ -22,9 +22,9 @@ The core infrastructure of miniWeatherML is less than 1K lines of code, and the 
 
 ## Some questions to explore with miniWeatherML
 * How do we sample data optimally to produce physically realistic ML models?
-* How will a surrogate model behave once deployed? How can we identify and implement physics-based constraints within the model?
+* How do we properly assess the behavior of a ML model once it's deployed online?
+* How can we identify and implement physics-based constraints within the ML model?
 * What frameworks work best for managing complex end-to-end workflows?
 * Which ML models work the best in which circumstances?
-* How do we properly assess the behavior of a ML model once it's deployed online?
 * What challenges do we face when scaling out data generation, curation, training, deployment, and assessment?
 * Can we determine in situ when a deployed ML model is likely to behave non-physically?
