@@ -12,7 +12,7 @@ Welcome to miniWeatherML: A playground for learning and developing Machine Learn
 
 Author: Matt Norman (Oak Ridge National Laboratory), https://mrnorman.github.io
 
-Contributors:
+Contributors so far:
 * Matt Norman (Oak Ridge National Laboratory)
 * Murali Gopalakrishnan Meena (Oak Ridge National Laboratory)
 
