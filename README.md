@@ -18,9 +18,9 @@ Contributors so far:
 
 Written in portable C++, miniWeatherML runs out of the box on CPUs as well as Nvidia, AMD, and Intel GPUs.
 
-The core infrastructure of `miniWeatherML` is less than 1K lines of code, and the minimal meaningful module set is comprised of less than 3K lines of code, very little of which needs to be understood in full detail in order to effectively use `miniWeatherML` for its intended purposes.
+The core infrastructure of miniWeatherML is less than 1K lines of code, and the minimal meaningful module set is comprised of less than 3K lines of code, very little of which needs to be understood in full detail in order to effectively use miniWeatherML for its intended purposes.
 
-## Some questions to explore with `miniWeatherML`
+## Some questions to explore with miniWeatherML
 * How do we sample data optimally to produce physically realistic ML models?
 * How will a surrogate model behave once deployed? How can we identify and implement physics-based constraints within the model?
 * What frameworks work best for managing complex end-to-end workflows?
