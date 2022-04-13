@@ -27,6 +27,7 @@ cmake      \
   -DCMAKE_CUDA_HOST_COMPILER="mpic++"            \
   -DNCFLAGS="${NCFLAGS}"                         \
   -DYAKL_ARCH="${YAKL_ARCH}"                     \
+  -DCMAKE_PREFIX_PATH="${TORCH_CMAKE}"           \
   $1
 
 ln -sf $1/inputs .
