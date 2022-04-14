@@ -7,6 +7,6 @@ in_file_nn        : ../experiments/supercell_micro_surrogate/inputs/supercell_mi
 in_file_sclin     : ../experiments/supercell_micro_surrogate/inputs/supercell_micro_Ntrain1000000_input.txt
 in_file_sclfi     : ../experiments/supercell_micro_surrogate/inputs/supercell_micro_Ntrain1000000_output.txt
 
-# run model in GPU ( default=-1, runs on CPU - not working yet)
+# run model in which GPU (need to be compatible with torch version. Usually set to 0.)
 torch_device      : 2
 
