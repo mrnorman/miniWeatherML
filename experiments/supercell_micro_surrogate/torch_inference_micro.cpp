@@ -64,9 +64,7 @@ int main(int argc, char** argv) {
     modules::perturb_temperature( coupler ); // Randomly perturb bottom layers of temperature to initiate convection
 
     // ===================Torch================
-    /////////////////////////////////////////////////////////////////
     // Load the NN variables
-    /////////////////////////////////////////////////////////////////
     std::cout << "*** BEGIN: Loading NN Models ***\n";
     // Read the YAML input file for variables pertinent to the NN model
     std::string file_nn(argv[2]);
@@ -123,9 +121,6 @@ int main(int argc, char** argv) {
         });
     file1.close();
     std::cout << "*** END:   Loading scaling arrays ***\n";
-    
-    // time from which Kessler is replaced by NN surrogate (move to input file)
-    real time_init_nn = config_nn["time_init_nn"].as<real>();   // time from which Kessler is replaced by NN surrogate (move to input file)
 
     ////////////////////////////////////////////////////////////////
     // main time iteration loop
@@ -150,8 +145,6 @@ int main(int argc, char** argv) {
 
       etime += dtphys; // Advance elapsed time
     }
-
-    // TODO: Add finalize( coupler ) modules here
 
     yakl::timer_stop("main");
   }

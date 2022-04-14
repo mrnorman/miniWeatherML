@@ -7,8 +7,4 @@ in_file_nn        : supercell_micro_PyTorch_SingleMLP_Cpp.pt
 in_file_sclin     : supercell_micro_Ntrain1000000_input.txt
 in_file_sclfi     : supercell_micro_Ntrain1000000_output.txt
 
-# NN start time - in ratio with respect to total simulation time (sim_time)
-time_init_nn      : 0.02
-
-
 
