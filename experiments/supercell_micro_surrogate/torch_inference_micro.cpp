@@ -1,11 +1,12 @@
 
 #include "coupler.h"
 #include "dynamics_euler_stratified_wenofv.h"
-// ===================Torch================
-#include "microphysics_torch.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
 #include "column_nudging.h"
+// ===================Torch================
+#include "microphysics_torch.h"
+#include <fstream>
 
 int main(int argc, char** argv) {
   MPI_Init( &argc , &argv );
@@ -64,33 +65,29 @@ int main(int argc, char** argv) {
     modules::perturb_temperature( coupler ); // Randomly perturb bottom layers of temperature to initiate convection
 
     // ===================Torch================
-    // Load the NN variables
-    std::cout << "*** BEGIN: Loading NN Models ***\n";
-    // Read the YAML input file for variables pertinent to the NN model
+    // Load the NN variables - read the YAML input file for variables pertinent to the NN model
     std::string file_nn(argv[2]);
     YAML::Node config_nn = YAML::LoadFile(file_nn);
     
     // Load the NN model
+    std::cout << "*** BEGIN:  Loading NN Models ***\n";
     int mod_id = torch_add_module( config_nn["in_file_nn"].as<std::string>() );
     // Set device: CPU or GPU
-    int torchDevice = -1;   // custom devicenum input from user; default -1 is CPU
-    if(const char* env_p = std::getenv("TORCH_DEVICE")){
-      torchDevice = *env_p - '0';
-    }
+    int torchDevice = config_nn["torch_device"].as<int>();
     int devicenum = -1;    // default is CPU
     int devicecount = torch_get_cuda_device_count();
     if (devicecount > 0 and torchDevice >= 0){
       devicenum = torchDevice;
+      torch_move_module_to_gpu( mod_id , devicenum );
       std::cout << "Running PyTorch on GPU device number: " << devicenum << "\n";
     }
     else {
       std::cout << "Running PyTorch on CPU\n";
     }
-    torch_move_module_to_gpu( mod_id , devicenum );
-    std::cout << "*** END:   Loading NN Models ***\n";
+    std::cout << "*** END:  Loading NN Models ***\n";
 
     // Load the data scaling arrays
-    std::cout << "*** BEGIN: Loading scaling arrays ***\n";
+    std::cout << "*** BEGIN:  Loading scaling arrays ***\n";
     std::ifstream file1;
     // input scaler
     real3d scl_in("scl_in" ,4,3,2);
@@ -120,7 +117,7 @@ int main(int argc, char** argv) {
         scl_out(i,j) = scl_Lout[i][j];
         });
     file1.close();
-    std::cout << "*** END:   Loading scaling arrays ***\n";
+    std::cout << "*** END:  Loading scaling arrays ***\n";
 
     ////////////////////////////////////////////////////////////////
     // main time iteration loop
@@ -138,7 +135,7 @@ int main(int argc, char** argv) {
 
       // ===================Torch================
       // Run microphysics using NN surrogate
-      micro_nn .time_step          ( coupler , dtphys, etime/sim_time , time_init_nn , scl_in , scl_out , devicenum , mod_id);
+      micro_nn .time_step          ( coupler , dtphys, scl_in , scl_out , devicenum , mod_id);
 
       modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
       column_nudger.nudge_to_column( coupler , dtphys );

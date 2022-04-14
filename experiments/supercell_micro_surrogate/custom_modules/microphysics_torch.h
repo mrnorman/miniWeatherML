@@ -88,8 +88,8 @@ namespace custom_modules {
 
 
 
-    void time_step( core::Coupler &coupler , real dt , real frac_time , real time_initNN , 
-    real3d scl_in , real2d scl_out , int devicenum , int mod_id ) const {
+    void time_step( core::Coupler &coupler , real dt , real3d scl_in , real2d scl_out ,
+        int devicenum , int mod_id ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -104,14 +104,14 @@ namespace custom_modules {
       ////////////////////////////////////////////
       // Use NN surrogate instead of Kessler
       ////////////////////////////////////////////
-      torch(temp, rho_v, rho_c, rho_r, scl_in, scl_out, devicenum, mod_id);
+      torch_micro(temp, rho_v, rho_c, rho_r, scl_in, scl_out, devicenum, mod_id);
 
     }
 
     //////////////////////////////////////////////////////////
     // Machine learned model for (2D) microphysics evolution
     //////////////////////////////////////////////////////////
-    void torch(real2d const &temp, real2d const &rho_v, real2d const &rho_c, real2d const &rho_r,
+    void torch_micro(real2d const &temp, real2d const &rho_v, real2d const &rho_c, real2d const &rho_r,
         real3d scl_in , real2d scl_out , int devicenum , int mod_id ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
@@ -138,21 +138,37 @@ namespace custom_modules {
 
       // Create tensor of inputs
       int tensor_in_id = torch_add_tensor( input.data() , {batchsize,num_state*num_stencil});
-
+      
       // Move tensor of inputs to the GPU
-      torch_move_tensor_to_gpu(tensor_in_id , devicenum);
+      if (devicenum >= 0) {
+        torch_move_tensor_to_gpu(tensor_in_id , devicenum);
+      }
 
       // Execute the model and turn its output into a tensor.
       at::Tensor tensor_output = torch_module_forward( mod_id , {tensor_in_id} );
 
-      // Copy tensor data to Host Array using pointer of CPU array
-      realHost2d outputHost("outputHost",batchsize,num_state);
-      auto tensorCPU = tensor_output.cpu();  // create cpu tensor & then pointer so that it does not go out of scope
-      auto tensorCPU_ptr = tensorCPU.data_ptr<real>();
-      std::memcpy(outputHost.data(), tensorCPU_ptr, sizeof(real)*batchsize*num_state );
+      // To access the data in the torch tensor, we need to use the function `mytensor.item<datatype>()`
+      // PyTorch copies data from device to host during this. 
+      // =========Copying torch tensor (GPU) to YAKL device array (does not work)==================
+      // real2d outputDevice("outputDevice", batchsize, num_state);
+      // std::cout<< "Starting device copy of tensor..." << std::endl;
+      // parallel_for( Bounds<2>(batchsize, num_state) , YAKL_LAMBDA (int k, int l) {
+      //     // outputDevice(k,l) = tensor_output[k][l].item<real>();     // Does not work as PyTorch copies from device to host
+      // });
+      // =========================================================================================
+      // Thus, we make a host copy of the tensor data and then make a YAKL device array copy.
+      // To do this, we copy the torch tensor to cpu and then get the data pointer.
+      // We use the data pointer to do std::memcpy
 
-      // Create Device copy and update state_lo
+      realHost2d outputHost("outputHost",batchsize,num_state);
+      // create cpu tensor & then pointer so that it does not go out of scope
+      auto tensorCPU = tensor_output.cpu();               
+      auto tensorCPU_ptr = tensorCPU.data_ptr<float>();   // PyTorch needs this to be float!!!!!
+      std::memcpy(outputHost.data(), tensorCPU_ptr, sizeof(real)*batchsize*num_state );
+      // Create Device copy
       auto outputNN = outputHost.createDeviceCopy();
+      
+      // Update the microphysics
       parallel_for( Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
           int ll = k + (i*nz);   // subscript to linear index
 
@@ -163,7 +179,7 @@ namespace custom_modules {
           rho_r(k,i) = ( outputNN(ll,3) * (scl_out(3,1) - scl_out(3,0)) + scl_out(3,0) );  
       });
     
-    }   // end torch()
+    }   // end torch_micro()
 
     std::string micro_name() const { return "NN surrogate for Kessler"; }
 
