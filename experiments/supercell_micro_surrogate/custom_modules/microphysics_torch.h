@@ -174,9 +174,10 @@ namespace custom_modules {
 
           // NN-based q_fine (re-scale output from NN-model) 
           temp (k,i) = ( outputNN(ll,0) * (scl_out(0,1) - scl_out(0,0)) + scl_out(0,0) );
-          rho_v(k,i) = ( outputNN(ll,1) * (scl_out(1,1) - scl_out(1,0)) + scl_out(1,0) );
-          rho_c(k,i) = ( outputNN(ll,2) * (scl_out(2,1) - scl_out(2,0)) + scl_out(2,0) );
-          rho_r(k,i) = ( outputNN(ll,3) * (scl_out(3,1) - scl_out(3,0)) + scl_out(3,0) );  
+          // make sure the resulting water vapor, cloud liquid, and precipitation are all >= 0 after running the surrogate
+          rho_v(k,i) = max( 0.0, ( outputNN(ll,1) * (scl_out(1,1) - scl_out(1,0)) + scl_out(1,0) ) );
+          rho_c(k,i) = max( 0.0, ( outputNN(ll,2) * (scl_out(2,1) - scl_out(2,0)) + scl_out(2,0) ) );
+          rho_r(k,i) = max( 0.0, ( outputNN(ll,3) * (scl_out(3,1) - scl_out(3,0)) + scl_out(3,0) ) );
       });
     
     }   // end torch_micro()
