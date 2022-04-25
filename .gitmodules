@@ -1,3 +1,6 @@
 [submodule "external/YAKL"]
 	path = external/YAKL
 	url = git@github.com:mrnorman/YAKL.git
+[submodule "external/pinni"]
+	path = external/pinni
+	url = git@github.com:mrnorman/pinni.git
