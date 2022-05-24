@@ -10,7 +10,7 @@ module micro_p3_utils
               avg_diameter, calculate_incloud_mixingratios
 
     integer, public :: iulog_e3sm
-    logical(btype), public :: masterproc_e3sm
+    logical(btype), public :: mainproc_e3sm
 
     ! Signaling NaN bit pattern that represents a limiter that's turned off.
     integer(itype), parameter :: limiter_off = int(Z'7FF1111111111111', itype)
@@ -80,7 +80,7 @@ module micro_p3_utils
 !                                                                                          !
 !__________________________________________________________________________________________!
     subroutine micro_p3_utils_init(cpair,rair,rh2o,rhoh2o,mwh2o,mwdry,gravit,latvap,latice, &
-                   cpliq,tmelt,pi,iulog,masterproc) bind(C,name="micro_p3_utils_init_fortran")
+                   cpliq,tmelt,pi,iulog,mainproc) bind(C,name="micro_p3_utils_init_fortran")
 
     real(rtype), intent(in) :: cpair
     real(rtype), intent(in) :: rair
@@ -95,11 +95,11 @@ module micro_p3_utils
     real(rtype), intent(in) :: tmelt
     real(rtype), intent(in) :: pi
     integer, intent(in)     :: iulog
-    logical(btype), intent(in)     :: masterproc
+    logical(btype), intent(in)     :: mainproc
 
     ! logfile info
     iulog_e3sm      = iulog
-    masterproc_e3sm = masterproc
+    mainproc_e3sm = mainproc
 
     ! mathematical/optimization constants
     thrd  = 1._rtype/3._rtype
@@ -284,7 +284,7 @@ module micro_p3_utils
           qi_incld = min(qi_incld,incloud_limit)
           bm_incld = min(bm_incld,incloud_limit)
           qr_incld    = min(qr_incld,precip_limit)
-!          if (masterproc) write(iulog,*)  errmsg
+!          if (mainproc) write(iulog,*)  errmsg
 
 !          call handle_errmsg('Micro-P3 (Init)',subname='In-cloud mixing
 !          ratio too large',extra_msg=errmsg)

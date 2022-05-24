@@ -52,7 +52,7 @@ module micro_p3
        clbfact_dep,iparam, isize, densize, rimsize, rcollsize, ice_table_size, collect_table_size, &
        get_latent_heat, T_zerodegc, pi=>pi_e3sm, dnu, &
        T_rainfrz, T_icenuc, T_homogfrz, iulog=>iulog_e3sm, &
-       masterproc=>masterproc_e3sm, calculate_incloud_mixingratios, mu_r_constant, &
+       mainproc=>mainproc_e3sm, calculate_incloud_mixingratios, mu_r_constant, &
        lookup_table_1a_dum1_c, &
        p3_qc_autocon_expon, p3_qc_accret_expon
 
@@ -119,14 +119,14 @@ contains
       write(version_p3(i:i),fmt='(A1)') version_p3_c(i:i)
     enddo
 
-    if (masterproc) write(iulog,*) ''
-    if (masterproc) write(iulog,*) ' P3 microphysics: v',version_p3
+    if (mainproc) write(iulog,*) ''
+    if (mainproc) write(iulog,*) ' P3 microphysics: v',version_p3
 
     call p3_init_a(lookup_file_dir, version_p3)
     call p3_init_b()
 
-    if (masterproc) write(iulog,*) '   P3_INIT DONE.'
-    if (masterproc) write(iulog,*) ''
+    if (mainproc) write(iulog,*) '   P3_INIT DONE.'
+    if (mainproc) write(iulog,*) ''
 
   END SUBROUTINE p3_init
 
@@ -158,7 +158,7 @@ contains
     !------------------------------------------------------------------------------------------!
     ! read in ice microphysics table
 
-    if (masterproc) write(iulog,*) '   P3_INIT (reading/creating look-up tables) ...'
+    if (mainproc) write(iulog,*) '   P3_INIT (reading/creating look-up tables) ...'
 
     open(unit=10,file=lookup_file_1, status='old', action='read')
 

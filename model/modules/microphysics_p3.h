@@ -23,7 +23,7 @@ void p3_main_fortran(double *qc , double *nc , double *qr , double *nr , double 
 extern "C"
 void micro_p3_utils_init_fortran(real &cpair , real &rair , real &rh2o , real &rhoh2o , real &mwh2o ,
                                  real &mwdry , real &gravit , real &latvap , real &latice , real &cpliq ,
-                                 real &tmelt , real &pi , int &iulog , bool &masterproc );
+                                 real &tmelt , real &pi , int &iulog , bool &mainproc );
 
 
 extern "C"
@@ -154,9 +154,9 @@ namespace modules {
       real tmelt  = 273.15;
       real pi     = 3.14159265;
       int  iulog  = 1;
-      bool masterproc = true;
+      bool mainproc = true;
       micro_p3_utils_init_fortran( cp_d , R_d , R_v , rhoh2o , mwh2o , mwdry ,
-                                   grav , latvap , latice, cp_l , tmelt , pi , iulog , masterproc );
+                                   grav , latvap , latice, cp_l , tmelt , pi , iulog , mainproc );
 
       std::string dir = "../model/modules/helpers/microphysics_p3";
       std::string ver = "4.1.1";
