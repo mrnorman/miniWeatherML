@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
       // Run microphysics
       micro .time_step             ( coupler , dtphys );
       // Generate samples for micro's effects in the coupler. Current coupler state is the output
-      data_generator.generate_samples_single( input , coupler , dtphys , etime );
+      data_generator.generate_samples_stencil( input , coupler , dtphys , etime );
 
       modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
       column_nudger.nudge_to_column( coupler , dtphys );

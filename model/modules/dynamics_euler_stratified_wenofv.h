@@ -214,7 +214,7 @@ namespace modules {
         if (coupler.is_mainproc()) {
           std::cout << "Etime , dtphys, maxw: " << std::scientific << std::setw(10) << etime   << " , " 
                                                 << std::scientific << std::setw(10) << dt_phys << " , "
-                                                << std::scientific << std::setw(10) << maxw    << "\n";
+                                                << std::scientific << std::setw(10) << maxw    << std::endl;
         }
       }
     }
