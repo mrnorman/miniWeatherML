@@ -23,7 +23,7 @@ namespace custom_modules {
     }
 
 
-    void generate_samples( core::Coupler &input , core::Coupler &output , real dt , real etime ) {
+    void generate_samples_single( core::Coupler &input , core::Coupler &output , real dt , real etime ) {
       using std::min;
       using std::max;
       using yakl::c::parallel_for;
@@ -99,26 +99,25 @@ namespace custom_modules {
       yakl::SimpleNetCDF nc;
       nc.open(fname,yakl::NETCDF_MODE_WRITE);
       int ulindex = nc.getDimSize("nsamples");
+
+      // Save in 32-bit to reduce file / memory size when training
+      floatHost1d gen_input ("gen_input" ,4);
+      floatHost1d gen_output("gen_output",4);
       
       for (int k=0; k < nz; k++) {
         for (int j=0; j < ny; j++) {
           for (int i=0; i < nx; i++) {
             if (host_do_sample(k,j,i)) {
-              realHost2d input ("input" ,4,3);
-              realHost1d output("output",4);
-              for (int kk = -1; kk <= 1; kk++) {
-                int ind = min(nz-1,max(0,k+kk));
-                input(0,kk+1) = host_temp_in (ind,j,i);
-                input(1,kk+1) = host_rho_v_in(ind,j,i);
-                input(2,kk+1) = host_rho_c_in(ind,j,i);
-                input(3,kk+1) = host_rho_p_in(ind,j,i);
-              }
-              output(0) = host_temp_out (k,j,i);
-              output(1) = host_rho_v_out(k,j,i);
-              output(2) = host_rho_c_out(k,j,i);
-              output(3) = host_rho_p_out(k,j,i);
-              nc.write1( input  , "inputs"  , {"num_vars","stencil_size"} , ulindex , "nsamples" );
-              nc.write1( output , "outputs" , {"num_vars"               } , ulindex , "nsamples" );
+              gen_input (0) = host_temp_in  (k,j,i);
+              gen_input (1) = host_rho_v_in (k,j,i);
+              gen_input (2) = host_rho_c_in (k,j,i);
+              gen_input (3) = host_rho_p_in (k,j,i);
+              gen_output(0) = host_temp_out (k,j,i);
+              gen_output(1) = host_rho_v_out(k,j,i);
+              gen_output(2) = host_rho_c_out(k,j,i);
+              gen_output(3) = host_rho_p_out(k,j,i);
+              nc.write1( gen_input  , "inputs"  , {"num_vars"} , ulindex , "nsamples" );
+              nc.write1( gen_output , "outputs" , {"num_vars"} , ulindex , "nsamples" );
               ulindex++;
             }
           }

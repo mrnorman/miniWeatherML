@@ -24,7 +24,7 @@ dt_gcm: 900
 dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 0.
+out_freq: 100.
 
 keras_weights_h5: "/home/81a/temp_miniWeatherML_Keras_model/supercell_micro_Keras_modelwt_NORMip_NORMop1000000_Nneu20.h5"
 

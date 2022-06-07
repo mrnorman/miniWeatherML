@@ -137,3 +137,71 @@ typedef Array<bool const,7,memHost,styleC> boolConstHost7d;
 
 
 
+typedef Array<float,1,memDevice,styleC> float1d;
+typedef Array<float,2,memDevice,styleC> float2d;
+typedef Array<float,3,memDevice,styleC> float3d;
+typedef Array<float,4,memDevice,styleC> float4d;
+typedef Array<float,5,memDevice,styleC> float5d;
+typedef Array<float,6,memDevice,styleC> float6d;
+typedef Array<float,7,memDevice,styleC> float7d;
+
+typedef Array<float const,1,memDevice,styleC> floatConst1d;
+typedef Array<float const,2,memDevice,styleC> floatConst2d;
+typedef Array<float const,3,memDevice,styleC> floatConst3d;
+typedef Array<float const,4,memDevice,styleC> floatConst4d;
+typedef Array<float const,5,memDevice,styleC> floatConst5d;
+typedef Array<float const,6,memDevice,styleC> floatConst6d;
+typedef Array<float const,7,memDevice,styleC> floatConst7d;
+
+typedef Array<float,1,memHost,styleC> floatHost1d;
+typedef Array<float,2,memHost,styleC> floatHost2d;
+typedef Array<float,3,memHost,styleC> floatHost3d;
+typedef Array<float,4,memHost,styleC> floatHost4d;
+typedef Array<float,5,memHost,styleC> floatHost5d;
+typedef Array<float,6,memHost,styleC> floatHost6d;
+typedef Array<float,7,memHost,styleC> floatHost7d;
+
+typedef Array<float const,1,memHost,styleC> floatConstHost1d;
+typedef Array<float const,2,memHost,styleC> floatConstHost2d;
+typedef Array<float const,3,memHost,styleC> floatConstHost3d;
+typedef Array<float const,4,memHost,styleC> floatConstHost4d;
+typedef Array<float const,5,memHost,styleC> floatConstHost5d;
+typedef Array<float const,6,memHost,styleC> floatConstHost6d;
+typedef Array<float const,7,memHost,styleC> floatConstHost7d;
+
+
+
+typedef Array<double,1,memDevice,styleC> double1d;
+typedef Array<double,2,memDevice,styleC> double2d;
+typedef Array<double,3,memDevice,styleC> double3d;
+typedef Array<double,4,memDevice,styleC> double4d;
+typedef Array<double,5,memDevice,styleC> double5d;
+typedef Array<double,6,memDevice,styleC> double6d;
+typedef Array<double,7,memDevice,styleC> double7d;
+
+typedef Array<double const,1,memDevice,styleC> doubleConst1d;
+typedef Array<double const,2,memDevice,styleC> doubleConst2d;
+typedef Array<double const,3,memDevice,styleC> doubleConst3d;
+typedef Array<double const,4,memDevice,styleC> doubleConst4d;
+typedef Array<double const,5,memDevice,styleC> doubleConst5d;
+typedef Array<double const,6,memDevice,styleC> doubleConst6d;
+typedef Array<double const,7,memDevice,styleC> doubleConst7d;
+
+typedef Array<double,1,memHost,styleC> doubleHost1d;
+typedef Array<double,2,memHost,styleC> doubleHost2d;
+typedef Array<double,3,memHost,styleC> doubleHost3d;
+typedef Array<double,4,memHost,styleC> doubleHost4d;
+typedef Array<double,5,memHost,styleC> doubleHost5d;
+typedef Array<double,6,memHost,styleC> doubleHost6d;
+typedef Array<double,7,memHost,styleC> doubleHost7d;
+
+typedef Array<double const,1,memHost,styleC> doubleConstHost1d;
+typedef Array<double const,2,memHost,styleC> doubleConstHost2d;
+typedef Array<double const,3,memHost,styleC> doubleConstHost3d;
+typedef Array<double const,4,memHost,styleC> doubleConstHost4d;
+typedef Array<double const,5,memHost,styleC> doubleConstHost5d;
+typedef Array<double const,6,memHost,styleC> doubleConstHost6d;
+typedef Array<double const,7,memHost,styleC> doubleConstHost7d;
+
+
+

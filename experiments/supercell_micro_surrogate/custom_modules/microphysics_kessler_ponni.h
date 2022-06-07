@@ -3,8 +3,7 @@
 
 #include "main_header.h"
 #include "coupler.h"
-#include "pinni.h"
-#include "pinni_load_keras.h"
+#include "ponni.h"
 
 namespace custom_modules {
 
@@ -31,7 +30,7 @@ namespace custom_modules {
 
     real2d scl_out;
     real3d scl_in ;
-    pinni::Sequential<MAX_LAYERS> model;
+    ponni::Sequential<MAX_LAYERS> model;
 
 
 
@@ -97,7 +96,7 @@ namespace custom_modules {
       auto nn_input_scaling  = config["nn_input_scaling" ].as<std::string>();
       auto nn_output_scaling = config["nn_output_scaling"].as<std::string>();
 
-      model = pinni::load_keras_model<MAX_LAYERS>( keras_model_json , keras_weights_h5 );
+      model = ponni::load_keras_model<MAX_LAYERS>( keras_model_json , keras_weights_h5 );
       model.print_verbose();
 
       // Load the data scaling arrays
@@ -162,25 +161,25 @@ namespace custom_modules {
       YAKL_SCOPE( scl_in  , this->scl_in  );
 
       /////////////////////////////////////////////////////////////////////////
-      // NEURAL NETWORK PINNI
+      // NEURAL NETWORK PONNI
       /////////////////////////////////////////////////////////////////////////
       // Build inputs
       int constexpr num_in    = 12;
       int constexpr sten_size = 3 ;
-      Array<float,2,memDevice,styleC> pinni_in("pinni_in",num_in,nz*ncol);
+      Array<float,2,memDevice,styleC> ponni_in("ponni_in",num_in,nz*ncol);
 
       parallel_for( Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
         for (int kk=0; kk < sten_size; kk++) {
           int ind_k = std::min(nz-1,std::max(0,k+kk-1));
           int iglob = k*ncol+i;
-          pinni_in( 0*sten_size+kk , iglob ) = ( temp (ind_k,i) - scl_in(0,kk,0) ) / ( scl_in(0,kk,1) - scl_in(0,kk,0) );
-          pinni_in( 1*sten_size+kk , iglob ) = ( rho_v(ind_k,i) - scl_in(1,kk,0) ) / ( scl_in(1,kk,1) - scl_in(1,kk,0) );
-          pinni_in( 2*sten_size+kk , iglob ) = ( rho_c(ind_k,i) - scl_in(2,kk,0) ) / ( scl_in(2,kk,1) - scl_in(2,kk,0) );
-          pinni_in( 3*sten_size+kk , iglob ) = ( rho_r(ind_k,i) - scl_in(3,kk,0) ) / ( scl_in(3,kk,1) - scl_in(3,kk,0) );
+          ponni_in( 0*sten_size+kk , iglob ) = ( temp (ind_k,i) - scl_in(0,kk,0) ) / ( scl_in(0,kk,1) - scl_in(0,kk,0) );
+          ponni_in( 1*sten_size+kk , iglob ) = ( rho_v(ind_k,i) - scl_in(1,kk,0) ) / ( scl_in(1,kk,1) - scl_in(1,kk,0) );
+          ponni_in( 2*sten_size+kk , iglob ) = ( rho_c(ind_k,i) - scl_in(2,kk,0) ) / ( scl_in(2,kk,1) - scl_in(2,kk,0) );
+          ponni_in( 3*sten_size+kk , iglob ) = ( rho_r(ind_k,i) - scl_in(3,kk,0) ) / ( scl_in(3,kk,1) - scl_in(3,kk,0) );
         }
       });
 
-      auto pinni_out = model.inference_batchparallel( pinni_in );
+      auto ponni_out = model.inference_batchparallel( ponni_in );
 
       real2d temp_tmp  = temp .createDeviceCopy();
       real2d rho_v_tmp = rho_v.createDeviceCopy();
@@ -189,10 +188,10 @@ namespace custom_modules {
 
       parallel_for( Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
         int iglob = k*ncol+i;
-        temp_tmp (k,i) =                   pinni_out( 0 , iglob ) * (scl_out(0,1) - scl_out(0,0)) + scl_out(0,0)  ;
-        rho_v_tmp(k,i) = std::max( 0._fp , pinni_out( 1 , iglob ) * (scl_out(1,1) - scl_out(1,0)) + scl_out(1,0) );
-        rho_c_tmp(k,i) = std::max( 0._fp , pinni_out( 2 , iglob ) * (scl_out(2,1) - scl_out(2,0)) + scl_out(2,0) );
-        rho_r_tmp(k,i) = std::max( 0._fp , pinni_out( 3 , iglob ) * (scl_out(3,1) - scl_out(3,0)) + scl_out(3,0) );
+        temp_tmp (k,i) =                   ponni_out( 0 , iglob ) * (scl_out(0,1) - scl_out(0,0)) + scl_out(0,0)  ;
+        rho_v_tmp(k,i) = std::max( 0._fp , ponni_out( 1 , iglob ) * (scl_out(1,1) - scl_out(1,0)) + scl_out(1,0) );
+        rho_c_tmp(k,i) = std::max( 0._fp , ponni_out( 2 , iglob ) * (scl_out(2,1) - scl_out(2,0)) + scl_out(2,0) );
+        rho_r_tmp(k,i) = std::max( 0._fp , ponni_out( 3 , iglob ) * (scl_out(3,1) - scl_out(3,0)) + scl_out(3,0) );
       });
 
       // std::cout << yakl::intrinsics::maxval( temp_tmp  ) << "\n:";

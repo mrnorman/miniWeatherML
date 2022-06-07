@@ -22,7 +22,7 @@ add_executable(gather_statistics gather_statistics.cpp)
 yakl_process_target(gather_statistics)
 target_link_libraries(gather_statistics model custom_modules "${NCFLAGS} -lyaml-cpp")
 
-add_executable(inference_pinni inference_pinni.cpp)
-yakl_process_target(inference_pinni)
-target_link_libraries(inference_pinni model custom_modules "${NCFLAGS} -lyaml-cpp")
+add_executable(inference_ponni inference_ponni.cpp)
+yakl_process_target(inference_ponni)
+target_link_libraries(inference_ponni model custom_modules "${NCFLAGS} -lyaml-cpp")
 

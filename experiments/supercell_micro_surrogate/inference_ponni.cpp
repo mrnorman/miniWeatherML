@@ -1,7 +1,7 @@
 
 #include "coupler.h"
 #include "dynamics_euler_stratified_wenofv.h"
-#include "microphysics_kessler_pinni.h"
+#include "microphysics_kessler_ponni.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
 #include "column_nudging.h"
