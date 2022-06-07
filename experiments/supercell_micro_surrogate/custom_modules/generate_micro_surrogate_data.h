@@ -159,7 +159,7 @@ namespace custom_modules {
       auto &dm_in  = input .get_data_manager_readonly();
       auto &dm_out = output.get_data_manager_readonly();
 
-      auto rho_d     = dm_in .get<real const,3>("rho_d"        );
+      auto rho_d     = dm_in .get<real const,3>("density_dry"  );
 
       auto temp_in   = dm_in .get<real const,3>("temp"         );
       auto temp_out  = dm_out.get<real const,3>("temp"         );
@@ -192,35 +192,6 @@ namespace custom_modules {
         else                   { do_sample(k,j,i) = false; }
       });
 
-      float3d ghost_temp_in ("ghost_temp_in ",nz+2,ny,nx);
-      float3d ghost_rho_v_in("ghost_rho_v_in",nz+2,ny,nx);
-      float3d ghost_rho_c_in("ghost_rho_c_in",nz+2,ny,nx);
-      float3d ghost_rho_p_in("ghost_rho_p_in",nz+2,ny,nx);
-
-      auto R_d  = input.get_R_d();
-      auto R_v  = input.get_R_v();
-      auto dz   = input.get_dz();
-      auto grav = input.get_grav();
-
-      parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        ghost_temp_in (1+k,j,i) = temp_in (k,j,i);
-        ghost_rho_v_in(1+k,j,i) = rho_v_in(k,j,i);
-        ghost_rho_c_in(1+k,j,i) = rho_c_in(k,j,i);
-        ghost_rho_p_in(1+k,j,i) = rho_p_in(k,j,i);
-        if (k == 0) {
-          real lnp1 = std::log( (rho_d(k+1,j,i) * R_d + rho_v_in(k+1,j,i) * R_v) * temp_in(k+1,j,i) );
-          real lnp0 = std::log( (rho_d(k  ,j,i) * R_d + rho_v_in(k  ,j,i) * R_v) * temp_in(  k,j,i) );
-          real a = ( lnp1 - lnp0 ) / dz;
-          real b = lnp0;
-          real p = std::exp( a*(-dz) + b );
-          if (i == 0) std::cout << p << "\n";
-        }
-        if (k == nz-1) {
-        }
-      });
-      
-      abort();
-
       auto host_temp_in   = temp_in  .createHostCopy();
       auto host_temp_out  = temp_out .createHostCopy();
       auto host_rho_v_in  = rho_v_in .createHostCopy();
@@ -236,22 +207,26 @@ namespace custom_modules {
       int ulindex = nc.getDimSize("nsamples");
 
       // Save in 32-bit to reduce file / memory size when training
-      floatHost1d gen_input ("gen_input" ,4);
+      floatHost2d gen_input ("gen_input" ,4,2);
       floatHost1d gen_output("gen_output",4);
       
       for (int k=0; k < nz; k++) {
         for (int j=0; j < ny; j++) {
           for (int i=0; i < nx; i++) {
             if (host_do_sample(k,j,i)) {
-              gen_input (0) = host_temp_in  (k,j,i);
-              gen_input (1) = host_rho_v_in (k,j,i);
-              gen_input (2) = host_rho_c_in (k,j,i);
-              gen_input (3) = host_rho_p_in (k,j,i);
+              gen_input (0,0) = host_temp_in  (k,j,i);
+              gen_input (1,0) = host_rho_v_in (k,j,i);
+              gen_input (2,0) = host_rho_c_in (k,j,i);
+              gen_input (3,0) = host_rho_p_in (k,j,i);
+              gen_input (0,1) = host_temp_in  (std::min(nz-1,k+1),j,i);
+              gen_input (1,1) = host_rho_v_in (std::min(nz-1,k+1),j,i);
+              gen_input (2,1) = host_rho_c_in (std::min(nz-1,k+1),j,i);
+              gen_input (3,1) = host_rho_p_in (std::min(nz-1,k+1),j,i);
               gen_output(0) = host_temp_out (k,j,i);
               gen_output(1) = host_rho_v_out(k,j,i);
               gen_output(2) = host_rho_c_out(k,j,i);
               gen_output(3) = host_rho_p_out(k,j,i);
-              nc.write1( gen_input  , "inputs"  , {"num_vars"} , ulindex , "nsamples" );
+              nc.write1( gen_input  , "inputs"  , {"num_vars","sten"} , ulindex , "nsamples" );
               nc.write1( gen_output , "outputs" , {"num_vars"} , ulindex , "nsamples" );
               ulindex++;
             }
