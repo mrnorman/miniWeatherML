@@ -3,4 +3,4 @@
 	url = git@github.com:mrnorman/YAKL.git
 [submodule "external/ponni"]
 	path = external/ponni
-	url = https://github.com/mrnorman/ponni
+	url = git@github.com:mrnorman/ponni.git
