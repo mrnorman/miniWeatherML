@@ -24,13 +24,11 @@ dt_gcm: 900
 dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 100.
+out_freq: 0.
 
-keras_weights_h5: "/home/81a/temp_miniWeatherML_Keras_model/supercell_micro_Keras_modelwt_NORMip_NORMop1000000_Nneu20.h5"
+keras_weights_h5: "./inputs/examples/supercell_kessler_singlecell_model_weights.h5"
 
-keras_model_json: "/home/81a/temp_miniWeatherML_Keras_model/supercell_micro_Keras_model_NORMip_NORMop1000000_Nneu20.json"
+nn_input_scaling: "./inputs/examples/supercell_kessler_stencil_input_scaling.txt"
 
-nn_input_scaling: "/home/81a/temp_miniWeatherML_Keras_model/supercell_micro_Ntrain1000000_input.txt"
-
-nn_output_scaling: "/home/81a/temp_miniWeatherML_Keras_model/supercell_micro_Ntrain1000000_output.txt"
+nn_output_scaling: "./inputs/examples/supercell_kessler_stencil_output_scaling.txt"
 

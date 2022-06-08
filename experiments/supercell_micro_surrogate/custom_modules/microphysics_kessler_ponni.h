@@ -4,8 +4,14 @@
 #include "main_header.h"
 #include "coupler.h"
 #include "ponni.h"
+#include "ponni_load_h5_weights.h"
 
 namespace custom_modules {
+
+  using ponni::Matvec;
+  using ponni::Bias;
+  using ponni::Relu;
+  using ponni::Inference;
 
   class Microphysics_Kessler {
   public:
@@ -29,9 +35,10 @@ namespace custom_modules {
     int static constexpr MAX_LAYERS=10;
 
     real2d scl_out;
-    real3d scl_in ;
-    ponni::Sequential<MAX_LAYERS> model;
+    real2d scl_in ;
 
+    typedef decltype(ponni::create_inference_model(Matvec(),Bias(),Relu(),Matvec(),Bias())) MODEL;
+    MODEL model;
 
 
     Microphysics_Kessler() {
@@ -92,35 +99,40 @@ namespace custom_modules {
       auto inFile = coupler.get_option<std::string>("standalone_input_file");
       YAML::Node config = YAML::LoadFile(inFile);
       auto keras_weights_h5  = config["keras_weights_h5" ].as<std::string>();
-      auto keras_model_json  = config["keras_model_json" ].as<std::string>();
       auto nn_input_scaling  = config["nn_input_scaling" ].as<std::string>();
       auto nn_output_scaling = config["nn_output_scaling"].as<std::string>();
 
-      model = ponni::load_keras_model<MAX_LAYERS>( keras_model_json , keras_weights_h5 );
+      ponni::Matvec matvec_1( ponni::load_h5_weights<2>( keras_weights_h5 , "/dense_6/dense_6" , "kernel:0" ) );
+      ponni::Bias   bias_1  ( ponni::load_h5_weights<1>( keras_weights_h5 , "/dense_6/dense_6" , "bias:0"   ) );
+      ponni::Relu   relu_1  ( bias_1.get_num_outputs() , 0.1 );  // LeakyReLU with negative slope of 0.1
+      ponni::Matvec matvec_2( ponni::load_h5_weights<2>( keras_weights_h5 , "/dense_7/dense_7" , "kernel:0" ) );
+      ponni::Bias   bias_2  ( ponni::load_h5_weights<1>( keras_weights_h5 , "/dense_7/dense_7" , "bias:0"   ) );
+
+      this->model = ponni::create_inference_model(matvec_1, bias_1, relu_1, matvec_2, bias_2);
+      model.validate();
+      model.print();
       model.print_verbose();
 
       // Load the data scaling arrays
       scl_out = real2d("scl_out",4,2);
-      scl_in  = real3d("scl_in" ,4,3,2);
+      scl_in  = real2d("scl_in" ,5,2);
 
-      auto scl_out_host = scl_out.createHostCopy();
-      auto scl_in_host  = scl_in .createHostCopy();
+      auto scl_out_host = scl_out.createHostObject();
+      auto scl_in_host  = scl_in .createHostObject();
 
       std::ifstream file1;
       // input scaler
       file1.open( nn_input_scaling );
-      for (int l = 0; l < 4; l++) {
-        for (int i = 0; i < 3; i++) {
-          for (int j = 0; j < 2; j++) {
-            file1 >> scl_in_host(l,i,j);
-          }
+      for (int j = 0; j < 5; j++) {
+        for (int i = 0; i < 2; i++) {
+          file1 >> scl_in_host(j,i);
         }
       }
       file1.close();
       file1.open( nn_output_scaling );
-      for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 2; j++) {
-          file1 >> scl_out_host(i,j);
+      for (int j = 0; j < 4; j++) {
+        for (int i = 0; i < 2; i++) {
+          file1 >> scl_out_host(j,i);
         }
       }
       file1.close();
@@ -144,11 +156,11 @@ namespace custom_modules {
       auto &dm = coupler.get_data_manager_readwrite();
 
       // Grab the data
-      auto rho_v   = dm.get_lev_col<real      >("water_vapor"  );
-      auto rho_c   = dm.get_lev_col<real      >("cloud_liquid" );
-      auto rho_r   = dm.get_lev_col<real      >("precip_liquid");
-      auto rho_dry = dm.get_lev_col<real const>("density_dry"  );
-      auto temp    = dm.get_lev_col<real      >("temp"         );
+      auto rho_v = dm.get_lev_col<real      >("water_vapor"  );
+      auto rho_c = dm.get_lev_col<real      >("cloud_liquid" );
+      auto rho_r = dm.get_lev_col<real      >("precip_liquid");
+      auto rho_d = dm.get_lev_col<real const>("density_dry"  );
+      auto temp  = dm.get_lev_col<real      >("temp"         );
 
       // Grab the dimension sizes
       real dz   = coupler.get_dz();
@@ -164,22 +176,19 @@ namespace custom_modules {
       // NEURAL NETWORK PONNI
       /////////////////////////////////////////////////////////////////////////
       // Build inputs
-      int constexpr num_in    = 12;
-      int constexpr sten_size = 3 ;
+      int constexpr num_in = 5;
       Array<float,2,memDevice,styleC> ponni_in("ponni_in",num_in,nz*ncol);
 
       parallel_for( Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
-        for (int kk=0; kk < sten_size; kk++) {
-          int ind_k = std::min(nz-1,std::max(0,k+kk-1));
-          int iglob = k*ncol+i;
-          ponni_in( 0*sten_size+kk , iglob ) = ( temp (ind_k,i) - scl_in(0,kk,0) ) / ( scl_in(0,kk,1) - scl_in(0,kk,0) );
-          ponni_in( 1*sten_size+kk , iglob ) = ( rho_v(ind_k,i) - scl_in(1,kk,0) ) / ( scl_in(1,kk,1) - scl_in(1,kk,0) );
-          ponni_in( 2*sten_size+kk , iglob ) = ( rho_c(ind_k,i) - scl_in(2,kk,0) ) / ( scl_in(2,kk,1) - scl_in(2,kk,0) );
-          ponni_in( 3*sten_size+kk , iglob ) = ( rho_r(ind_k,i) - scl_in(3,kk,0) ) / ( scl_in(3,kk,1) - scl_in(3,kk,0) );
-        }
+        int iglob = k*ncol+i;
+        ponni_in( 0 , iglob ) = ( temp (k,i) - scl_in(0,0) ) / ( scl_in(0,1) - scl_in(0,0) );
+        ponni_in( 1 , iglob ) = ( rho_d(k,i) - scl_in(1,0) ) / ( scl_in(1,1) - scl_in(1,0) );
+        ponni_in( 2 , iglob ) = ( rho_v(k,i) - scl_in(2,0) ) / ( scl_in(2,1) - scl_in(2,0) );
+        ponni_in( 3 , iglob ) = ( rho_c(k,i) - scl_in(3,0) ) / ( scl_in(3,1) - scl_in(3,0) );
+        ponni_in( 4 , iglob ) = ( rho_r(k,i) - scl_in(4,0) ) / ( scl_in(4,1) - scl_in(4,0) );
       });
 
-      auto ponni_out = model.inference_batchparallel( ponni_in );
+      auto ponni_out = model.batch_parallel( ponni_in );
 
       real2d temp_tmp  = temp .createDeviceCopy();
       real2d rho_v_tmp = rho_v.createDeviceCopy();
@@ -221,10 +230,10 @@ namespace custom_modules {
       // Save initial state, and compute inputs for kessler(...)
       parallel_for( "kessler timeStep 2" , Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
         zmid    (k,i) = (k+0.5_fp) * dz;
-        qv      (k,i) = rho_v(k,i) / rho_dry(k,i);
-        qc      (k,i) = rho_c(k,i) / rho_dry(k,i);
-        qr      (k,i) = rho_r(k,i) / rho_dry(k,i);
-        pressure(k,i) = R_d * rho_dry(k,i) * temp(k,i) + R_v * rho_v(k,i) * temp(k,i);
+        qv      (k,i) = rho_v(k,i) / rho_d(k,i);
+        qc      (k,i) = rho_c(k,i) / rho_d(k,i);
+        qr      (k,i) = rho_r(k,i) / rho_d(k,i);
+        pressure(k,i) = R_d * rho_d(k,i) * temp(k,i) + R_v * rho_v(k,i) * temp(k,i);
         exner   (k,i) = pow( pressure(k,i) / p0 , R_d / cp_d );
         theta   (k,i) = temp(k,i) / exner(k,i);
       });
@@ -234,7 +243,7 @@ namespace custom_modules {
       ////////////////////////////////////////////
       // Call Kessler code
       ////////////////////////////////////////////
-      kessler(theta, qv, qc, qr, rho_dry, precl, zmid, exner, dt, R_d, cp_d, p0);
+      kessler(theta, qv, qc, qr, rho_d, precl, zmid, exner, dt, R_d, cp_d, p0);
 
       auto rho_v_diff = rho_v.createDeviceCopy();
       auto rho_c_diff = rho_c.createDeviceCopy();
@@ -243,9 +252,9 @@ namespace custom_modules {
 
       // Post-process microphysics changes back to the coupler state
       parallel_for( "kessler timeStep 3" , Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
-        rho_v   (k,i) = qv(k,i)*rho_dry(k,i);
-        rho_c   (k,i) = qc(k,i)*rho_dry(k,i);
-        rho_r   (k,i) = qr(k,i)*rho_dry(k,i);
+        rho_v   (k,i) = qv(k,i)*rho_d(k,i);
+        rho_c   (k,i) = qc(k,i)*rho_d(k,i);
+        rho_r   (k,i) = qr(k,i)*rho_d(k,i);
         // While micro changes total pressure, thus changing exner, the definition
         // of theta depends on the old exner pressure, so we'll use old exner here
         temp    (k,i) = theta(k,i) * exner(k,i);
@@ -261,10 +270,10 @@ namespace custom_modules {
       std::cout << "Relative diff rho_r: " << yakl::intrinsics::sum( rho_r_diff ) / ny / nx / nz << "\n";
       std::cout << "Relative diff temp : " << yakl::intrinsics::sum( temp_diff  ) / ny / nx / nz << "\n";
 
-      temp_tmp .deep_copy_to( temp  );
-      rho_v_tmp.deep_copy_to( rho_v );
-      rho_c_tmp.deep_copy_to( rho_c );
-      rho_r_tmp.deep_copy_to( rho_r );
+      // temp_tmp .deep_copy_to( temp  );
+      // rho_v_tmp.deep_copy_to( rho_v );
+      // rho_c_tmp.deep_copy_to( rho_c );
+      // rho_r_tmp.deep_copy_to( rho_r );
       yakl::fence();
     }
 
