@@ -20,11 +20,13 @@ Written in portable C++, miniWeatherML runs out of the box on CPUs as well as Nv
 
 The core infrastructure of miniWeatherML is less than 1K lines of code, and the minimal meaningful module set is comprised of less than 3K lines of code, very little of which needs to be understood in full detail in order to effectively use miniWeatherML for its intended purposes.
 
-## Some questions to explore with miniWeatherML
+### Check out the **[Kessler Microphysics Example Workflow](https://github.com/mrnorman/miniWeatherML/tree/main/experiments/supercell_kessler_surrogate)** to get started
+
+<!-- ## Some questions to explore with miniWeatherML
 * How do we sample data optimally to produce physically realistic ML models?
 * How do we properly assess the behavior of a ML model once it's deployed online?
 * How can we identify and implement physics-based constraints within the ML model?
 * What frameworks work best for managing complex end-to-end workflows?
 * Which ML models work the best in which circumstances?
 * What challenges do we face when scaling out data generation, curation, training, deployment, and assessment?
-* Can we determine in situ when a deployed ML model is likely to behave non-physically?
+* Can we determine in situ when a deployed ML model is likely to behave non-physically? -->
