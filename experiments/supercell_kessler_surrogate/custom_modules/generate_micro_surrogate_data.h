@@ -16,14 +16,14 @@ namespace custom_modules {
     
     void init( core::Coupler &coupler ) {
       yakl::SimpleNetCDF nc;
-      fname = std::string("supercell_micro_data_task_") + std::to_string(coupler.get_myrank()) + 
+      fname = std::string("supercell_kessler_data_task_") + std::to_string(coupler.get_myrank()) + 
               std::string(".nc");
       nc.create(fname);
       nc.createDim("nsamples");
       nc.close();
 
       std::ofstream myfile;
-      myfile.open ("supercell_micro_metadata.txt");
+      myfile.open ("supercell_kessler_metadata.txt");
       myfile << "This dataset contains data for training a surrogate model to emulate Kessler microphysics.\n\n";
       myfile << "vars_in : temperature, dry air density, water vapor density, cloud liquid density, precipitation density\n";
       myfile << "vars_out: temperature, water vapor density, cloud liquid density, precipitation density\n";
@@ -46,7 +46,7 @@ namespace custom_modules {
 
       // This was gathered from the gather_statistics.cpp driver
       // On average, about 12.5% of the cells experience active microphysics at any given time
-      double ratio_active = 0.125;
+      double ratio_active = 0.4;
       double expected_num_active   =    ratio_active  * nx*ny*nz;
       double expected_num_inactive = (1-ratio_active) * nx*ny*nz;
 
