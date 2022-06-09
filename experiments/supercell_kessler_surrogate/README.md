@@ -2,11 +2,11 @@
 
 Welcome to the Kessler microphysics example for creating Neural Network surrogate models. This gives a basic end-to-end workflow (not seamless, but complete) for:
 1. Creating a numerical model for experimentation
-2. Exploring the data that will be emulated
-3. Generating data for training a surrogate model
+2. Exploring the data that will be emulate ([gather_statistics.cpp](https://github.com/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/gather_statistics.cpp) and [custom_modules/gather_micro_statistics.h](https://github.com/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/custom_modules/gather_micro_statistics.h))
+3. Generating data for training a surrogate model ([generate_micro_data.cpp](https://github.com/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/generate_micro_data.cpp) and [generate_micro_surrogate_data.h](https://github.com/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/custom_modules/generate_micro_surrogate_data.h))
 4. Curating the data
 5. Training a Neural Network surrogate model
-6. Deploying the surrogate model online in a simulation
+6. Deploying the surrogate model online in a simulation ([inference_ponni.cpp](https://github.com/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/inference_ponni.cpp) and [microphysics_kessler_ponni.h](https://github.com/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/custom_modules/microphysics_kessler_ponni.h))
 
 **Even simple models are complex**: What's great about this example is that it shows that even simple surrogate models can be quite difficult to formulate in such a manner that they behave physically in a real simulation. Also, exploring different "hyperparameters" to the NN architecture can demonstrate that seemingly small changes can lead to very different behavior.
 
