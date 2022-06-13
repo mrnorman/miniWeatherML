@@ -32,6 +32,10 @@ int main(int argc, char** argv) {
     real   zlen      = config["zlen"    ].as<real>();
     real   dtphys_in = config["dt_phys" ].as<real>();
 
+    coupler.set_option<std::string>( "out_fname" , config["out_fname"].as<std::string>() );
+    coupler.set_option<std::string>( "init_data" , config["init_data"].as<std::string>() );
+    coupler.set_option<real       >( "out_freq"  , config["out_freq" ].as<real       >() );
+
     // Coupler state is: (1) dry density;  (2) u-velocity;  (3) v-velocity;  (4) w-velocity;  (5) temperature
     //                   (6+) tracer masses (*not* mixing ratios!)
     coupler.distribute_mpi_and_allocate_coupled_state(nz, ny_glob, nx_glob);

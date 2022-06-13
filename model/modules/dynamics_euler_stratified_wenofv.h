@@ -726,12 +726,9 @@ namespace modules {
       tracer_positive_host .deep_copy_to(tracer_positive );
       tracer_adds_mass_host.deep_copy_to(tracer_adds_mass);
 
-      // Read initial data, output filename, and output frequency from YAML input file
-      auto inFile = coupler.get_option<std::string>( "standalone_input_file" );
-      YAML::Node config = YAML::LoadFile(inFile);
-      auto init_data = config["init_data"].as<std::string>();
-      fname          = config["out_fname"].as<std::string>();
-      out_freq       = config["out_freq" ].as<real>();
+      auto init_data = coupler.get_option<std::string>("init_data");
+      fname          = coupler.get_option<std::string>("out_fname");
+      out_freq       = coupler.get_option<real       >("out_freq" );
 
       // Set an integer version of the input_data so we can test it inside GPU kernels
       if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
