@@ -24,9 +24,10 @@ cmake      \
   -DYAKL_OPENMP_FLAGS="${YAKL_OPENMP_FLAGS}"     \
   -DYAKL_HIP_FLAGS="${YAKL_HIP_FLAGS}"           \
   -DYAKL_F90_FLAGS="${YAKL_F90_FLAGS}"           \
-  -DNCFLAGS="${NCFLAGS}"                         \
+  -DMW_LINK_FLAGS="${MW_LINK_FLAGS}"             \
   -DYAKL_ARCH="${YAKL_ARCH}"                     \
   -DCMAKE_CUDA_HOST_COMPILER="${CXX}"            \
+  -DMINIWEATHER_ML_HOME="`pwd`/.."               \
   -Wno-dev                                       \
   $1
 
