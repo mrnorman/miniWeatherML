@@ -27,6 +27,7 @@ cmake      \
   -DCMAKE_CUDA_HOST_COMPILER="mpic++"            \
   -DNCFLAGS="${NCFLAGS}"                         \
   -DYAKL_ARCH="${YAKL_ARCH}"                     \
+  -DCMAKE_CUDA_HOST_COMPILER="${CXX}"            \
   -Wno-dev                                       \
   $1
 
