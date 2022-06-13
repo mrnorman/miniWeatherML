@@ -545,6 +545,7 @@ namespace core {
     // Deallocate all entries, and set the entries and dimensions to empty vectors. This is called by the destructor
     // Generally meat for internal use, but perhaps there are cases where the user might want to call this directly.
     void finalize() {
+      yakl::fence();
       for (int i=0; i < entries.size(); i++) {
         deallocate( entries[i].ptr , entries[i].name.c_str() );
       }

@@ -12,9 +12,46 @@ using yakl::styleC;
 using yakl::Array;
 using yakl::SArray;
 
-template <class T> inline void debug_print( T var , char const * file , int line ) {
-  std::cout << "DEBUG: " << file << " , " << line << " , " << yakl::intrinsics::sum( var ) << "\n";
+inline void debug_print( char const * file , int line ) {
+  MPI_Barrier(MPI_COMM_WORLD);
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+  if (rank == 0) std::cout << "*** DEBUG: " << file << ": " << line << std::endl;
 }
+
+template <class T> inline void debug_print_sum( T var , char const * file , int line , char const * varname ) {
+  MPI_Barrier(MPI_COMM_WORLD);
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+  if (rank == 0) std::cout << "*** DEBUG: " << file << ": " << line << ": sum(" << varname << ")  -->  " << yakl::intrinsics::sum( var ) << std::endl;
+}
+
+template <class T> inline void debug_print_min( T var , char const * file , int line , char const * varname ) {
+  MPI_Barrier(MPI_COMM_WORLD);
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+  if (rank == 0) std::cout << "*** DEBUG: " << file << ": " << line << ": minval(" << varname << ")  -->  " << yakl::intrinsics::minval( var ) << std::endl;
+}
+
+template <class T> inline void debug_print_max( T var , char const * file , int line , char const * varname ) {
+  MPI_Barrier(MPI_COMM_WORLD);
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+  if (rank == 0) std::cout << "*** DEBUG: " << file << ": " << line << ": maxval(" << varname << ")  -->  " << yakl::intrinsics::maxval( var ) << std::endl;
+}
+
+template <class T> inline void debug_print_val( T var , char const * file , int line , char const * varname ) {
+  MPI_Barrier(MPI_COMM_WORLD);
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+  if (rank == 0) std::cout << "*** DEBUG: " << file << ": " << line << ": " << varname << "  -->  " << var << std::endl;
+}
+
+#define DEBUG_PRINT_MAIN() { debug_print(__FILE__,__LINE__); }
+#define DEBUG_PRINT_MAIN_SUM(var) { debug_print_sum((var),__FILE__,__LINE__,#var); }
+#define DEBUG_PRINT_MAIN_MIN(var) { debug_print_min((var),__FILE__,__LINE__,#var); }
+#define DEBUG_PRINT_MAIN_MAX(var) { debug_print_max((var),__FILE__,__LINE__,#var); }
+#define DEBUG_PRINT_MAIN_VAL(var) { debug_print_val((var),__FILE__,__LINE__,#var); }
 
 int constexpr max_fields = 50;
 

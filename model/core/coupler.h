@@ -81,6 +81,7 @@ namespace core {
 
 
     ~Coupler() {
+      yakl::fence();
       dm.finalize();
       options.finalize();
       tracers = std::vector<Tracer>();
@@ -127,11 +128,12 @@ namespace core {
     }
 
 
-    void distribute_mpi_and_allocate_coupled_state(int nz, size_t ny_glob, size_t nx_glob) {
+    void distribute_mpi_and_allocate_coupled_state(int nz, size_t ny_glob, size_t nx_glob,
+                                                   int nproc_x_in = -1 , int nproc_y_in = -1 ,
+                                                   int px_in      = -1 , int py_in      = -1 ,
+                                                   int i_beg_in   = -1 , int j_beg_in   = -1 ) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
-
-      int nx, ny; // MPI process-local number of cells in the x- and y-directions
 
       this->nx_glob = nx_glob;
       this->ny_glob = ny_glob;
@@ -141,14 +143,20 @@ namespace core {
 
       mainproc = (myrank == 0);
 
-      // Find nproc_y * nproc_x == nranks such that nproc_y and nproc_x are as close as possible
-      int nproc_y = (int) std::ceil( std::sqrt((double) nranks) );
-      nproc_y = std::max( 1 ,  std::min( nproc_y , (int) (ny_glob / 5) ) );
-      while (nproc_y > 1) {
-        if (nranks % nproc_y == 0) { break; }
-        nproc_y--;
+      bool sim2d = ny_glob == 1;
+
+      if (sim2d) {
+        nproc_x = nranks;
+        nproc_y = 1;
+      } else {
+        // Find integer nproc_y * nproc_x == nranks such that nproc_y and nproc_x are as close as possible
+        nproc_y = (int) std::ceil( std::sqrt((double) nranks) );
+        while (nproc_y >= 1) {
+          if (nranks % nproc_y == 0) { break; }
+          nproc_y--;
+        }
+        nproc_x = nranks / nproc_y;
       }
-      int nproc_x = nranks / nproc_y;
 
       // Get my ID within each dimension's number of ranks
       py = myrank / nproc_x;
@@ -162,9 +170,19 @@ namespace core {
       nper = ((double) ny_glob)/nproc_y;
       j_beg = static_cast<size_t>( round( nper* py    )   );
       j_end = static_cast<size_t>( round( nper*(py+1) )-1 );
+
+      // For multi-resolution experiments, the user might want to set these manually to ensure that
+      //   grids match up properly when decomposed into ranks
+      if (nproc_x_in > 0) nproc_x = nproc_x_in;
+      if (nproc_y_in > 0) nproc_y = nproc_y_in;
+      if (px_in      > 0) px      = px_in     ;
+      if (py_in      > 0) py      = py_in     ;
+      if (i_beg_in   > 0) i_beg   = i_beg_in  ;
+      if (j_beg_in   > 0) j_beg   = j_beg_in  ;
+
       //Determine my number of grid cells
-      nx = i_end - i_beg + 1;
-      ny = j_end - j_beg + 1;
+      int nx = i_end - i_beg + 1;
+      int ny = j_end - j_beg + 1;
       for (int j = 0; j < 3; j++) {
         for (int i = 0; i < 3; i++) {
           int pxloc = px+i-1;
@@ -231,32 +249,33 @@ namespace core {
 
     void set_dt_gcm(real dt_gcm) { this->dt_gcm = dt_gcm; }
 
-    real                      get_R_d                   () const { return this->R_d     ; }
-    real                      get_R_v                   () const { return this->R_v     ; }
-    real                      get_cp_d                  () const { return this->cp_d    ; }
-    real                      get_cp_v                  () const { return this->cp_v    ; }
-    real                      get_grav                  () const { return this->grav    ; }
-    real                      get_p0                    () const { return this->p0      ; }
-    real                      get_xlen                  () const { return this->xlen    ; }
-    real                      get_ylen                  () const { return this->ylen    ; }
-    real                      get_zlen                  () const { return this->zlen    ; }
-    real                      get_dt_gcm                () const { return this->dt_gcm  ; }
-    int                       get_nranks                () const { return this->nranks  ; }
-    int                       get_myrank                () const { return this->myrank  ; }
-    size_t                    get_nx_glob               () const { return this->nx_glob ; }
-    size_t                    get_ny_glob               () const { return this->ny_glob ; }
-    int                       get_nproc_x               () const { return this->nproc_x ; }
-    int                       get_nproc_y               () const { return this->nproc_y ; }
-    int                       get_px                    () const { return this->px      ; }
-    int                       get_py                    () const { return this->py      ; }
-    size_t                    get_i_beg                 () const { return this->i_beg   ; }
-    size_t                    get_j_beg                 () const { return this->j_beg   ; }
-    size_t                    get_i_end                 () const { return this->i_end   ; }
-    size_t                    get_j_end                 () const { return this->j_end   ; }
-    bool                      is_mainproc               () const { return this->mainproc; }
-    SArray<int,2,3,3> const & get_neighbor_rankid_matrix() const { return this->neigh   ; }
-    DataManager       const & get_data_manager_readonly () const { return this->dm      ; }
-    DataManager             & get_data_manager_readwrite()       { return this->dm      ; }
+    real                      get_R_d                   () const { return this->R_d         ; }
+    real                      get_R_v                   () const { return this->R_v         ; }
+    real                      get_cp_d                  () const { return this->cp_d        ; }
+    real                      get_cp_v                  () const { return this->cp_v        ; }
+    real                      get_grav                  () const { return this->grav        ; }
+    real                      get_p0                    () const { return this->p0          ; }
+    real                      get_xlen                  () const { return this->xlen        ; }
+    real                      get_ylen                  () const { return this->ylen        ; }
+    real                      get_zlen                  () const { return this->zlen        ; }
+    real                      get_dt_gcm                () const { return this->dt_gcm      ; }
+    int                       get_nranks                () const { return this->nranks      ; }
+    int                       get_myrank                () const { return this->myrank      ; }
+    size_t                    get_nx_glob               () const { return this->nx_glob     ; }
+    size_t                    get_ny_glob               () const { return this->ny_glob     ; }
+    int                       get_nproc_x               () const { return this->nproc_x     ; }
+    int                       get_nproc_y               () const { return this->nproc_y     ; }
+    int                       get_px                    () const { return this->px          ; }
+    int                       get_py                    () const { return this->py          ; }
+    size_t                    get_i_beg                 () const { return this->i_beg       ; }
+    size_t                    get_j_beg                 () const { return this->j_beg       ; }
+    size_t                    get_i_end                 () const { return this->i_end       ; }
+    size_t                    get_j_end                 () const { return this->j_end       ; }
+    bool                      is_sim2d                  () const { return this->ny_glob == 1; }
+    bool                      is_mainproc               () const { return this->mainproc    ; }
+    SArray<int,2,3,3> const & get_neighbor_rankid_matrix() const { return this->neigh       ; }
+    DataManager       const & get_data_manager_readonly () const { return this->dm          ; }
+    DataManager             & get_data_manager_readwrite()       { return this->dm          ; }
 
 
     int get_nx() const {

@@ -1226,7 +1226,7 @@ namespace modules {
       int j_beg = coupler.get_j_beg();
 
       if (etime == 0) {
-        nc.create(fname);
+        nc.create(fname , NC_CLOBBER | NC_64BIT_DATA);
 
         nc.create_dim( "x" , coupler.get_nx_glob() );
         nc.create_dim( "y" , coupler.get_ny_glob() );
