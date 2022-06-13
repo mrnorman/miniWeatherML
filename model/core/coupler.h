@@ -5,6 +5,7 @@
 #include "DataManager.h"
 #include "YAKL_pnetcdf.h"
 #include "YAKL_netcdf.h"
+#include "MultipleFields.h"
 #include "Options.h"
 
 // The Coupler class holds everything a component or module of this model would need in order to perform its
@@ -419,6 +420,120 @@ namespace core {
       });
 
       return pressure;
+    }
+
+
+    MultiField<real,3> create_halos( MultiField<real,3> const &fields_in , int hs ) {
+      using yakl::c::parallel_for;
+      using yakl::c::SimpleBounds;
+
+      int num_fields = fields_in.get_num_fields();
+      int nx = fields_in.get_field(0).extent(2);
+      int ny = fields_in.get_field(0).extent(1);
+      int nz = fields_in.get_field(0).extent(0);
+      MultiField<real,3> fields_out;
+      for (int ifield = 0; ifield < num_fields; ifield++) {
+        // Allocate
+        fields_out.add_field( real3d(fields_in.get_field(ifield).label(),nz+2*hs,ny+2*hs,nx+2*hs) );
+        // Fill internal domain
+        parallel_for( SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+          fields_out(ifield,hs+k,hs+j,hs+i) = fields_in(ifield,k,j,i);
+        });
+      }
+      return fields_out;
+    }
+
+
+    void fill_horizontal_halos_periodic( MultiField<real,3> const &fields , int hs ) {
+      using yakl::c::parallel_for;
+      using yakl::c::SimpleBounds;
+
+      int num_fields = fields.get_num_fields();
+      int nx = fields.get_field(0).extent(2) - 2*hs;
+      int ny = fields.get_field(0).extent(1) - 2*hs;
+      int nz = fields.get_field(0).extent(0) - 2*hs;
+
+      { // x-direction (east-west)
+
+        // Allocate send buffers and then pack send buffers
+        real4d halo_send_buf_W("halo_send_buf_W",num_fields,nz+2*hs,ny+2*hs,hs);
+        real4d halo_send_buf_E("halo_send_buf_E",num_fields,nz+2*hs,ny+2*hs,hs);
+        parallel_for( SimpleBounds<4>(num_fields,nz+2*hs,ny+2*hs,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
+          halo_send_buf_W(v,k,j,ii) = fields(v,k,j,hs+ii);
+          halo_send_buf_E(v,k,j,ii) = fields(v,k,j,nx+ii);
+        });
+
+        // Allocate host receive buffers and receive the receive buffers
+        realHost4d halo_recv_buf_W_host("halo_recv_buf_W_host",num_fields,nz+2*hs,ny+2*hs,hs);
+        realHost4d halo_recv_buf_E_host("halo_recv_buf_E_host",num_fields,nz+2*hs,ny+2*hs,hs);
+        MPI_Request rReq[2];
+        MPI_Irecv( halo_recv_buf_W_host.data() , num_fields*(nz+2*hs)*(ny+2*hs)*hs , MPI_DOUBLE , neigh(1,0) , 0 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_E_host.data() , num_fields*(nz+2*hs)*(ny+2*hs)*hs , MPI_DOUBLE , neigh(1,2) , 1 , MPI_COMM_WORLD , &rReq[1] );
+
+        // Copy send buffers to host and send the send buffers
+        auto halo_send_buf_W_host = halo_send_buf_W.createHostCopy();
+        auto halo_send_buf_E_host = halo_send_buf_E.createHostCopy();
+        MPI_Request sReq[2];
+        MPI_Isend( halo_send_buf_W_host.data() , num_fields*(nz+2*hs)*(ny+2*hs)*hs , MPI_DOUBLE , neigh(1,0) , 1 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_E_host.data() , num_fields*(nz+2*hs)*(ny+2*hs)*hs , MPI_DOUBLE , neigh(1,2) , 0 , MPI_COMM_WORLD , &sReq[1] );
+
+        // Wait for sends and receives to complete
+        MPI_Status sStat[2];
+        MPI_Status rStat[2];
+        MPI_Waitall(2, sReq, sStat);
+        MPI_Waitall(2, rReq, rStat);
+
+        // Copy receive buffers to device and then copy into halos
+        auto halo_recv_buf_W = halo_recv_buf_W_host.createDeviceCopy();
+        auto halo_recv_buf_E = halo_recv_buf_E_host.createDeviceCopy();
+        parallel_for( SimpleBounds<4>(num_fields,nz+2*hs,ny+2*hs,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
+          fields(v,k,j,      ii) = halo_recv_buf_W(v,k,j,ii);
+          fields(v,k,j,nx+hs+ii) = halo_recv_buf_E(v,k,j,ii);
+        });
+
+      } // x-direction (east-west)
+
+
+      if (ny > 1) { // y-direction (north-south)
+
+        // Allocate send buffers and then pack send buffers
+        real4d halo_send_buf_S("halo_send_buf_S",num_fields,nz+2*hs,hs,nx+2*hs);
+        real4d halo_send_buf_N("halo_send_buf_N",num_fields,nz+2*hs,hs,nx+2*hs);
+        parallel_for( SimpleBounds<4>(num_fields,nz+2*hs,hs,nx+2*hs) , YAKL_LAMBDA (int v, int k, int jj, int i) {
+          halo_send_buf_S(v,k,jj,i) = fields(v,k,hs+jj,i);
+          halo_send_buf_N(v,k,jj,i) = fields(v,k,ny+jj,i);
+        });
+
+        // Allocate host receive buffers and receive the receive buffers
+        realHost4d halo_recv_buf_S_host("halo_recv_buf_S_host",num_fields,nz+2*hs,hs,nx+2*hs);
+        realHost4d halo_recv_buf_N_host("halo_recv_buf_N_host",num_fields,nz+2*hs,hs,nx+2*hs);
+        MPI_Request rReq[2];
+        MPI_Irecv( halo_recv_buf_S_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , MPI_DOUBLE , neigh(0,1) , 0 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_N_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , MPI_DOUBLE , neigh(2,1) , 1 , MPI_COMM_WORLD , &rReq[1] );
+
+        // Copy send buffers to host and send the send buffers
+        auto halo_send_buf_S_host = halo_send_buf_S.createHostCopy();
+        auto halo_send_buf_N_host = halo_send_buf_N.createHostCopy();
+        MPI_Request sReq[2];
+        MPI_Isend( halo_send_buf_S_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , MPI_DOUBLE , neigh(0,1) , 1 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_N_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , MPI_DOUBLE , neigh(2,1) , 0 , MPI_COMM_WORLD , &sReq[1] );
+
+        // Wait for sends and receives to complete
+        MPI_Status sStat[2];
+        MPI_Status rStat[2];
+        MPI_Waitall(2, sReq, sStat);
+        MPI_Waitall(2, rReq, rStat);
+
+        // Copy receive buffers to device and then copy into halos
+        auto halo_recv_buf_S = halo_recv_buf_S_host.createDeviceCopy();
+        auto halo_recv_buf_N = halo_recv_buf_N_host.createDeviceCopy();
+        parallel_for( SimpleBounds<4>(num_fields,nz+2*hs,hs,nx+2*hs) , YAKL_LAMBDA (int v, int k, int jj, int i) {
+          fields(v,k,      jj,i) = halo_recv_buf_S(v,k,jj,i);
+          fields(v,k,ny+hs+jj,i) = halo_recv_buf_N(v,k,jj,i);
+        });
+
+      } // y-direction (north-south)
+
     }
 
   };
