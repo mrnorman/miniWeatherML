@@ -884,6 +884,16 @@ namespace modules {
 
       // Output the initial state
       output( coupler , etime );
+
+      // Some modules might need to use hydrostasis to project values into material boundaries
+      // So let's put it into the coupler's data manager just in case
+      auto &dm = coupler.get_data_manager_readwrite();
+      dm.register_and_allocate<real>("hy_dens_cells"      ,"hydrostatic density cell averages"      ,{nz});
+      dm.register_and_allocate<real>("hy_dens_theta_cells","hydrostatic density*theta cell averages",{nz});
+      auto dm_hy_dens_cells       = dm.get<real,1>("hy_dens_cells"      );
+      auto dm_hy_dens_theta_cells = dm.get<real,1>("hy_dens_theta_cells");
+      hy_dens_cells      .deep_copy_to( dm_hy_dens_cells      );
+      hy_dens_theta_cells.deep_copy_to( dm_hy_dens_theta_cells);
     }
 
 
