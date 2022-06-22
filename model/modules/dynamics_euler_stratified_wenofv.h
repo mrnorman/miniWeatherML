@@ -95,7 +95,7 @@ namespace modules {
 
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
-    real compute_time_step( core::Coupler const &coupler ) {
+    real compute_time_step( core::Coupler const &coupler ) const {
       real constexpr maxwave = 350 + 80;
       real cfl = 0.3;
       if (coupler.get_ny_glob() == 1) cfl = 0.5;
@@ -222,20 +222,13 @@ namespace modules {
 
     // Compute the tendencies for state and tracers for one semi-discretized step inside the RK integrator
     // Tendencies are the time rate of change for a quantity
-    void compute_tendencies( core::Coupler const &coupler , real4d const &state   , real4d const &state_tend   ,
-                                                            real4d const &tracers , real4d const &tracers_tend , real dt ) {
+    // Coupler is non-const because we are writing to the flux variables
+    void compute_tendencies( core::Coupler &coupler , real4d const &state   , real4d const &state_tend   ,
+                                                      real4d const &tracers , real4d const &tracers_tend , real dt ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
       using std::min;
       using std::max;
-
-      // These arrays store high-order-accurate samples of the state and tracers at cell edges after cell-centered recon
-      real5d state_limits_x  ("state_limits_x"  ,num_state  ,2,nz  ,ny  ,nx+1);
-      real5d state_limits_y  ("state_limits_y"  ,num_state  ,2,nz  ,ny+1,nx  );
-      real5d state_limits_z  ("state_limits_z"  ,num_state  ,2,nz+1,ny  ,nx  );
-      real5d tracers_limits_x("tracers_limits_x",num_tracers,2,nz  ,ny  ,nx+1);
-      real5d tracers_limits_y("tracers_limits_y",num_tracers,2,nz  ,ny+1,nx  );
-      real5d tracers_limits_z("tracers_limits_z",num_tracers,2,nz+1,ny  ,nx  );
 
       // A slew of things to bring from class scope into local scope so that lambdas copy them by value to the GPU
       YAKL_SCOPE( hy_dens_cells              , this->hy_dens_cells              );
@@ -267,6 +260,14 @@ namespace modules {
       });
 
       halo_exchange( coupler , state , tracers );
+
+      // These arrays store high-order-accurate samples of the state and tracers at cell edges after cell-centered recon
+      real5d state_limits_x  ("state_limits_x"  ,num_state  ,2,nz  ,ny  ,nx+1);
+      real5d state_limits_y  ("state_limits_y"  ,num_state  ,2,nz  ,ny+1,nx  );
+      real5d state_limits_z  ("state_limits_z"  ,num_state  ,2,nz+1,ny  ,nx  );
+      real5d tracers_limits_x("tracers_limits_x",num_tracers,2,nz  ,ny  ,nx+1);
+      real5d tracers_limits_y("tracers_limits_y",num_tracers,2,nz  ,ny+1,nx  );
+      real5d tracers_limits_z("tracers_limits_z",num_tracers,2,nz+1,ny  ,nx  );
 
       // Compute samples of state and tracers at cell edges using cell-centered reconstructions at high-order with WENO
       // At the end of this, we will have two samples per cell edge in each dimension, one from each adjacent cell.
@@ -391,13 +392,13 @@ namespace modules {
       edge_exchange( coupler , state_limits_x , tracers_limits_x , state_limits_y , tracers_limits_y );
 
       // The store a single values flux at cell edges
-      real4d state_flux_x  ("state_flux_x"  ,num_state  ,nz  ,ny  ,nx+1);
-      real4d state_flux_y  ("state_flux_y"  ,num_state  ,nz  ,ny+1,nx  );
-      real4d state_flux_z  ("state_flux_z"  ,num_state  ,nz+1,ny  ,nx  );
-
-      real4d tracers_flux_x("tracers_flux_x",num_tracers,nz  ,ny  ,nx+1);
-      real4d tracers_flux_y("tracers_flux_y",num_tracers,nz  ,ny+1,nx  );
-      real4d tracers_flux_z("tracers_flux_z",num_tracers,nz+1,ny  ,nx  );
+      auto &dm = coupler.get_data_manager_readwrite();
+      auto state_flux_x   = dm.get<real,4>("state_flux_x"  );
+      auto state_flux_y   = dm.get<real,4>("state_flux_y"  );
+      auto state_flux_z   = dm.get<real,4>("state_flux_z"  );
+      auto tracers_flux_x = dm.get<real,4>("tracers_flux_x");
+      auto tracers_flux_y = dm.get<real,4>("tracers_flux_y");
+      auto tracers_flux_z = dm.get<real,4>("tracers_flux_z");
 
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i ) {
@@ -891,6 +892,37 @@ namespace modules {
       auto dm_hy_dens_theta_cells = dm.get<real,1>("hy_dens_theta_cells");
       hy_dens_cells      .deep_copy_to( dm_hy_dens_cells      );
       hy_dens_theta_cells.deep_copy_to( dm_hy_dens_theta_cells);
+
+      // Register the tracers in the coupler so the user has access if they want (and init to zero)
+      YAKL_SCOPE( nx          , this->nx          );
+      YAKL_SCOPE( ny          , this->ny          );
+      YAKL_SCOPE( nz          , this->nz          );
+      YAKL_SCOPE( num_state   , this->num_state   );
+      YAKL_SCOPE( num_tracers , this->num_tracers );
+      dm.register_and_allocate<real>("state_flux_x"  ,"state_flux_x"  ,{num_state  ,nz  ,ny  ,nx+1},{"num_state"  ,"z"  ,"y"  ,"xp1"});
+      dm.register_and_allocate<real>("state_flux_y"  ,"state_flux_y"  ,{num_state  ,nz  ,ny+1,nx  },{"num_state"  ,"z"  ,"yp1","x"  });
+      dm.register_and_allocate<real>("state_flux_z"  ,"state_flux_z"  ,{num_state  ,nz+1,ny  ,nx  },{"num_state"  ,"zp1","y"  ,"x"  });
+      dm.register_and_allocate<real>("tracers_flux_x","tracers_flux_x",{num_tracers,nz  ,ny  ,nx+1},{"num_tracers","z"  ,"y"  ,"xp1"});
+      dm.register_and_allocate<real>("tracers_flux_y","tracers_flux_y",{num_tracers,nz  ,ny+1,nx  },{"num_tracers","z"  ,"yp1","x"  });
+      dm.register_and_allocate<real>("tracers_flux_z","tracers_flux_z",{num_tracers,nz+1,ny  ,nx  },{"num_tracers","zp1","y"  ,"x"  });
+      auto state_flux_x   = dm.get<real,4>("state_flux_x"  );
+      auto state_flux_y   = dm.get<real,4>("state_flux_y"  );
+      auto state_flux_z   = dm.get<real,4>("state_flux_z"  );
+      auto tracers_flux_x = dm.get<real,4>("tracers_flux_x");
+      auto tracers_flux_y = dm.get<real,4>("tracers_flux_y");
+      auto tracers_flux_z = dm.get<real,4>("tracers_flux_z");
+      parallel_for( Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i) {
+        for (int l=0; l < num_state; l++) {
+          if (j < ny && k < nz) state_flux_x(l,k,j,i) = 0;
+          if (i < nx && k < nz) state_flux_y(l,k,j,i) = 0;
+          if (i < nx && j < ny) state_flux_z(l,k,j,i) = 0;
+        }
+        for (int l=0; l < num_tracers; l++) {
+          if (j < ny && k < nz) tracers_flux_x(l,k,j,i) = 0;
+          if (i < nx && k < nz) tracers_flux_y(l,k,j,i) = 0;
+          if (i < nx && j < ny) tracers_flux_z(l,k,j,i) = 0;
+        }
+      });
     }
 
 
@@ -1096,7 +1128,7 @@ namespace modules {
 
 
     // Convert dynamics state and tracers arrays to the coupler state and write to the coupler's data
-    void convert_dynamics_to_coupler( core::Coupler &coupler , realConst4d state , realConst4d tracers ) {
+    void convert_dynamics_to_coupler( core::Coupler &coupler , realConst4d state , realConst4d tracers ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -1155,7 +1187,7 @@ namespace modules {
 
 
     // Convert coupler's data to state and tracers arrays
-    void convert_coupler_to_dynamics( core::Coupler const &coupler , real4d &state , real4d &tracers ) {
+    void convert_coupler_to_dynamics( core::Coupler const &coupler , real4d &state , real4d &tracers ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -1214,7 +1246,7 @@ namespace modules {
 
 
     // Perform file output
-    void output( core::Coupler const &coupler , real etime ) {
+    void output( core::Coupler const &coupler , real etime ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -1306,7 +1338,7 @@ namespace modules {
     }
 
 
-    void halo_exchange(core::Coupler const &coupler , real4d const &state , real4d const &tracers) {
+    void halo_exchange(core::Coupler const &coupler , real4d const &state , real4d const &tracers) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -1424,7 +1456,7 @@ namespace modules {
 
 
     void edge_exchange(core::Coupler const &coupler , real5d const &state_limits_x , real5d const &tracers_limits_x ,
-                                                      real5d const &state_limits_y , real5d const &tracers_limits_y ) {
+                                                      real5d const &state_limits_y , real5d const &tracers_limits_y ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -1600,8 +1632,8 @@ namespace modules {
 
 
     // Compute supercell temperature profile at a vertical location
-    YAKL_INLINE real init_supercell_temperature(real z, real z_0, real z_trop, real z_top,
-                                                        real T_0, real T_trop, real T_top) {
+    YAKL_INLINE static real init_supercell_temperature(real z, real z_0, real z_trop, real z_top,
+                                                       real T_0, real T_trop, real T_top) {
       if (z <= z_trop) {
         real lapse = - (T_trop - T_0) / (z_trop - z_0);
         return T_0 - lapse * (z - z_0);
@@ -1613,9 +1645,9 @@ namespace modules {
 
 
     // Compute supercell dry pressure profile at a vertical location
-    YAKL_INLINE real init_supercell_pressure_dry(real z, real z_0, real z_trop, real z_top,
-                                                         real T_0, real T_trop, real T_top,
-                                                         real p_0, real R_d, real grav) {
+    YAKL_INLINE static real init_supercell_pressure_dry(real z, real z_0, real z_trop, real z_top,
+                                                        real T_0, real T_trop, real T_top,
+                                                        real p_0, real R_d, real grav) {
       if (z <= z_trop) {
         real lapse = - (T_trop - T_0) / (z_trop - z_0);
         real T = init_supercell_temperature(z, z_0, z_trop, z_top, T_0, T_trop, T_top);
@@ -1637,7 +1669,7 @@ namespace modules {
 
     
     // Compute supercell relative humidity profile at a vertical location
-    YAKL_INLINE real init_supercell_relhum(real z, real z_0, real z_trop) {
+    YAKL_INLINE static real init_supercell_relhum(real z, real z_0, real z_trop) {
       if (z <= z_trop) {
         return 1._fp - 0.75_fp * pow(z / z_trop , 1.25_fp );
       } else {
@@ -1647,7 +1679,7 @@ namespace modules {
 
 
     // Computes dry saturation mixing ratio
-    YAKL_INLINE real init_supercell_sat_mix_dry( real press , real T ) {
+    YAKL_INLINE static real init_supercell_sat_mix_dry( real press , real T ) {
       return 380/(press) * exp( 17.27_fp * (T-273)/(T-36) );
     }
 
