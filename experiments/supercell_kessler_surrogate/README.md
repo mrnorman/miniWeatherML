@@ -76,7 +76,7 @@ There are multiple strategies for generating and using data. Keep in mind that t
 
 **Implementation**: In our case, for a single training samples, we write to file two cells of five variables as input: temperature, dry density, water vapor density, cloud liquid density, and preciptation density. For outputs, we write to file one cell of four variables: temperature, water vapor density, cloud liquid density, and precipitation density. Note that dry density is a deterining factor in the microphysics computations, but it does not change in those computations. Therefore it is an input but not an output. The same technique as the previous section in saving the model's coupler state before and after the microphysics call is what gives the necessary information for generating training samples. The NetCDF file format is used for storing the training samples.
 
-## Curating the data
+## 4. Curating the data
 
 **Raw data --> Usable data**: Raw data can rarely be used as-is for training a Neural Network, and processing that data into a usable and optimal form can be extremely tedious. Luckily in this case, the process isn't too arduous. Languages must be tokenized, images must be labeled and normalized, etc. In our case, the data needs to be aggregated, shuffled, reshaped, normalized, and split into training and testing datasets. It's hard to say where data generation ends and curation begins (if there even is a dividing line), but how we produce samples from a simulation is best viewed as a part of data curation.
 
@@ -86,7 +86,7 @@ There are multiple strategies for generating and using data. Keep in mind that t
 
 **Shuffling and splitting**: The ordering of the samples needs to be shuffled ahead of time so that the dataset can be conveniently split into training and testing datasets. Different definitions are applied to these terms in different contexts, but we denote the testing dataset as one that is never used in the training process. We use the term "validation" data to denote the proportion of training data used for validation loss during a single "epoch" of training. How much of the dataset one uses for testing has some influence on the end result of the surrogate model. More testing data makes assessing generalization more robust, but the NN may be less accurate because it has seen less data.
 
-## Training a Neural Network surrogate model
+## 5. Training a Neural Network surrogate model
 
 **So many choices**: This is where the potential choices really tensor out to impossibly large numbers. Surrogate model architectures and training techniques are incredibly varied. Given how the data is generated, the Neural Network will be quite small, meaning the trainable parameters will likely be in the hundreds. For this dataset, the immediate architectural choices would likely be dense feed-forward and skip-connection networks (like ResNet).
 
@@ -107,7 +107,7 @@ There are multiple strategies for generating and using data. Keep in mind that t
   - **Step size**: Trainable parameters are updated in the direction of negative loss function gradient (i.e., they lower the error toward zero). The step size is the magnitude of the change in that direction. Too large a change, and you can miss the local minimum and actually increase error. Too small a change, and your model will take forever to train. Feel free to experiment with optimizers and optimizer parameters and see what fits best.
 * **Batch size**: Batch size also exerts a surprising amount of influence on the end result of a model. Stochastic Gradient Descent (SGD) works by first shuffling the data, then updating trainable parameters after each "batch" of samples. You should think of the errors of each individual sample in a batch as being "averaged" together before updating parameters. Thus, large batches do not respond to individual errors, but they train **much** more quickly and can be more generalizable.
 
-## Deploying the surrogate model online in a simulation
+## 6. Deploying the surrogate model online in a simulation
 
 Deploying surrogate models efficiently inside a time stepping / iteration loop in a low-level language can be challenging. There are some C++ libraries available. While they apply to a large number of model architectures, they can be complex to use. Also, it isn't always clear from the documentation what's going on internally and when / if data is transferred between host and device memory spaces. It also isn't always easy to build these libraries for different hardware architectures (for instance Nvidia, AMD, and Intel GPUs).
 
