@@ -37,9 +37,12 @@ This is the easiest and recommended way to use the notebooks during this tutoria
 * Google Colab will ask you to "Authorize with GitHub". This allows you to save a copy of your local notebook edits to GitHub.
   - If you choose to authorize, you will be given a pop-up window to sign into GitHub. Be sure to disable your pop-up blocker for this site.
 * You need to have a Google account to **run** the notebook, and Colab will ask you to sign into your Google account.
+* When you see "Warning: This notebook was not authored by Google.", please click "Run anyway". We promise this notebook is safe.
 * To save changes made, you need to save a copy in one of the following
   1. in your Google Drive: `File -> Save a copy in Drive`
   2. in your GitHub: `File -> Save a copy in GitHub`
+  3. 
+**Are you running into strange errors?** If you're seeing errors to the tune of, "Could not load the JavaScript files needed to display output", it could be that you're running on a network that has a firewall that's interfering with Colab. If you're using a VPN, please try turning it off. 
 
 ## Opening notebooks in JupyterLab
 
