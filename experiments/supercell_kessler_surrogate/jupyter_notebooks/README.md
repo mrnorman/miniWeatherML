@@ -34,8 +34,9 @@ This will be useful when you want to eventually train the model on HPC environme
 This is the easiest and recommended way to use the notebooks during this tutorial as Google Collab should have all the necessary libraries. Follow the procedure below to open the notebooks in Google Colab - all you need is a Google account:
 
 * Lookout for the badge [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/muralikrishnangm/tutorial-ai4science-fluidflow/blob/main/HelloWorld.ipynb) in this README file for each notebook. Click this badge to open the notebook in Google Colab.
-* Lookout for a Pop-up blocker
-* You need to have a Google account to run the notebook
+* Google Colab will ask you to "Authorize with GitHub". This allows you to save a copy of your local notebook edits to GitHub.
+  - If you choose to authorize, you will be given a pop-up window to sign into GitHub. Be sure to disable your pop-up blocker for this site.
+* You need to have a Google account to **run** the notebook, and Colab will ask you to sign into your Google account.
 * To save changes made, you need to save a copy in one of the following
   1. in your Google Drive: `File -> Save a copy in Drive`
   2. in your GitHub: `File -> Save a copy in GitHub`
