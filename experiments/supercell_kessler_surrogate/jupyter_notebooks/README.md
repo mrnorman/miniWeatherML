@@ -41,7 +41,7 @@ This is the easiest and recommended way to use the notebooks during this tutoria
 * To save changes made, you need to save a copy in one of the following
   1. in your Google Drive: `File -> Save a copy in Drive`
   2. in your GitHub: `File -> Save a copy in GitHub`
-  3. 
+
 **Are you running into strange errors?** If you're seeing errors to the tune of, "Could not load the JavaScript files needed to display output", it could be that you're running on a network that has a firewall that's interfering with Colab. If you're using a VPN, please try turning it off. 
 
 ## Opening notebooks in JupyterLab
