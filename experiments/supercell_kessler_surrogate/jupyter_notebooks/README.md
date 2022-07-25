@@ -44,7 +44,7 @@ This is the easiest and recommended way to use the notebooks during this tutoria
 
 The notes below are curated for a tutorial at Oak Ridge Leadership Computing Facility (OLCF). Nonetheless, a local or server version of JupyterLab would follow the same procedure.
 
-* Start Jupyetlab:
+* Start Jupyterlab:
     * Normal Jupyter installation: 
         * Run the following on terminal to open the user interface in local internet browser
     ```
