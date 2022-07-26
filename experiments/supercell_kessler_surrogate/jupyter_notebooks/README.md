@@ -81,7 +81,7 @@ We have created a Jupyter notebook describing the training phase of the ML model
 
 * Open the notebook [kessler_singlecell_train_example.ipynb](kessler_singlecell_train_example.ipynb)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrnorman/miniWeatherML/experiments/supercell_kessler_surrogate/jupyter_notebooks/kessler_singlecell_train_example.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/jupyter_notebooks/kessler_singlecell_train_example.ipynb)
 * ML model model for emulating microphysics in supercell test case **using Keras**.
 * A simple introductory notebook to ML.
 * Advantages of Keras: 
@@ -95,7 +95,7 @@ We are also providing a supplementary notebook describing the post-processing st
 
 * Open the notebook [kessler_netcdf_to_numpy.ipynb](kessler_netcdf_to_numpy.ipynb)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrnorman/miniWeatherML/experiments/supercell_kessler_surrogate/jupyter_notebooks/kessler_netcdf_to_numpy.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/jupyter_notebooks/kessler_netcdf_to_numpy.ipynb)
 
 * Data conversion from netCDF file to Python numpy array.
 * The data required to train the model in the previous notebook is downloaded from a server. This notebook is only provided as a supplementray resource for clarity in data curation.
