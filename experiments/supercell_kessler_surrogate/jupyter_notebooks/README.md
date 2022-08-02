@@ -23,7 +23,7 @@ Here are some basics of running the IPython notebooks. Mainly, two environments 
 
 * You can convert the notebooks to executable scripts (Python) using [jupyter nbconvert](https://nbconvert.readthedocs.io/en/latest/usage.html#executable-script)
 ```
-    jupyter nbconvert --to script my_notebook.ipynb
+jupyter nbconvert --to script my_notebook.ipynb
 ```
 This will be useful when you want to eventually train the model on HPC environment.
 
@@ -34,9 +34,9 @@ This will be useful when you want to eventually train the model on HPC environme
 This is the easiest and recommended way to use the notebooks during this tutorial as Google Collab should have all the necessary libraries. Follow the procedure below to open the notebooks in Google Colab - all you need is a Google account:
 
 * Lookout for the badge [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/muralikrishnangm/tutorial-ai4science-fluidflow/blob/main/HelloWorld.ipynb) in this README file for each notebook. Click this badge to open the notebook in Google Colab.
+* You need to have a Google account to **run** the notebook, and Colab will ask you to sign into your Google account.
 * Google Colab will ask you to "Authorize with GitHub". This allows you to save a copy of your local notebook edits to GitHub.
   - If you choose to authorize, you will be given a pop-up window to sign into GitHub. Be sure to disable your pop-up blocker for this site.
-* You need to have a Google account to **run** the notebook, and Colab will ask you to sign into your Google account.
 * When you see "Warning: This notebook was not authored by Google.", please click "Run anyway". We promise this notebook is safe.
 * To save changes made, you need to save a copy in one of the following
   1. in your Google Drive: `File -> Save a copy in Drive`
@@ -51,18 +51,18 @@ The notes below are curated for a tutorial at Oak Ridge Leadership Computing Fac
 * Start Jupyterlab:
     * Normal Jupyter installation: 
         * Run the following on terminal to open the user interface in local internet browser
-    ```
-    jupyter-lab
-    ```
+        ```
+        jupyter-lab
+        ```
     * For OLCF: 
         * The JupyetLab environment at OLCF can be accessed through [OLCF JupyterLab](https://jupyter.olcf.ornl.gov/). All members of currently enabled OLCF projects have access to the OLCF JupyterLab (through JupyterHub). Detailed documentation can be found [here](https://docs.olcf.ornl.gov/services_and_applications/jupyter/overview.html#jupyter-at-olcf).
         * **IMPORTANT**: The OLCF JupyterLab is free to use for all members but it is a VERY limited resource. Please try your best to use Google Colab and opt for this option only if necessary.
         * Sign in using your OLCF credentials (the one used for logging in to the OLCF machines).
         * When selecting the options for the Labs, select the one with the GPU:
-```
-  Slate - GPU Lab
-  JupyterLab 3 | 16 CPU | 16GB MEM | V100 GPU
-```
+        ```
+          Slate - GPU Lab
+          JupyterLab 3 | 16 CPU | 16GB MEM | V100 GPU
+        ```
 * Clone this repo
 ```
   git clone git@github.com:mrnorman/miniWeatherML.git
@@ -79,10 +79,8 @@ The notes below are curated for a tutorial at Oak Ridge Leadership Computing Fac
 
 We have created a Jupyter notebook describing the training phase of the ML model. We use the Keras modeling framework for creating the ML model and training it.
 
-* Open the notebook [kessler_singlecell_train_example.ipynb](kessler_singlecell_train_example.ipynb)
-
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/jupyter_notebooks/kessler_singlecell_train_example.ipynb)
-* ML model model for emulating microphysics in supercell test case **using Keras**.
+* Open the notebook [kessler_singlecell_train_example.ipynb](kessler_singlecell_train_example.ipynb)  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/jupyter_notebooks/kessler_singlecell_train_example.ipynb)
+* ML model for emulating microphysics in supercell test case **using Keras**.
 * A simple introductory notebook to ML.
 * Advantages of Keras: 
     - It is a high-level API capable of running on top of TensorFlow and other frameworks.
@@ -93,9 +91,7 @@ We have created a Jupyter notebook describing the training phase of the ML model
 
 We are also providing a supplementary notebook describing the post-processing step involoved in converting the data generated from the solver to the ML readable format.
 
-* Open the notebook [kessler_netcdf_to_numpy.ipynb](kessler_netcdf_to_numpy.ipynb)
-
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/jupyter_notebooks/kessler_netcdf_to_numpy.ipynb)
+* Open the notebook [kessler_netcdf_to_numpy.ipynb](kessler_netcdf_to_numpy.ipynb)  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrnorman/miniWeatherML/blob/main/experiments/supercell_kessler_surrogate/jupyter_notebooks/kessler_netcdf_to_numpy.ipynb)
 
 * Data conversion from netCDF file to Python numpy array.
 * The data required to train the model in the previous notebook is downloaded from a server. This notebook is only provided as a supplementray resource for clarity in data curation.
