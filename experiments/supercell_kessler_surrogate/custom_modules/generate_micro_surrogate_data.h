@@ -45,7 +45,7 @@ namespace custom_modules {
       int myrank = input.get_myrank();
 
       // This was gathered from the gather_statistics.cpp driver
-      // On average, about 12.5% of the cells experience active microphysics at any given time
+      // On average, about 40% of the cells experience active microphysics at any given time
       double ratio_active = 0.4;
       double expected_num_active   =    ratio_active  * nx*ny*nz;
       double expected_num_inactive = (1-ratio_active) * nx*ny*nz;

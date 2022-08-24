@@ -24,7 +24,7 @@ dt_gcm: 900
 dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 50.
+out_freq: 60.
 
 keras_weights_h5: "./inputs/examples/supercell_kessler_singlecell_model_weights.h5"
 
