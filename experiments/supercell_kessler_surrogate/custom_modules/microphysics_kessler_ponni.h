@@ -270,6 +270,8 @@ namespace custom_modules {
       std::cout << "Relative diff rho_r: " << yakl::intrinsics::sum( rho_r_diff ) / ny / nx / nz << "\n";
       std::cout << "Relative diff temp : " << yakl::intrinsics::sum( temp_diff  ) / ny / nx / nz << "\n";
 
+      // Uncomment these to overwrite the original Kessler with the ML inference
+      // I.e., uncommenting these lines runs the ML inferencing online
       // temp_tmp .deep_copy_to( temp  );
       // rho_v_tmp.deep_copy_to( rho_v );
       // rho_c_tmp.deep_copy_to( rho_c );

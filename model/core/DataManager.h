@@ -52,11 +52,11 @@ namespace core {
       dimensions = std::vector<Dimension>();
       num_assigned_dims = 0;
       if (memSpace == memDevice) {
-        allocate   = [] (size_t bytes,char const *label) -> void * { return yakl::yaklAllocDevice(bytes,label); };
-        deallocate = [] (void *ptr   ,char const *label)           {        yakl::yaklFreeDevice (ptr  ,label); };
+        allocate   = [] (size_t bytes,char const *label) -> void * { return yakl::alloc_device(bytes,label); };
+        deallocate = [] (void *ptr   ,char const *label)           {        yakl::free_device (ptr  ,label); };
       } else if (memSpace == memHost) {
-        allocate   = [] (size_t bytes,char const *label) -> void * { return yakl::yaklAllocHost(bytes,label); };
-        deallocate = [] (void *ptr   ,char const *label)           {        yakl::yaklFreeHost (ptr  ,label); };
+        allocate   = [] (size_t bytes,char const *label) -> void * { return yakl::alloc_host(bytes,label); };
+        deallocate = [] (void *ptr   ,char const *label)           {        yakl::free_host (ptr  ,label); };
       } else {
         yakl::yakl_throw("ERROR: DataManagerTemplate created with invalid memSpace template parameter");
       }
