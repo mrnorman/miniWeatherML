@@ -24,7 +24,7 @@ namespace modules {
       auto temp = dm.get_lev_col<real>("temp");
       int ncol = ny*nx;
 
-      parallel_for( "perturb temperature" , Bounds<2>(num_levels,ncol) , YAKL_LAMBDA (int k, int i) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(num_levels,ncol) , YAKL_LAMBDA (int k, int i) {
         yakl::Random prng(seed+k*ncol+i);  // seed + k*ncol + i  is a globally unique identifier
         real rand = prng.genFP<real>()*2._fp - 1._fp;  // Random number in [-1,1]
         real scaling = ( num_levels - static_cast<real>(k) ) / num_levels;  // Less effect at higher levels
@@ -44,7 +44,7 @@ namespace modules {
       real   xlen  = coupler.get_xlen();
       real   ylen  = coupler.get_ylen();
 
-      parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         real xloc = (i+i_beg+0.5_fp)*dx;
         real yloc = (j+j_beg+0.5_fp)*dy;
         real zloc = (k      +0.5_fp)*dz;

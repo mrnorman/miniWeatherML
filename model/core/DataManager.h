@@ -55,8 +55,8 @@ namespace core {
         allocate   = [] (size_t bytes,char const *label) -> void * { return yakl::alloc_device(bytes,label); };
         deallocate = [] (void *ptr   ,char const *label)           {        yakl::free_device (ptr  ,label); };
       } else if (memSpace == memHost) {
-        allocate   = [] (size_t bytes,char const *label) -> void * { return yakl::alloc_host(bytes,label); };
-        deallocate = [] (void *ptr   ,char const *label)           {        yakl::free_host (ptr  ,label); };
+        allocate   = [] (size_t bytes,char const *label) -> void * { return ::malloc(bytes); };
+        deallocate = [] (void *ptr   ,char const *label)           {        ::free  (ptr); };
       } else {
         yakl::yakl_throw("ERROR: DataManagerTemplate created with invalid memSpace template parameter");
       }

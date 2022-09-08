@@ -58,7 +58,7 @@ namespace modules {
       YAKL_SCOPE( column , this->column );
 
       real constexpr time_scale = 900;
-      parallel_for( Bounds<4>(num_fields,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(num_fields,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
         state(l,k,j,i) += dt * ( column(l,k) - state_col_avg(l,k) ) / time_scale;
       });
     }
@@ -77,7 +77,7 @@ namespace modules {
       yakl::memset( column_loc , 0._fp );
 
       real factor = 1._fp / (nx*ny);
-      parallel_for( Bounds<4>(num_fields,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(num_fields,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
         yakl::atomicAdd( column_loc(l,k) , state(l,k,j,i)*factor );
       });
 
@@ -87,7 +87,7 @@ namespace modules {
       
       auto column_total = column_total_host.createDeviceCopy();
       int nranks = coupler.get_nranks();
-      parallel_for( Bounds<2>(num_fields,nz) , YAKL_LAMBDA (int l, int k) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(num_fields,nz) , YAKL_LAMBDA (int l, int k) {
         column_loc(l,k) = column_total(l,k) / nranks;
       });
 

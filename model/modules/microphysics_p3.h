@@ -131,7 +131,7 @@ namespace modules {
       auto qv_prev         = dm.get<real,3>( "qv_prev"         );
       auto t_prev          = dm.get<real,3>( "t_prev"          );
 
-      parallel_for( "micro zero" , Bounds<3>(nz,ny,nx) ,
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) ,
                     YAKL_LAMBDA (int k, int j, int i) {
         cloud_water    (k,j,i) = 0;
         cloud_water_num(k,j,i) = 0;
@@ -267,7 +267,7 @@ namespace modules {
       YAKL_SCOPE( grav       , this->grav       );
 
       // Save initial state, and compute inputs for p3(...)
-      parallel_for( "micro adjust preprocess" , Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
         // Compute total density
         real rho = rho_dry(k,i) + rho_c(k,i) + rho_r(k,i) + rho_i(k,i) + rho_v(k,i);
 
@@ -304,7 +304,7 @@ namespace modules {
         }
       });
 
-      parallel_for( Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
         // Assume cloud fracton is always 1
         cld_frac_l(k,i) = 1;
         cld_frac_i(k,i) = 1;
@@ -423,7 +423,7 @@ namespace modules {
       ///////////////////////////////////////////////////////////////////////////////
       // Convert P3 outputs into dynamics coupler state and tracer masses
       ///////////////////////////////////////////////////////////////////////////////
-      parallel_for( "micro post process" , Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
         rho_c  (k,i) = std::max( qc(k,i)*rho_dry(k,i) , 0._fp );
         rho_nc (k,i) = std::max( nc(k,i)*rho_dry(k,i) , 0._fp );
         rho_r  (k,i) = std::max( qr(k,i)*rho_dry(k,i) , 0._fp );

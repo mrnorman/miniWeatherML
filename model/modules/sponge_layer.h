@@ -53,12 +53,12 @@ namespace modules {
     real r_nx_ny = 1._fp / (nx*ny);
 
     // Zero out the havg_fields
-    parallel_for( Bounds<2>(num_fields,nz) , YAKL_LAMBDA (int ifld, int k) {
+    parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(num_fields,nz) , YAKL_LAMBDA (int ifld, int k) {
       havg_fields(ifld,k) = 0;
     });
 
     // Compute the horizontal average for each vertical level (that we use for the sponge layer)
-    parallel_for( Bounds<4>(num_fields,num_layers,ny,nx) ,
+    parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(num_fields,num_layers,ny,nx) ,
                   YAKL_LAMBDA (int ifld, int kloc, int j, int i) {
       int k = nz - 1 - kloc;
       if (ifld != WFLD) yakl::atomicAdd( havg_fields(ifld,k) , full_fields(ifld,k,j,i) * r_nx_ny );
@@ -68,7 +68,7 @@ namespace modules {
     real time_factor = dt / time_scale;
 
     // use a cosine relaxation in space:  ((cos(pi*rel_dist)+1)/2)^2
-    parallel_for( Bounds<4>(num_fields,num_layers,ny,nx) , YAKL_LAMBDA (int ifld, int kloc, int j, int i) {
+    parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(num_fields,num_layers,ny,nx) , YAKL_LAMBDA (int ifld, int kloc, int j, int i) {
       int k = nz - 1 - kloc;
       real z = (k+0.5_fp)*dz;
       real rel_dist = ( zlen - z ) / ( num_layers * dz );
