@@ -64,6 +64,7 @@ int main(int argc, char** argv) {
     real etime = 0;   // Elapsed time
 
     real dtphys = dtphys_in;
+    yakl::timer_start("simulation_loop");
     while (etime < sim_time) {
       // If dtphys <= 0, then set it to the dynamical core's max stable time step
       if (dtphys_in <= 0.) { dtphys = dycore.compute_time_step(coupler); }
@@ -79,6 +80,7 @@ int main(int argc, char** argv) {
 
       etime += dtphys; // Advance elapsed time
     }
+    yakl::timer_stop("simulation_loop");
 
     // TODO: Add finalize( coupler ) modules here
 

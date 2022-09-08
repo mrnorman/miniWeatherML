@@ -19,7 +19,11 @@ namespace modules {
     public:
 
     // Order of accuracy (numerical convergence for smooth flows) for the dynamical core
-    int  static constexpr ord = 5;
+    #ifndef MW_ORD
+      int  static constexpr ord = 5;
+    #else
+      int  static constexpr ord = MW_ORD;
+    #endif
     int  static constexpr hs  = (ord-1)/2; // Number of halo cells ("hs" == "halo size")
 
     int  static constexpr num_state = 5;
@@ -193,9 +197,6 @@ namespace modules {
             }
           }
         });
-        std::cout << "Etime, icycle, dt_dyn: " << std::scientific << std::setw(10) << etime << " , "
-                                                                                   << icycle << " , "
-                                                                                   << dt_dyn << std::endl;
       }
 
       // Convert the dycore's state back to the coupler's state
@@ -205,9 +206,7 @@ namespace modules {
       etime += dt_phys;
       // Do output and inform the user if it's time to do output
       if (out_freq >= 0. && etime / out_freq >= num_out+1) {
-        yakl::timer_start("output");
         output( coupler , etime );
-        yakl::timer_stop("output");
         num_out++;
         // Let the user know what the max vertical velocity is to ensure the model hasn't crashed
         auto &dm = coupler.get_data_manager_readonly();
@@ -1252,6 +1251,7 @@ namespace modules {
     void output( core::Coupler const &coupler , real etime ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
+      yakl::timer_start("output");
 
       YAKL_SCOPE( dx                  , this->dx                  );
       YAKL_SCOPE( dy                  , this->dy                  );
@@ -1338,6 +1338,7 @@ namespace modules {
       }
 
       nc.close();
+      yakl::timer_stop("output");
     }
 
 
@@ -1379,6 +1380,7 @@ namespace modules {
       }
 
       yakl::fence();
+      yakl::timer_start("halo_exchange_mpi");
 
       real4d halo_recv_buf_W("halo_recv_buf_W",npack,nz,ny,hs);
       real4d halo_recv_buf_E("halo_recv_buf_E",npack,nz,ny,hs);
@@ -1426,6 +1428,7 @@ namespace modules {
         MPI_Waitall(4, sReq, sStat);
         MPI_Waitall(4, rReq, rStat);
       }
+      yakl::timer_stop("halo_exchange_mpi");
 
       halo_recv_buf_W_host.deep_copy_to(halo_recv_buf_W);
       halo_recv_buf_E_host.deep_copy_to(halo_recv_buf_E);
@@ -1497,6 +1500,7 @@ namespace modules {
       }
 
       yakl::fence();
+      yakl::timer_start("edge_exchange_mpi");
 
       real3d edge_recv_buf_W("edge_recv_buf_W",npack,nz,ny);
       real3d edge_recv_buf_E("edge_recv_buf_E",npack,nz,ny);
@@ -1544,6 +1548,7 @@ namespace modules {
         MPI_Waitall(4, sReq, sStat);
         MPI_Waitall(4, rReq, rStat);
       }
+      yakl::timer_stop("edge_exchange_mpi");
 
       edge_recv_buf_W_host.deep_copy_to(edge_recv_buf_W);
       edge_recv_buf_E_host.deep_copy_to(edge_recv_buf_E);
