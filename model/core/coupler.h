@@ -238,7 +238,7 @@ namespace core {
       auto wvel         = dm.get_collapsed<real>("wvel"       );
       auto temp         = dm.get_collapsed<real>("temp"       );
 
-      parallel_for( "coupler zero" , Bounds<1>(nz*ny*nx) , YAKL_LAMBDA (int i) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz*ny*nx) , YAKL_LAMBDA (int i) {
         density_dry(i) = 0;
         uvel       (i) = 0;
         vvel       (i) = 0;
@@ -411,7 +411,7 @@ namespace core {
       YAKL_SCOPE( R_d , this->R_d );
       YAKL_SCOPE( R_v , this->R_v );
 
-      parallel_for( "coupler pressure" , SimpleBounds<3>(nz,ny,nx) ,
+      parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<3>(nz,ny,nx) ,
                     YAKL_LAMBDA (int k, int j, int i) {
         real rho_d = dens_dry(k,j,i);
         real rho_v = dens_wv (k,j,i);
@@ -441,7 +441,7 @@ namespace core {
         // Allocate
         fields_out.add_field( real3d(fields_in.get_field(ifield).label(),nz+2*hs,ny+2*hs_y,nx+2*hs) );
         // Fill internal domain
-        parallel_for( SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           fields_out(ifield,hs+k,hs_y+j,hs+i) = fields_in(ifield,k,j,i);
         });
       }
@@ -467,7 +467,7 @@ namespace core {
         // Allocate send buffers and then pack send buffers
         real4d halo_send_buf_W("coupler_halo_send_buf_W",num_fields,nz+2*hs,ny+2*hs_y,hs);
         real4d halo_send_buf_E("coupler_halo_send_buf_E",num_fields,nz+2*hs,ny+2*hs_y,hs);
-        parallel_for( SimpleBounds<4>(num_fields,nz+2*hs,ny+2*hs_y,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(num_fields,nz+2*hs,ny+2*hs_y,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
           halo_send_buf_W(v,k,j,ii) = fields(v,k,j,hs+ii);
           halo_send_buf_E(v,k,j,ii) = fields(v,k,j,nx+ii);
         });
@@ -495,7 +495,7 @@ namespace core {
         // Copy receive buffers to device and then copy into halos
         auto halo_recv_buf_W = halo_recv_buf_W_host.createDeviceCopy();
         auto halo_recv_buf_E = halo_recv_buf_E_host.createDeviceCopy();
-        parallel_for( SimpleBounds<4>(num_fields,nz+2*hs,ny+2*hs_y,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(num_fields,nz+2*hs,ny+2*hs_y,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
           fields(v,k,j,      ii) = halo_recv_buf_W(v,k,j,ii);
           fields(v,k,j,nx+hs+ii) = halo_recv_buf_E(v,k,j,ii);
         });
@@ -506,7 +506,7 @@ namespace core {
         // Allocate send buffers and then pack send buffers
         real4d halo_send_buf_S("coupler_halo_send_buf_S",num_fields,nz+2*hs,hs,nx+2*hs);
         real4d halo_send_buf_N("coupler_halo_send_buf_N",num_fields,nz+2*hs,hs,nx+2*hs);
-        parallel_for( SimpleBounds<4>(num_fields,nz+2*hs,hs,nx+2*hs) , YAKL_LAMBDA (int v, int k, int jj, int i) {
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(num_fields,nz+2*hs,hs,nx+2*hs) , YAKL_LAMBDA (int v, int k, int jj, int i) {
           halo_send_buf_S(v,k,jj,i) = fields(v,k,hs+jj,i);
           halo_send_buf_N(v,k,jj,i) = fields(v,k,ny+jj,i);
         });
@@ -534,7 +534,7 @@ namespace core {
         // Copy receive buffers to device and then copy into halos
         auto halo_recv_buf_S = halo_recv_buf_S_host.createDeviceCopy();
         auto halo_recv_buf_N = halo_recv_buf_N_host.createDeviceCopy();
-        parallel_for( SimpleBounds<4>(num_fields,nz+2*hs,hs,nx+2*hs) , YAKL_LAMBDA (int v, int k, int jj, int i) {
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(num_fields,nz+2*hs,hs,nx+2*hs) , YAKL_LAMBDA (int v, int k, int jj, int i) {
           fields(v,k,      jj,i) = halo_recv_buf_S(v,k,jj,i);
           fields(v,k,ny+hs+jj,i) = halo_recv_buf_N(v,k,jj,i);
         });
