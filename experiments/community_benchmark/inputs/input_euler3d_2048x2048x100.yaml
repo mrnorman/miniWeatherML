@@ -1,6 +1,6 @@
 ---
 # Simulation time in seconds
-sim_time: 100  # 86400
+sim_time: 250  # 86400
 
 # Number of cells to use in the CRMs
 # nx_glob: 1024
@@ -28,6 +28,6 @@ dt_gcm: 900
 dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 1000.
+out_freq: -1.
 
 

@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -J miniWeatherML
-#SBATCH -N 1
-#SBATCH -t 00:15:00
+#SBATCH -N 2
+#SBATCH -t 00:30:00
 #SBATCH --partition eval-gpu
 #SBATCH --exclusive
 
-nodes=1
+nodes=2
 mydir=job_$nodes
 ntasks=`echo "8*$nodes" | bc`
 

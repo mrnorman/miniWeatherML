@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -J miniWeatherML
-#SBATCH -N 1
-#SBATCH -t 00:15:00
+#SBATCH -N 4
+#SBATCH -t 00:30:00
 #SBATCH --partition eval-gpu
 #SBATCH --exclusive
 
-nodes=1
+nodes=4
 mydir=job_$nodes
 ntasks=`echo "8*$nodes" | bc`
 
@@ -22,8 +22,7 @@ cp ./inputs/* $mydir
 cd $mydir
 
 export OMP_NUM_THREADS=1
-nvidia-smi
-srun -N $nodes -n $ntasks --gpus-per-task=1 -c 1 /home/$USER/hello_jobstep.exe 2>&1 | tee hello_jsrun_output.txt
 srun -N $nodes -n $ntasks --gpus-per-task=1 -c 1 ./driver ./input_euler3d_1024x1024x100.yaml 2>&1 | tee job_output_1024x1024x100.txt
+srun -N $nodes -n $ntasks --gpus-per-task=1 -c 1 ./driver ./input_euler3d_2048x2048x100.yaml 2>&1 | tee job_output_2048x2048x100.txt
 
 

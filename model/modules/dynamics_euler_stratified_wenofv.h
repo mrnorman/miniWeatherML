@@ -883,7 +883,7 @@ namespace modules {
       convert_dynamics_to_coupler( coupler , state , tracers );
 
       // Output the initial state
-      output( coupler , etime );
+      if (out_freq >= 0. ) output( coupler , etime );
 
       // Some modules might need to use hydrostasis to project values into material boundaries
       // So let's put it into the coupler's data manager just in case
