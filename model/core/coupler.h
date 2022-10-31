@@ -394,35 +394,6 @@ namespace core {
     }
 
 
-    real3d compute_pressure_array() const {
-      using yakl::c::parallel_for;
-      using yakl::c::Bounds;
-      using yakl::c::SimpleBounds;
-      auto dens_dry = dm.get<real const,3>("density_dry");
-      auto dens_wv  = dm.get<real const,3>("water_vapor");
-      auto temp     = dm.get<real const,3>("temp");
-
-      int nz = get_nz();
-      int ny = get_ny();
-      int nx = get_nx();
-
-      real3d pressure("pressure",nz,ny,nx);
-
-      YAKL_SCOPE( R_d , this->R_d );
-      YAKL_SCOPE( R_v , this->R_v );
-
-      parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<3>(nz,ny,nx) ,
-                    YAKL_LAMBDA (int k, int j, int i) {
-        real rho_d = dens_dry(k,j,i);
-        real rho_v = dens_wv (k,j,i);
-        real T     = temp    (k,j,i);
-        pressure(k,j,i) = rho_d*R_d*T + rho_v*R_v*T;
-      });
-
-      return pressure;
-    }
-
-
     template <class T>
     MultiField<typename std::remove_cv<T>::type,3> create_halos( MultiField<T,3> const &fields_in , int hs ) const {
       using yakl::c::parallel_for;
