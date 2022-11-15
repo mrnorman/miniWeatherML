@@ -15,7 +15,7 @@ namespace modules {
   // Since the coupler state is dry density, u-, v-, and w-velocity, and temperature, we need to convert to and from
   // the coupler state.
 
-  class Dynamics_Euler_Stratified_WenoFV {
+  class Dynamics_compr_nh_rho_theta {
     public:
 
     // Order of accuracy (numerical convergence for smooth flows) for the dynamical core

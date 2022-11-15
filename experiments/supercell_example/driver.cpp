@@ -1,7 +1,7 @@
 
 #include "coupler.h"
-#include "dynamics_euler_stratified_wenofv.h"
-#include "microphysics_p3.h"
+#include "dynamics_compr_nh_rho_theta.h"
+#include "microphysics_kessler.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
 #include "column_nudging.h"
@@ -47,11 +47,11 @@ int main(int argc, char** argv) {
 
     // The column nudger nudges the column-average of the model state toward the initial column-averaged state
     // This is primarily for the supercell test case to keep the the instability persistently strong
-    modules::ColumnNudger                     column_nudger;
+    modules::ColumnNudger                column_nudger;
     // Microphysics performs water phase changess + hydrometeor production, transport, collision, and aggregation
-    modules::Microphysics_P3                  micro;
+    modules::Microphysics_Kessler        micro;
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
-    modules::Dynamics_Euler_Stratified_WenoFV dycore;
+    modules::Dynamics_compr_nh_rho_theta dycore;
 
     // Run the initialization modules
     micro .init                 ( coupler ); // Allocate micro state and register its tracers in the coupler
