@@ -52,6 +52,13 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
+      coupler.set_option<real>("R_d" ,R_d ); 
+      coupler.set_option<real>("R_v" ,R_v ); 
+      coupler.set_option<real>("cp_d",cp_d);
+      coupler.set_option<real>("cp_v",cp_v);
+      coupler.set_option<real>("p0"  ,p0  ); 
+      coupler.set_option<real>("grav",grav);
+
       int nx = coupler.get_nx();
       int ny = coupler.get_ny();
       int nz = coupler.get_nz();

@@ -14,7 +14,7 @@ namespace core {
 
   using yakl::Array;
 
-  extern std::mutex data_manager_mutex;
+  static std::mutex data_manager_mutex;
 
 
   template <int memSpace = yakl::memDevice>

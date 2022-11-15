@@ -18,12 +18,6 @@ namespace core {
   protected:
     Options options;
 
-    real R_d;    // Dry air gas constant
-    real R_v;    // Water vapor gas constant
-    real cp_d;   // Dry air specific heat at constant pressure
-    real cp_v;   // Water vapor specific heat at constant pressure
-    real grav;   // Acceleration due to gravity (m s^-2): typically 9.81
-    real p0;     // Reference pressure (Pa): typically 10^5
     real xlen;   // Domain length in the x-direction in meters
     real ylen;   // Domain length in the y-direction in meters
     real zlen;   // Domain length in the z-direction in meters
@@ -62,12 +56,6 @@ namespace core {
   public:
 
     Coupler() {
-      this->R_d    = 287 ;
-      this->R_v    = 461 ;
-      this->cp_d   = 1004;
-      this->cp_v   = 1859;
-      this->grav   = 9.81;
-      this->p0     = 1.e5;
       this->xlen   = -1;
       this->ylen   = -1;
       this->zlen   = -1;
@@ -86,12 +74,6 @@ namespace core {
       dm.finalize();
       options.finalize();
       tracers = std::vector<Tracer>();
-      this->R_d    = 287 ;
-      this->R_v    = 461 ;
-      this->cp_d   = 1004;
-      this->cp_v   = 1859;
-      this->grav   = 9.81;
-      this->p0     = 1.e5;
       this->xlen   = -1;
       this->ylen   = -1;
       this->zlen   = -1;
@@ -100,12 +82,6 @@ namespace core {
 
 
     void clone_into( Coupler &coupler ) {
-      coupler.R_d      = this->R_d     ;
-      coupler.R_v      = this->R_v     ;
-      coupler.cp_d     = this->cp_d    ;
-      coupler.cp_v     = this->cp_v    ;
-      coupler.grav     = this->grav    ;
-      coupler.p0       = this->p0      ;
       coupler.xlen     = this->xlen    ;
       coupler.ylen     = this->ylen    ;
       coupler.zlen     = this->zlen    ;
@@ -250,12 +226,6 @@ namespace core {
 
     void set_dt_gcm(real dt_gcm) { this->dt_gcm = dt_gcm; }
 
-    real                      get_R_d                   () const { return this->R_d         ; }
-    real                      get_R_v                   () const { return this->R_v         ; }
-    real                      get_cp_d                  () const { return this->cp_d        ; }
-    real                      get_cp_v                  () const { return this->cp_v        ; }
-    real                      get_grav                  () const { return this->grav        ; }
-    real                      get_p0                    () const { return this->p0          ; }
     real                      get_xlen                  () const { return this->xlen        ; }
     real                      get_ylen                  () const { return this->ylen        ; }
     real                      get_zlen                  () const { return this->zlen        ; }
@@ -327,6 +297,13 @@ namespace core {
     }
 
 
+    template <class T>
+    T get_option( std::string key , T default_value ) const {
+      if (option_exists(key)) return options.get_option<T>(key);
+      return default_value;
+    }
+
+
     bool option_exists( std::string key ) const {
       return options.option_exists(key);
     }
@@ -334,16 +311,6 @@ namespace core {
 
     void delete_option( std::string key ) {
       options.delete_option(key);
-    }
-
-
-    void set_phys_constants(real R_d, real R_v, real cp_d, real cp_v, real grav=9.81, real p0=1.e5) {
-      this->R_d  = R_d ;
-      this->R_v  = R_v ;
-      this->cp_d = cp_d;
-      this->cp_v = cp_v;
-      this->grav = grav;
-      this->p0   = p0  ;
     }
 
 
