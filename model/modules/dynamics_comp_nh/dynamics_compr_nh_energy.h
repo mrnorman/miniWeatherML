@@ -60,6 +60,8 @@ namespace modules {
     real        R_v;    // Water vapor ideal gas constant
     real        cp_d;   // Specific heat of dry air at constant pressure
     real        cp_v;   // Specific heat of water vapor at constant pressure
+    real        cv_d;   // Specific heat of dry air at constant volume
+    real        cv_v;   // Specific heat of water vapor at constant volume
     real        p0;     // Reference pressure (Pa); also typically surface pressure for dry simulations
     real        grav;   // Acceleration due to gravity
     real        kappa;  // R_d / c_p
@@ -227,6 +229,8 @@ namespace modules {
     // Coupler is non-const because we are writing to the flux variables
     void compute_tendencies( core::Coupler &coupler , real4d const &state   , real4d const &state_tend   ,
                                                       real4d const &tracers , real4d const &tracers_tend , real dt ) const {
+      state_tend = 0;
+      tracers_tend = 0;
       // using yakl::c::parallel_for;
       // using yakl::c::Bounds;
       // using std::min;
@@ -696,6 +700,8 @@ namespace modules {
       cp_v  = coupler.get_option<real>("cp_v",1859   );
       p0    = coupler.get_option<real>("p0"  ,1.e5   );
       grav  = coupler.get_option<real>("grav",9.80616);
+      cv_d  = cp_d - R_d;
+      cv_v  = cp_v - R_v;
       kappa = R_d / cp_d;
       gamma = cp_d / (cp_d - R_d);
       C0    = pow( R_d * pow( p0 , -kappa ) , gamma );
@@ -759,11 +765,10 @@ namespace modules {
 
         // Define quadrature weights and points for 3-point rules
         const int nqpoints = 9;
-        SArray<real,1,nqpoints> qpoints;
-        SArray<real,1,nqpoints> qweights;
+        SArray<real,1,nqpoints> qpoints, qweights;
 
-        TransformMatrices::get_gll_points(gpoints);
-        TransformMatrices::get_gll_weights(gweights);
+        TransformMatrices::get_gll_points(qpoints);
+        TransformMatrices::get_gll_weights(qweights);
 
         YAKL_SCOPE( init_data_int       , this->init_data_int       );
         YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
@@ -805,7 +810,8 @@ namespace modules {
                 if (init_data_int == DATA_THERMAL) {
                   thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,R_v,rho,u,v,w,temp,p,rho_v,hr,ht);
                 }
-                real e = (p/(gamma-1) + rho*(u*u+v*v+w*w)/2 + rho*grav*zloc) / rho;
+                real rho_d = rho - rho_v;
+                real e = (rho_d/rho*cv_d+rho_v/rho*cv_v)*temp + (u*u+v*v+w*w)/2 + grav*z;
 
                 if (sim2d) v = 0;
 
@@ -831,7 +837,7 @@ namespace modules {
             real hr, ht;
 
             if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
-            real p_d  = C0 * pow( rho_d*theta_d , gamma );
+            real p_d  = C0 * pow( hr*ht , gamma );
 
             hy_dens_cells    (k) += hr  * qweights(kk);
             hy_pressure_cells(k) += p_d * qweights(kk);
@@ -844,7 +850,7 @@ namespace modules {
           real hr, ht;
 
           if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
-          real p_d  = C0 * pow( rho_d*theta_d , gamma );
+          real p_d  = C0 * pow( hr*ht , gamma );
 
           hy_dens_edges    (k) = hr ;
           hy_pressure_edges(k) = p_d;
@@ -930,21 +936,27 @@ namespace modules {
       real constexpr T_top  = 213;
       real constexpr p_0    = 100000;
 
+      int constexpr ngpt = 9;
+      SArray<real,1,ngpt> gll_pts, gll_wts;
+
+      TransformMatrices::get_gll_points (gll_pts);
+      TransformMatrices::get_gll_weights(gll_wts);
+
       // Temporary arrays used to compute the initial state for high-CAPE supercell conditions
-      real3d quad_temp       ("quad_temp"       ,nz,ord-1,ord);
-      real2d hyDensGLL       ("hyDensGLL"       ,nz,ord);
-      real2d hyDensThetaGLL  ("hyDensThetaGLL"  ,nz,ord);
-      real2d hyDensVapGLL    ("hyDensVapGLL"    ,nz,ord);
-      real2d hyPressureGLL   ("hyPressureGLL"   ,nz,ord);
+      real3d quad_temp       ("quad_temp"       ,nz,ngpt-1,ngpt);
+      real2d hyDensGLL       ("hyDensGLL"       ,nz,ngpt);
+      real2d hyDensThetaGLL  ("hyDensThetaGLL"  ,nz,ngpt);
+      real2d hyDensVapGLL    ("hyDensVapGLL"    ,nz,ngpt);
+      real2d hyPressureGLL   ("hyPressureGLL"   ,nz,ngpt);
       real1d hyDensCells     ("hyDensCells"     ,nz);
       real1d hyDensThetaCells("hyDensThetaCells",nz);
 
       real ztop = coupler.get_zlen();
 
       YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-      YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
+      YAKL_SCOPE( hy_pressure_cells   , this->hy_pressure_cells   );
       YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
-      YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
+      YAKL_SCOPE( hy_pressure_edges   , this->hy_pressure_edges   );
       YAKL_SCOPE( nx                  , this->nx                  );
       YAKL_SCOPE( ny                  , this->ny                  );
       YAKL_SCOPE( nz                  , this->nz                  );
@@ -956,27 +968,25 @@ namespace modules {
       YAKL_SCOPE( sim2d               , this->sim2d               );
       YAKL_SCOPE( R_d                 , this->R_d                 );
       YAKL_SCOPE( R_v                 , this->R_v                 );
+      YAKL_SCOPE( cv_d                , this->cv_d                );
+      YAKL_SCOPE( cv_v                , this->cv_v                );
       YAKL_SCOPE( grav                , this->grav                );
-      YAKL_SCOPE( gamma               , this->gamma               );
-      YAKL_SCOPE( C0                  , this->C0                  );
       YAKL_SCOPE( num_tracers         , this->num_tracers         );
       YAKL_SCOPE( idWV                , this->idWV                );
-      YAKL_SCOPE( gll_pts             , this->gll_pts             );
-      YAKL_SCOPE( gll_wts             , this->gll_wts             );
 
       // Compute quadrature term to integrate to get pressure at GLL points
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ord-1,ord) ,
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ngpt-1,ngpt) ,
                     YAKL_LAMBDA (int k, int kk, int kkk) {
         // Middle of this cell
         real cellmid   = (k+0.5_fp) * dz;
-        // Bottom, top, and middle of the space between these two ord GLL points
-        real ord_b    = cellmid + gll_pts(kk  )*dz;
-        real ord_t    = cellmid + gll_pts(kk+1)*dz;
-        real ord_m    = 0.5_fp * (ord_b + ord_t);
-        // Compute grid spacing between these ord GLL points
-        real ord_dz   = dz * ( gll_pts(kk+1) - gll_pts(kk) );
-        // Compute the locate of this GLL point within the ord GLL points
-        real zloc      = ord_m + ord_dz * gll_pts(kkk);
+        // Bottom, top, and middle of the space between these two ngpt GLL points
+        real ngpt_b    = cellmid + gll_pts(kk  )*dz;
+        real ngpt_t    = cellmid + gll_pts(kk+1)*dz;
+        real ngpt_m    = 0.5_fp * (ngpt_b + ngpt_t);
+        // Compute grid spacing between these ngpt GLL points
+        real ngpt_dz   = dz * ( gll_pts(kk+1) - gll_pts(kk) );
+        // Compute the locate of this GLL point within the ngpt GLL points
+        real zloc      = ngpt_m + ngpt_dz * gll_pts(kkk);
         // Compute full density at this location
         real temp      = init_supercell_temperature (zloc, z_0, z_trop, ztop, T_0, T_trop, T_top);
         real press_dry = init_supercell_pressure_dry(zloc, z_0, z_trop, ztop, T_0, T_trop, T_top, p_0, R_d, grav);
@@ -991,22 +1001,22 @@ namespace modules {
       parallel_for( YAKL_AUTO_LABEL() , 1 , YAKL_LAMBDA (int dummy) {
         hyPressureGLL(0,0) = p_0;
         for (int k=0; k < nz; k++) {
-          for (int kk=0; kk < ord-1; kk++) {
+          for (int kk=0; kk < ngpt-1; kk++) {
             real tot = 0;
-            for (int kkk=0; kkk < ord; kkk++) {
+            for (int kkk=0; kkk < ngpt; kkk++) {
               tot += quad_temp(k,kk,kkk) * gll_wts(kkk);
             }
             tot *= dz * ( gll_pts(kk+1) - gll_pts(kk) );
             hyPressureGLL(k,kk+1) = hyPressureGLL(k,kk) * exp( tot );
-            if (kk == ord-2 && k < nz-1) {
-              hyPressureGLL(k+1,0) = hyPressureGLL(k,ord-1);
+            if (kk == ngpt-2 && k < nz-1) {
+              hyPressureGLL(k+1,0) = hyPressureGLL(k,ngpt-1);
             }
           }
         }
       });
 
       // Compute hydrostatic background state at GLL points
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,ord) , YAKL_LAMBDA (int k, int kk) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,ngpt) , YAKL_LAMBDA (int k, int kk) {
         real zloc = (k+0.5_fp)*dz + gll_pts(kk)*dz;
         real temp       = init_supercell_temperature (zloc, z_0, z_trop, ztop, T_0, T_trop, T_top);
         real press_tmp  = init_supercell_pressure_dry(zloc, z_0, z_trop, ztop, T_0, T_trop, T_top, p_0, R_d, grav);
@@ -1024,7 +1034,7 @@ namespace modules {
           hy_dens_edges    (k) = dens;
           hy_pressure_edges(k) = press;
         }
-        if (k == nz-1 && kk == ord-1) {
+        if (k == nz-1 && kk == ngpt-1) {
           hy_dens_edges    (k+1) = dens;
           hy_pressure_edges(k+1) = press;
         }
@@ -1034,7 +1044,7 @@ namespace modules {
       parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz) , YAKL_LAMBDA (int k) {
         real press_tot = 0;
         real dens_tot  = 0;
-        for (int kk=0; kk < ord; kk++) {
+        for (int kk=0; kk < ngpt; kk++) {
           press_tot += hyPressureGLL(k,kk) * gll_wts(kk);
           dens_tot  += hyDensGLL    (k,kk) * gll_wts(kk);
         }
@@ -1048,45 +1058,44 @@ namespace modules {
 
       // Initialize the state
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        state(idR,hs+k,hs+j,hs+i) = 0;
-        state(idU,hs+k,hs+j,hs+i) = 0;
-        state(idV,hs+k,hs+j,hs+i) = 0;
-        state(idW,hs+k,hs+j,hs+i) = 0;
-        state(idT,hs+k,hs+j,hs+i) = 0;
-        for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i) = 0; }
-        for (int kk=0; kk < ord; kk++) {
-          for (int jj=0; jj < ord; jj++) {
-            for (int ii=0; ii < ord; ii++) {
+        for (int l=0; l < num_state  ; l++) { state  (l,hs+k,hs+j,hs+i) = 0; }
+        for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+j,hs+i) = 0; }
+        for (int kk=0; kk < ngpt; kk++) {
+          for (int jj=0; jj < ngpt; jj++) {
+            for (int ii=0; ii < ngpt; ii++) {
               real xloc = (i+i_beg+0.5_fp)*dx + gll_pts(ii)*dx;
               real yloc = (j+j_beg+0.5_fp)*dy + gll_pts(jj)*dy;
               real zloc = (k      +0.5_fp)*dz + gll_pts(kk)*dz;
 
               if (sim2d) yloc = ylen/2;
 
-              real dens     = hyDensGLL    (k,kk);
-              real press    = hyPressureGLL(k,kk);
-              real dens_vap = hyDensVapGLL (k,kk);
+              real rho   = hyDensGLL    (k,kk);
+              real p     = hyPressureGLL(k,kk);
+              real rho_v = hyDensVapGLL (k,kk);
+              real temp = init_supercell_temperature(zloc, z_0, z_trop, ztop, T_0, T_trop, T_top);
+              real rho_d = rho - rho_v;
 
-              real uvel;
+              real u;
               real constexpr zs = 5000;
               real constexpr us = 30;
               real constexpr uc = 15;
               if (zloc < zs) {
-                uvel = us * (zloc / zs) - uc;
+                u = us * (zloc / zs) - uc;
               } else {
-                uvel = us - uc;
+                u = us - uc;
               }
 
-              real vvel = 0;
-              real wvel = 0;
+              real v = 0;
+              real w = 0;
+              real e = (rho_d/rho*cv_d+rho_v/rho*cv_v)*temp + (u*u+v*v+w*w)/2 + grav*zloc;
 
               real factor = gll_wts(ii) * gll_wts(jj) * gll_wts(kk);
-              state  (idR ,hs+k,hs+j,hs+i) += dens        * factor;
-              state  (idU ,hs+k,hs+j,hs+i) += dens * uvel * factor;
-              state  (idV ,hs+k,hs+j,hs+i) += dens * vvel * factor;
-              state  (idW ,hs+k,hs+j,hs+i) += dens * wvel * factor;
-              state  (idT ,hs+k,hs+j,hs+i) += dens * e    * factor;
-              tracers(idWV,hs+k,hs+j,hs+i) += dens_vap    * factor;
+              state  (idR ,hs+k,hs+j,hs+i) += rho     * factor;
+              state  (idU ,hs+k,hs+j,hs+i) += rho * u * factor;
+              state  (idV ,hs+k,hs+j,hs+i) += rho * v * factor;
+              state  (idW ,hs+k,hs+j,hs+i) += rho * w * factor;
+              state  (idT ,hs+k,hs+j,hs+i) += rho * e * factor;
+              tracers(idWV,hs+k,hs+j,hs+i) += rho_v   * factor;
             }
           }
         }
@@ -1115,31 +1124,28 @@ namespace modules {
         dm_tracers.add_field( dm.get<real,3>(tracer_names[tr]) );
       }
 
-      YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-      YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
-      YAKL_SCOPE( R_d                 , this->R_d                 );
-      YAKL_SCOPE( R_v                 , this->R_v                 );
-      YAKL_SCOPE( gamma               , this->gamma               );
-      YAKL_SCOPE( C0                  , this->C0                  );
+      YAKL_SCOPE( cv_d                , this->cv_d                );
+      YAKL_SCOPE( cv_v                , this->cv_v                );
+      YAKL_SCOPE( grav                , this->grav                );
+      YAKL_SCOPE( dz                  , this->dz                  );
       YAKL_SCOPE( num_tracers         , this->num_tracers         );
       YAKL_SCOPE( idWV                , this->idWV                );
       YAKL_SCOPE( tracer_adds_mass    , this->tracer_adds_mass    );
 
       // Convert from state and tracers arrays to the coupler's data
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        real rho   = state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k);
-        real u     = state(idU,hs+k,hs+j,hs+i) / rho;
-        real v     = state(idV,hs+k,hs+j,hs+i) / rho;
-        real w     = state(idW,hs+k,hs+j,hs+i) / rho;
-        real theta = ( state(idT,hs+k,hs+j,hs+i) + hy_dens_theta_cells(k) ) / rho;
-        real press = C0 * pow( rho*theta , gamma );
+        real rho = state(idR,hs+k,hs+j,hs+i);
+        real u   = state(idU,hs+k,hs+j,hs+i) / rho;
+        real v   = state(idV,hs+k,hs+j,hs+i) / rho;
+        real w   = state(idW,hs+k,hs+j,hs+i) / rho;
+        real e   = state(idT,hs+k,hs+j,hs+i) / rho;
 
         real rho_v = tracers(idWV,hs+k,hs+j,hs+i);
         real rho_d = rho;
         for (int tr=0; tr < num_tracers; tr++) {
           if (tracer_adds_mass(tr)) rho_d -= tracers(tr,hs+k,hs+j,hs+i);
         }
-        real temp = press / ( rho_d * R_d + rho_v * R_v );
+        real temp = (e - (u*u+v*v+w*w)/2 - grav*(k+0.5_fp)*dz) / (rho_d/rho*cv_d+rho_v/rho*cv_v);
 
         dm_rho_d(k,j,i) = rho_d;
         dm_uvel (k,j,i) = u;
@@ -1174,12 +1180,10 @@ namespace modules {
         dm_tracers.add_field( dm.get<real const,3>(tracer_names[tr]) );
       }
 
-      YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-      YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
-      YAKL_SCOPE( R_d                 , this->R_d                 );
-      YAKL_SCOPE( R_v                 , this->R_v                 );
-      YAKL_SCOPE( gamma               , this->gamma               );
-      YAKL_SCOPE( C0                  , this->C0                  );
+      YAKL_SCOPE( cv_d                , this->cv_d                );
+      YAKL_SCOPE( cv_v                , this->cv_v                );
+      YAKL_SCOPE( grav                , this->grav                );
+      YAKL_SCOPE( dz                  , this->dz                  );
       YAKL_SCOPE( num_tracers         , this->num_tracers         );
       YAKL_SCOPE( idWV                , this->idWV                );
       YAKL_SCOPE( tracer_adds_mass    , this->tracer_adds_mass    );
@@ -1192,19 +1196,18 @@ namespace modules {
         real w     = dm_wvel (k,j,i);
         real temp  = dm_temp (k,j,i);
         real rho_v = dm_tracers(idWV,k,j,i);
-        real press = rho_d * R_d * temp + rho_v * R_v * temp;
 
         real rho = rho_d;
         for (int tr=0; tr < num_tracers; tr++) {
           if (tracer_adds_mass(tr)) rho += dm_tracers(tr,k,j,i);
         }
-        real theta = pow( press/C0 , 1._fp / gamma ) / rho;
+        real e = (rho_d/rho*cv_d+rho_v/rho*cv_v)*temp + (u*u+v*v+w*w)/2 + grav*(k+0.5_fp)*dz;
 
-        state(idR,hs+k,hs+j,hs+i) = rho - hy_dens_cells(k);
+        state(idR,hs+k,hs+j,hs+i) = rho;
         state(idU,hs+k,hs+j,hs+i) = rho * u;
         state(idV,hs+k,hs+j,hs+i) = rho * v;
         state(idW,hs+k,hs+j,hs+i) = rho * w;
-        state(idT,hs+k,hs+j,hs+i) = rho * theta - hy_dens_theta_cells(k);
+        state(idT,hs+k,hs+j,hs+i) = rho * e;
         for (int tr=0; tr < num_tracers; tr++) {
           tracers(tr,hs+k,hs+j,hs+i) = dm_tracers(tr,k,j,i);
         }
@@ -1221,10 +1224,6 @@ namespace modules {
       YAKL_SCOPE( dx                  , this->dx                  );
       YAKL_SCOPE( dy                  , this->dy                  );
       YAKL_SCOPE( dz                  , this->dz                  );
-
-      real4d state  ("state"  ,num_state  ,hs+nz,hs+ny,hs+nx);
-      real4d tracers("tracers",num_tracers,hs+nz,hs+ny,hs+nx);
-      convert_coupler_to_dynamics( coupler , state , tracers );
 
       yakl::SimplePNetCDF nc;
       MPI_Offset ulIndex = 0; // Unlimited dimension index to place this data at

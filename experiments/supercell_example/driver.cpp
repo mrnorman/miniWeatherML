@@ -1,6 +1,6 @@
 
 #include "coupler.h"
-#include "dynamics_compr_nh_rho_theta.h"
+#include "dynamics_compr_nh_energy.h"
 #include "microphysics_kessler.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     // Microphysics performs water phase changess + hydrometeor production, transport, collision, and aggregation
     modules::Microphysics_Kessler        micro;
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
-    modules::Dynamics_compr_nh_rho_theta dycore;
+    modules::Dynamics_compr_nh_energy    dycore;
 
     // Run the initialization modules
     micro .init                 ( coupler ); // Allocate micro state and register its tracers in the coupler
