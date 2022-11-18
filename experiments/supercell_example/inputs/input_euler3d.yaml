@@ -3,8 +3,8 @@
 sim_time: 21600  # 86400
 
 # Number of cells to use in the CRMs
-nx_glob: 200
-ny_glob: 1
+nx_glob: 40
+ny_glob: 40
 nz     : 40
 
 # Domain size of the CRMs
@@ -21,9 +21,9 @@ out_fname: test.nc
 dt_gcm: 900
 
 # CRM physics time step
-dt_phys: 20.
+dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 60.
+out_freq: 0.
 
 
