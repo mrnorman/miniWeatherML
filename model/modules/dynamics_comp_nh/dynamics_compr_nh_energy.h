@@ -371,7 +371,7 @@ namespace modules {
         ///////////
         // vvel
         ///////////
-        {
+        if (! sim2d) {
           yakl::SArray<real,1,2> gll;
           yakl::SArray<real,1,ord> stencil;
           // x-direction
@@ -391,6 +391,15 @@ namespace modules {
           state_limits_z(0,idV,k+1,j,i) = gll(1);
           if (k == 0   ) state_limits_z(0,idV,k  ,j,i) = state_limits_z(1,idV,k  ,j,i);
           if (k == nz-1) state_limits_z(1,idV,k+1,j,i) = state_limits_z(0,idV,k+1,j,i);
+        } else {
+          state_limits_x(1,idV,k,j,i  ) = 0;
+          state_limits_x(0,idV,k,j,i+1) = 0;
+          state_limits_y(1,idV,k,j  ,i) = 0;
+          state_limits_y(0,idV,k,j+1,i) = 0;
+          state_limits_z(1,idV,k  ,j,i) = 0;
+          state_limits_z(0,idV,k+1,j,i) = 0;
+          if (k == 0   ) state_limits_z(0,idV,k  ,j,i) = 0;
+          if (k == nz-1) state_limits_z(1,idV,k+1,j,i) = 0;
         }
 
         ///////////
@@ -471,10 +480,6 @@ namespace modules {
 
       edge_exchange( coupler , state_limits_x , tracer_limits_x , state_limits_y , tracer_limits_y );
 
-      // std::cout << state_limits_x.slice<3>(0,idT,0,0,0);
-      // std::cout << state_limits_x.slice<3>(1,idT,0,0,0);
-      // abort();
-
       // The store a single values flux at cell edges
       auto &dm = coupler.get_data_manager_readwrite();
       auto state_flux_x  = dm.get<real,4>("state_flux_x" );
@@ -538,18 +543,18 @@ namespace modules {
           real w1 = q1 - q6/cs2;
           real w2 = q3 - q6*v/cs2;
           real w3 = q4 - q6*w/cs2;
-          real w4 = q1*u*u - q2 + q5 - q6*(cs2+e*gamma)/(cs2*gamma);
+          real w4 = q1*u*u - q2*u + q5 - q6*(cs2+e*gamma)/(cs2*gamma);
           // Wave 5 (u-cs)
           real w5 =  q1_R*u/(2*cs) - q2_R/(2*cs) + q6_R/(2*cs2);
           // Wave 6 (u+cs)
           real w6 = -q1_L*u/(2*cs) + q2_L/(2*cs) + q6_L/(2*cs2);
 
-          q1 = w1                  + w5                                + w6                               ;
-          q2 = w1*u                + w5*(u-cs)                         + w6*(u+cs)                        ;
-          q3 =      + w2           + w5*v                              + w6*v                             ;
-          q4 =           + w3      + w5*w                              + w6*w                             ;
-          q5 =                + w4 - w5*(cs*gamma*u-cs2-e*gamma)/gamma + w6*(cs*gamma*u+cs2+e*gamma)/gamma;
-          q6 =                       w5*cs2                            + w6*cs2                           ;
+          q1 = w1            + w5                                + w6                               ;
+          q2 = w1*u          + w5*(u-cs)                         + w6*(u+cs)                        ;
+          q3 =      w2       + w5*v                              + w6*v                             ;
+          q4 =         w3    + w5*w                              + w6*w                             ;
+          q5 =            w4 - w5*(cs*gamma*u-cs2-e*gamma)/gamma + w6*(cs*gamma*u+cs2+e*gamma)/gamma;
+          q6 =                 w5*cs2                            + w6*cs2                           ;
 
           r = q1;
           u = q2/r;
@@ -569,6 +574,184 @@ namespace modules {
           }
         }
 
+        ////////////////////////////////////////////////////////
+        // Y-direction
+        ////////////////////////////////////////////////////////
+        if (i < nx && k < nz) {
+          if (! sim2d) {
+            // Get left and right state
+            real r_L = state_limits_y(0,idR,k,j,i);     real r_R = state_limits_y(1,idR,k,j,i);
+            real u_L = state_limits_y(0,idU,k,j,i);     real u_R = state_limits_y(1,idU,k,j,i);
+            real v_L = state_limits_y(0,idV,k,j,i);     real v_R = state_limits_y(1,idV,k,j,i);
+            real w_L = state_limits_y(0,idW,k,j,i);     real w_R = state_limits_y(1,idW,k,j,i);
+            real p_L = state_limits_y(0,idT,k,j,i);     real p_R = state_limits_y(1,idT,k,j,i);
+            real e_L                              ;     real e_R                              ;
+            // Compute e_L
+            {
+              real rho_d = r_L;
+              for (int tr=0; tr < num_tracers; tr++) { if (tracer_adds_mass(tr)) rho_d -= tracer_limits_y(0,tr,k,j,i); }
+              real rho_v = tracer_limits_y(0,idWV,k,j,i);
+              real T = p_L/r_L/(rho_d/r_L*R_d+rho_v/r_L*R_v);
+              real z = (k+0.5_fp)*dz;
+              e_L = (rho_d/r_L*cv_d+rho_v/r_L*cv_v)*T + (u_L*u_L+v_L*v_L+w_L*w_L)/2 + grav*z;
+            }
+            // Compute e_R
+            {
+              real rho_d = r_R;
+              for (int tr=0; tr < num_tracers; tr++) { if (tracer_adds_mass(tr)) rho_d -= tracer_limits_y(1,tr,k,j,i); }
+              real rho_v = tracer_limits_y(1,idWV,k,j,i);
+              real T = p_R/r_R/(rho_d/r_R*R_d+rho_v/r_R*R_v);
+              real z = (k+0.5_fp)*dz;
+              e_R = (rho_d/r_R*cv_d+rho_v/r_R*cv_v)*T + (u_R*u_R+v_R*v_R+w_R*w_R)/2 + grav*z;
+            }
+            // Compute average state
+            real r = 0.5_fp * (r_L + r_R);
+            real u = 0.5_fp * (u_L + u_R);
+            real v = 0.5_fp * (v_L + v_R);
+            real w = 0.5_fp * (w_L + w_R);
+            real p = 0.5_fp * (p_L + p_R);
+            real e = 0.5_fp * (e_L + e_R);
+            real cs2 = gamma*p/r;
+            real cs  = sqrt(cs2);
+
+            // Rename variables & convert to conserved state variables: r, r*u, r*v, r*w, r*e, p
+            auto &q1_L=r_L;  auto &q2_L=u_L;  auto &q3_L=v_L;  auto &q4_L=w_L;  auto &q5_L=e_L;  auto &q6_L=p_L;
+            auto &q1_R=r_R;  auto &q2_R=u_R;  auto &q3_R=v_R;  auto &q4_R=w_R;  auto &q5_R=e_R;  auto &q6_R=p_R;
+            q2_L *= r_L;  q3_L *= r_L;  q4_L *= r_L;  q5_L *= r_L;
+            q2_R *= r_R;  q3_R *= r_R;  q4_R *= r_R;  q5_R *= r_R;
+
+            // Waves 1-4 (v)
+            real q1, q2, q3, q4, q5, q6;
+            if (v > 0) { q1=q1_L;  q2=q2_L;  q3=q3_L;  q4=q4_L;  q5=q5_L;  q6=q6_L; }
+            else       { q1=q1_R;  q2=q2_R;  q3=q3_R;  q4=q4_R;  q5=q5_R;  q6=q6_R; }
+            real w1 = q1 - q6/cs2;
+            real w2 = q2 - q6*u/cs2;
+            real w3 = q4 - q6*w/cs2;
+            real w4 = q1*v*v - q3*v + q5 - q6*(cs2+e*gamma)/(cs2*gamma);
+            // Wave 5 (v-cs)
+            real w5 =  q1_R*v/(2*cs) - q3_R/(2*cs) + q6_R/(2*cs2);
+            // Wave 6 (v+cs)
+            real w6 = -q1_L*v/(2*cs) + q3_L/(2*cs) + q6_L/(2*cs2);
+
+            q1 = w1            + w5                                + w6                               ;
+            q2 =      w2       + w5*u                              + w6*u                             ;
+            q3 = w1*v          + w5*(v-cs)                         + w6*(v+cs)                        ;
+            q4 =         w3    + w5*w                              + w6*w                             ;
+            q5 =            w4 - w5*(cs*gamma*v-cs2-e*gamma)/gamma + w6*(cs*gamma*v+cs2+e*gamma)/gamma;
+            q6 =                 w5*cs2                            + w6*cs2                           ;
+
+            r = q1;
+            u = q2/r;
+            v = q3/r;
+            w = q4/r;
+            e = q5/r;
+            p = q6;
+
+            state_flux_y(idR,k,j,i) = r*v;
+            state_flux_y(idU,k,j,i) = r*v*u;
+            state_flux_y(idV,k,j,i) = r*v*v+p;
+            state_flux_y(idW,k,j,i) = r*v*w;
+            state_flux_y(idT,k,j,i) = r*v*e+v*p;
+            for (int tr=0; tr < num_tracers; tr++) {
+              if (v > 0) { tracer_flux_y(tr,k,j,i) = r*v*tracer_limits_y(0,tr,k,j,i)/r_L; }
+              else       { tracer_flux_y(tr,k,j,i) = r*v*tracer_limits_y(1,tr,k,j,i)/r_R; }
+            }
+          } else {
+            state_flux_y(idR,k,j,i) = 0;
+            state_flux_y(idU,k,j,i) = 0;
+            state_flux_y(idV,k,j,i) = 0;
+            state_flux_y(idW,k,j,i) = 0;
+            state_flux_y(idT,k,j,i) = 0;
+            for (int tr=0; tr < num_tracers; tr++) { tracer_flux_y(tr,k,j,i) = 0; }
+          }
+        }
+
+        ////////////////////////////////////////////////////////
+        // Z-direction
+        ////////////////////////////////////////////////////////
+        if (i < nx && j < ny) {
+          // Get left and right state
+          real r_L = state_limits_z(0,idR,k,j,i);     real r_R = state_limits_z(1,idR,k,j,i);
+          real u_L = state_limits_z(0,idU,k,j,i);     real u_R = state_limits_z(1,idU,k,j,i);
+          real v_L = state_limits_z(0,idV,k,j,i);     real v_R = state_limits_z(1,idV,k,j,i);
+          real w_L = state_limits_z(0,idW,k,j,i);     real w_R = state_limits_z(1,idW,k,j,i);
+          real p_L = state_limits_z(0,idT,k,j,i);     real p_R = state_limits_z(1,idT,k,j,i);
+          real e_L                              ;     real e_R                              ;
+          // Compute e_L
+          {
+            real rho_d = r_L;
+            for (int tr=0; tr < num_tracers; tr++) { if (tracer_adds_mass(tr)) rho_d -= tracer_limits_z(0,tr,k,j,i); }
+            real rho_v = tracer_limits_z(0,idWV,k,j,i);
+            real T = p_L/r_L/(rho_d/r_L*R_d+rho_v/r_L*R_v);
+            real z = k*dz;
+            e_L = (rho_d/r_L*cv_d+rho_v/r_L*cv_v)*T + (u_L*u_L+v_L*v_L+w_L*w_L)/2 + grav*z;
+          }
+          // Compute e_R
+          {
+            real rho_d = r_R;
+            for (int tr=0; tr < num_tracers; tr++) { if (tracer_adds_mass(tr)) rho_d -= tracer_limits_z(1,tr,k,j,i); }
+            real rho_v = tracer_limits_z(1,idWV,k,j,i);
+            real T = p_R/r_R/(rho_d/r_R*R_d+rho_v/r_R*R_v);
+            real z = k*dz;
+            e_R = (rho_d/r_R*cv_d+rho_v/r_R*cv_v)*T + (u_R*u_R+v_R*v_R+w_R*w_R)/2 + grav*z;
+          }
+          // Compute average state
+          real r = 0.5_fp * (r_L + r_R);
+          real u = 0.5_fp * (u_L + u_R);
+          real v = 0.5_fp * (v_L + v_R);
+          real w = 0.5_fp * (w_L + w_R);
+          real p = 0.5_fp * (p_L + p_R);
+          real e = 0.5_fp * (e_L + e_R);
+          real cs2 = gamma*p/r;
+          real cs  = sqrt(cs2);
+
+          // Rename variables & convert to conserved state variables: r, r*u, r*v, r*w, r*e, p
+          auto &q1_L=r_L;  auto &q2_L=u_L;  auto &q3_L=v_L;  auto &q4_L=w_L;  auto &q5_L=e_L;  auto &q6_L=p_L;
+          auto &q1_R=r_R;  auto &q2_R=u_R;  auto &q3_R=v_R;  auto &q4_R=w_R;  auto &q5_R=e_R;  auto &q6_R=p_R;
+          q2_L *= r_L;  q3_L *= r_L;  q4_L *= r_L;  q5_L *= r_L;
+          q2_R *= r_R;  q3_R *= r_R;  q4_R *= r_R;  q5_R *= r_R;
+
+          // Waves 1-4 (w)
+          real q1, q2, q3, q4, q5, q6;
+          if (w > 0) { q1=q1_L;  q2=q2_L;  q3=q3_L;  q4=q4_L;  q5=q5_L;  q6=q6_L; }
+          else       { q1=q1_R;  q2=q2_R;  q3=q3_R;  q4=q4_R;  q5=q5_R;  q6=q6_R; }
+          real w1 = q1 - q6/cs2;
+          real w2 = q2 - q6*u/cs2;
+          real w3 = q3 - q6*v/cs2;
+          real w4 = q1*w*w - q4*w + q5 - q6*(cs2+e*gamma)/(cs2*gamma);
+          // Wave 5 (w-cs)
+          real w5 =  q1_R*w/(2*cs) - q4_R/(2*cs) + q6_R/(2*cs2);
+          // Wave 6 (w+cs)
+          real w6 = -q1_L*w/(2*cs) + q4_L/(2*cs) + q6_L/(2*cs2);
+
+          q1 = w1            + w5                                + w6                               ;
+          q2 =      w2       + w5*u                              + w6*u                             ;
+          q3 =         w3    + w5*v                              + w6*v                             ;
+          q4 = w1*w          + w5*(w-cs)                         + w6*(w+cs)                        ;
+          q5 =            w4 - w5*(cs*gamma*w-cs2-e*gamma)/gamma + w6*(cs*gamma*w+cs2+e*gamma)/gamma;
+          q6 =                 w5*cs2                            + w6*cs2                           ;
+
+          r = q1;
+          u = q2/r;
+          v = q3/r;
+          w = q4/r;
+          e = q5/r;
+          p = q6;
+
+          state_flux_z(idR,k,j,i) = r*w;
+          state_flux_z(idU,k,j,i) = r*w*u;
+          state_flux_z(idV,k,j,i) = r*w*v;
+          state_flux_z(idW,k,j,i) = r*w*w+p;
+          state_flux_z(idT,k,j,i) = r*w*e+w*p;
+          for (int tr=0; tr < num_tracers; tr++) {
+            if (w > 0) { tracer_flux_z(tr,k,j,i) = r*w*tracer_limits_z(0,tr,k,j,i)/r_L; }
+            else       { tracer_flux_z(tr,k,j,i) = r*w*tracer_limits_z(1,tr,k,j,i)/r_R; }
+          }
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////////////
+        // Add hydrostatsis back to density, and re-multiply the density to other variables
+        ////////////////////////////////////////////////////////////////////////////////////////
         if (k < nz && j < ny && i < nx) {
           state(idR,hs+k,hs+j,hs+i) += hy_dens_cells(k);
           state(idU,hs+k,hs+j,hs+i) *= state(idR,hs+k,hs+j,hs+i);
@@ -578,12 +761,6 @@ namespace modules {
           for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i) *= state(idR,hs+k,hs+j,hs+i); }
         }
       });
-      // state_flux_x  = 0;
-      state_flux_y  = 0;
-      state_flux_z  = 0;
-      // tracer_flux_x = 0;
-      tracer_flux_y = 0;
-      tracer_flux_z = 0;
 
       // Deallocate state and tracer limits because they are no longer needed
       state_limits_x  = real5d();
@@ -618,10 +795,10 @@ namespace modules {
       // Compute tendencies as the flux divergence + gravity source term
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         for (int l = 0; l < num_state; l++) {
-          state_tend  (l,k,j,i) = -( state_flux_x  (l,k  ,j  ,i+1) - state_flux_x  (l,k,j,i) ) / dx
-                                  -( state_flux_y  (l,k  ,j+1,i  ) - state_flux_y  (l,k,j,i) ) / dy
-                                  -( state_flux_z  (l,k+1,j  ,i  ) - state_flux_z  (l,k,j,i) ) / dz;
-          // if (l == idW) state_tend(l,k,j,i) += -grav * ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          state_tend(l,k,j,i) = -( state_flux_x  (l,k  ,j  ,i+1) - state_flux_x  (l,k,j,i) ) / dx
+                                -( state_flux_y  (l,k  ,j+1,i  ) - state_flux_y  (l,k,j,i) ) / dy
+                                -( state_flux_z  (l,k+1,j  ,i  ) - state_flux_z  (l,k,j,i) ) / dz;
+          if (l == idW) state_tend(l,k,j,i) += -grav * state(idR,hs+k,hs+j,hs+i);
           if (l == idV && sim2d) state_tend(l,k,j,i) = 0;
         }
         for (int l = 0; l < num_tracers; l++) {
@@ -742,11 +919,14 @@ namespace modules {
         YAKL_SCOPE( sim2d               , this->sim2d               );
         YAKL_SCOPE( R_d                 , this->R_d                 );
         YAKL_SCOPE( R_v                 , this->R_v                 );
+        YAKL_SCOPE( cv_d                , this->cv_d                );
+        YAKL_SCOPE( cv_v                , this->cv_v                );
         YAKL_SCOPE( cp_d                , this->cp_d                );
         YAKL_SCOPE( p0                  , this->p0                  );
         YAKL_SCOPE( grav                , this->grav                );
         YAKL_SCOPE( gamma               , this->gamma               );
         YAKL_SCOPE( C0                  , this->C0                  );
+        YAKL_SCOPE( num_state           , this->num_state           );
         YAKL_SCOPE( num_tracers         , this->num_tracers         );
         YAKL_SCOPE( idWV                , this->idWV                );
 
@@ -1513,12 +1693,12 @@ namespace modules {
       u            = 0.;
       v            = 0.;
       w            = 0.;
-      real theta_d = ht + sample_ellipse_cosine(2._fp  ,  x,y,z  ,  xlen/2,ylen/2,2000.  ,  2000.,2000.,2000.);
+      real theta_d = ht; // + sample_ellipse_cosine(2._fp  ,  x,y,z  ,  xlen/2,ylen/2,2000.  ,  2000.,2000.,2000.);
       real p_d     = C0 * pow( rho_d*theta_d , gamma );
       temp         = p_d / rho_d / R_d;
       real sat_pv  = saturation_vapor_pressure(temp);
       real sat_rv  = sat_pv / R_v / temp;
-      rho_v        = sample_ellipse_cosine(0.8_fp  ,  x,y,z  ,  xlen/2,ylen/2,2000.  ,  2000.,2000.,2000.) * sat_rv;
+      rho_v        = 0; // sample_ellipse_cosine(0.8_fp  ,  x,y,z  ,  xlen/2,ylen/2,2000.  ,  2000.,2000.,2000.) * sat_rv;
       p            = rho_d * R_d * temp + rho_v * R_v * temp;
       rho          = rho_d + rho_v;
     }

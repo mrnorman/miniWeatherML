@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
     micro .init                 ( coupler ); // Allocate micro state and register its tracers in the coupler
     dycore.init                 ( coupler ); // Dycore should initialize its own state here
     column_nudger.set_column    ( coupler ); // Set the column before perturbing
-    modules::perturb_temperature( coupler ); // Randomly perturb bottom layers of temperature to initiate convection
+    // modules::perturb_temperature( coupler ); // Randomly perturb bottom layers of temperature to initiate convection
 
     real etime = 0;   // Elapsed time
 
