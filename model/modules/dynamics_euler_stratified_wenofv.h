@@ -5,6 +5,7 @@
 #include "MultipleFields.h"
 #include "TransformMatrices.h"
 #include "WenoLimiter.h"
+#include "riemann.h"
 
 namespace modules {
 
@@ -101,7 +102,7 @@ namespace modules {
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
     real compute_time_step( core::Coupler const &coupler ) const {
       real constexpr maxwave = 350 + 80;
-      real cfl = 0.3;
+      real cfl = 0.5;
       if (coupler.get_ny_glob() == 1) cfl = 0.5;
       return cfl * std::min( std::min( dx , dy ) , dz ) / maxwave;
     }
@@ -408,67 +409,16 @@ namespace modules {
         // X-direction
         ////////////////////////////////////////////////////////
         if (j < ny && k < nz) {
-          // Get left and right state
-          real r_L = state_limits_x(idR,0,k,j,i)    ;   real r_R = state_limits_x(idR,1,k,j,i)    ;
-          real u_L = state_limits_x(idU,0,k,j,i)/r_L;   real u_R = state_limits_x(idU,1,k,j,i)/r_R;
-          real v_L = state_limits_x(idV,0,k,j,i)/r_L;   real v_R = state_limits_x(idV,1,k,j,i)/r_R;
-          real w_L = state_limits_x(idW,0,k,j,i)/r_L;   real w_R = state_limits_x(idW,1,k,j,i)/r_R;
-          real t_L = state_limits_x(idT,0,k,j,i)/r_L;   real t_R = state_limits_x(idT,1,k,j,i)/r_R;
-          // Compute average state
-          real r = 0.5_fp * (r_L + r_R);
-          real u = 0.5_fp * (u_L + u_R);
-          real v = 0.5_fp * (v_L + v_R);
-          real w = 0.5_fp * (w_L + w_R);
-          real t = 0.5_fp * (t_L + t_R);
-          real p = C0 * pow(r*t,gamma);
-          real cs2 = gamma*p/r;
-          real cs  = sqrt(cs2);
+          real ru, r , u, v , w , t , p;
+          riemann_native_x( state_limits_x , tracers_limits_x , k , j , i , num_tracers, C0, gamma,
+                            ru , r , u , v , w , t , p , tracers_flux_x );
 
-          // COMPUTE UPWIND STATE FLUXES
-          // Get left and right fluxes
-          real q1_L = state_limits_x(idR,0,k,j,i);   real q1_R = state_limits_x(idR,1,k,j,i);
-          real q2_L = state_limits_x(idU,0,k,j,i);   real q2_R = state_limits_x(idU,1,k,j,i);
-          real q3_L = state_limits_x(idV,0,k,j,i);   real q3_R = state_limits_x(idV,1,k,j,i);
-          real q4_L = state_limits_x(idW,0,k,j,i);   real q4_R = state_limits_x(idW,1,k,j,i);
-          real q5_L = state_limits_x(idT,0,k,j,i);   real q5_R = state_limits_x(idT,1,k,j,i);
-          // Compute upwind characteristics
-          // Waves 1-3, velocity: u
-          real w1, w2, w3;
-          if (u > 0) {
-            w1 = q1_L - q5_L/t;
-            w2 = q3_L - v*q5_L/t;
-            w3 = q4_L - w*q5_L/t;
-          } else {
-            w1 = q1_R - q5_R/t;
-            w2 = q3_R - v*q5_R/t;
-            w3 = q4_R - w*q5_R/t;
-          }
-          // Wave 5, velocity: u-cs
-          real w5 =  u*q1_R/(2*cs) - q2_R/(2*cs) + q5_R/(2*t);
-          // Wave 6, velocity: u+cs
-          real w6 = -u*q1_L/(2*cs) + q2_L/(2*cs) + q5_L/(2*t);
-          // Use right eigenmatrix to compute upwind flux
-          real q1 = w1 + w5 + w6;
-          real q2 = u*w1 + (u-cs)*w5 + (u+cs)*w6;
-          real q3 = w2 + v*w5 + v*w6;
-          real q4 = w3 + w*w5 + w*w6;
-          real q5 =      t*w5 + t*w6;
-
-          state_flux_x(idR,k,j,i) = q2;
-          state_flux_x(idU,k,j,i) = q2*q2/q1 + C0*pow(q5,gamma);
-          state_flux_x(idV,k,j,i) = q2*q3/q1;
-          state_flux_x(idW,k,j,i) = q2*q4/q1;
-          state_flux_x(idT,k,j,i) = q2*q5/q1;
-
-          // COMPUTE UPWIND TRACER FLUXES
-          // Handle it one tracer at a time
-          for (int tr=0; tr < num_tracers; tr++) {
-            if (u > 0) {
-              tracers_flux_x(tr,k,j,i) = q2 * tracers_limits_x(tr,0,k,j,i) / r_L;
-            } else {
-              tracers_flux_x(tr,k,j,i) = q2 * tracers_limits_x(tr,1,k,j,i) / r_R;
-            }
-          }
+          state_flux_x(idR,k,j,i) = ru;
+          state_flux_x(idU,k,j,i) = ru*u + p;
+          state_flux_x(idV,k,j,i) = ru*v;
+          state_flux_x(idW,k,j,i) = ru*w;
+          state_flux_x(idT,k,j,i) = ru*t;
+          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_x(tr,k,j,i) = ru * tracers_flux_x(tr,k,j,i); }
         }
 
         ////////////////////////////////////////////////////////
@@ -476,67 +426,16 @@ namespace modules {
         ////////////////////////////////////////////////////////
         // If we are simulating in 2-D, then do not do Riemann in the y-direction
         if ( (! sim2d) && i < nx && k < nz) {
-          // Get left and right state
-          real r_L = state_limits_y(idR,0,k,j,i)    ;   real r_R = state_limits_y(idR,1,k,j,i)    ;
-          real u_L = state_limits_y(idU,0,k,j,i)/r_L;   real u_R = state_limits_y(idU,1,k,j,i)/r_R;
-          real v_L = state_limits_y(idV,0,k,j,i)/r_L;   real v_R = state_limits_y(idV,1,k,j,i)/r_R;
-          real w_L = state_limits_y(idW,0,k,j,i)/r_L;   real w_R = state_limits_y(idW,1,k,j,i)/r_R;
-          real t_L = state_limits_y(idT,0,k,j,i)/r_L;   real t_R = state_limits_y(idT,1,k,j,i)/r_R;
-          // Compute average state
-          real r = 0.5_fp * (r_L + r_R);
-          real u = 0.5_fp * (u_L + u_R);
-          real v = 0.5_fp * (v_L + v_R);
-          real w = 0.5_fp * (w_L + w_R);
-          real t = 0.5_fp * (t_L + t_R);
-          real p = C0 * pow(r*t,gamma);
-          real cs2 = gamma*p/r;
-          real cs  = sqrt(cs2);
+          real rv, r , u, v , w , t , p;
+          riemann_native_y( state_limits_y , tracers_limits_y , k , j , i , num_tracers, C0, gamma,
+                            rv , r , u , v , w , t , p , tracers_flux_y );
 
-          // COMPUTE UPWIND STATE FLUXES
-          // Get left and right fluxes
-          real q1_L = state_limits_y(idR,0,k,j,i);   real q1_R = state_limits_y(idR,1,k,j,i);
-          real q2_L = state_limits_y(idU,0,k,j,i);   real q2_R = state_limits_y(idU,1,k,j,i);
-          real q3_L = state_limits_y(idV,0,k,j,i);   real q3_R = state_limits_y(idV,1,k,j,i);
-          real q4_L = state_limits_y(idW,0,k,j,i);   real q4_R = state_limits_y(idW,1,k,j,i);
-          real q5_L = state_limits_y(idT,0,k,j,i);   real q5_R = state_limits_y(idT,1,k,j,i);
-          // Compute upwind characteristics
-          // Waves 1-3, velocity: v
-          real w1, w2, w3;
-          if (v > 0) {
-            w1 = q1_L - q5_L/t;
-            w2 = q2_L - u*q5_L/t;
-            w3 = q4_L - w*q5_L/t;
-          } else {
-            w1 = q1_R - q5_R/t;
-            w2 = q2_R - u*q5_R/t;
-            w3 = q4_R - w*q5_R/t;
-          }
-          // Wave 5, velocity: v-cs
-          real w5 =  v*q1_R/(2*cs) - q3_R/(2*cs) + q5_R/(2*t);
-          // Wave 6, velocity: v+cs
-          real w6 = -v*q1_L/(2*cs) + q3_L/(2*cs) + q5_L/(2*t);
-          // Use right eigenmatrix to compute upwind flux
-          real q1 = w1 + w5 + w6;
-          real q2 = w2 + u*w5 + u*w6;
-          real q3 = v*w1 + (v-cs)*w5 + (v+cs)*w6;
-          real q4 = w3 + w*w5 + w*w6;
-          real q5 =      t*w5 + t*w6;
-
-          state_flux_y(idR,k,j,i) = q3;
-          state_flux_y(idU,k,j,i) = q3*q2/q1;
-          state_flux_y(idV,k,j,i) = q3*q3/q1 + C0*pow(q5,gamma);
-          state_flux_y(idW,k,j,i) = q3*q4/q1;
-          state_flux_y(idT,k,j,i) = q3*q5/q1;
-
-          // COMPUTE UPWIND TRACER FLUXES
-          // Handle it one tracer at a time
-          for (int tr=0; tr < num_tracers; tr++) {
-            if (v > 0) {
-              tracers_flux_y(tr,k,j,i) = q3 * tracers_limits_y(tr,0,k,j,i) / r_L;
-            } else {
-              tracers_flux_y(tr,k,j,i) = q3 * tracers_limits_y(tr,1,k,j,i) / r_R;
-            }
-          }
+          state_flux_y(idR,k,j,i) = rv;
+          state_flux_y(idU,k,j,i) = rv*u;
+          state_flux_y(idV,k,j,i) = rv*v + p;
+          state_flux_y(idW,k,j,i) = rv*w;
+          state_flux_y(idT,k,j,i) = rv*t;
+          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_y(tr,k,j,i) = rv * tracers_flux_y(tr,k,j,i); }
         } else if (i < nx && k < nz) {
           state_flux_y(idR,k,j,i) = 0;
           state_flux_y(idU,k,j,i) = 0;
@@ -559,65 +458,17 @@ namespace modules {
             for (int l = 0; l < num_state  ; l++) { state_limits_z  (l,1,nz,j,i) = state_limits_z  (l,0,nz,j,i); }
             for (int l = 0; l < num_tracers; l++) { tracers_limits_z(l,1,nz,j,i) = tracers_limits_z(l,0,nz,j,i); }
           }
-          // Get left and right state
-          real r_L = state_limits_z(idR,0,k,j,i)    ;   real r_R = state_limits_z(idR,1,k,j,i)    ;
-          real u_L = state_limits_z(idU,0,k,j,i)/r_L;   real u_R = state_limits_z(idU,1,k,j,i)/r_R;
-          real v_L = state_limits_z(idV,0,k,j,i)/r_L;   real v_R = state_limits_z(idV,1,k,j,i)/r_R;
-          real w_L = state_limits_z(idW,0,k,j,i)/r_L;   real w_R = state_limits_z(idW,1,k,j,i)/r_R;
-          real t_L = state_limits_z(idT,0,k,j,i)/r_L;   real t_R = state_limits_z(idT,1,k,j,i)/r_R;
-          // Compute average state
-          real r = 0.5_fp * (r_L + r_R);
-          real u = 0.5_fp * (u_L + u_R);
-          real v = 0.5_fp * (v_L + v_R);
-          real w = 0.5_fp * (w_L + w_R);
-          real t = 0.5_fp * (t_L + t_R);
-          real p = C0 * pow(r*t,gamma);
-          real cs2 = gamma*p/r;
-          real cs  = sqrt(cs2);
-          // Get left and right fluxes
-          real q1_L = state_limits_z(idR,0,k,j,i);   real q1_R = state_limits_z(idR,1,k,j,i);
-          real q2_L = state_limits_z(idU,0,k,j,i);   real q2_R = state_limits_z(idU,1,k,j,i);
-          real q3_L = state_limits_z(idV,0,k,j,i);   real q3_R = state_limits_z(idV,1,k,j,i);
-          real q4_L = state_limits_z(idW,0,k,j,i);   real q4_R = state_limits_z(idW,1,k,j,i);
-          real q5_L = state_limits_z(idT,0,k,j,i);   real q5_R = state_limits_z(idT,1,k,j,i);
-          // Compute upwind characteristics
-          // Waves 1-3, velocity: w
-          real w1, w2, w3;
-          if (w > 0) {
-            w1 = q1_L - q5_L/t;
-            w2 = q2_L - u*q5_L/t;
-            w3 = q3_L - v*q5_L/t;
-          } else {
-            w1 = q1_R - q5_R/t;
-            w2 = q2_R - u*q5_R/t;
-            w3 = q3_R - v*q5_R/t;
-          }
-          // Wave 5, velocity: w-cs
-          real w5 =  w*q1_R/(2*cs) - q4_R/(2*cs) + q5_R/(2*t);
-          // Wave 6, velocity: w+cs
-          real w6 = -w*q1_L/(2*cs) + q4_L/(2*cs) + q5_L/(2*t);
-          // Use right eigenmatrix to compute upwind flux
-          real q1 = w1 + w5 + w6;
-          real q2 = w2 + u*w5 + u*w6;
-          real q3 = w3 + v*w5 + v*w6;
-          real q4 = w*w1 + (w-cs)*w5 + (w+cs)*w6;
-          real q5 =      t*w5 + t*w6;
 
-          state_flux_z(idR,k,j,i) = q4;
-          state_flux_z(idU,k,j,i) = q4*q2/q1;
-          state_flux_z(idV,k,j,i) = q4*q3/q1;
-          state_flux_z(idW,k,j,i) = q4*q4/q1 + C0*pow(q5,gamma);
-          state_flux_z(idT,k,j,i) = q4*q5/q1;
+          real rw, r , u, v , w , t , p;
+          riemann_native_z( state_limits_z , tracers_limits_z , k , j , i , num_tracers, C0, gamma,
+                            rw , r , u , v , w , t , p , tracers_flux_z );
 
-          // COMPUTE UPWIND TRACER FLUXES
-          // Handle it one tracer at a time
-          for (int tr=0; tr < num_tracers; tr++) {
-            if (w > 0) {
-              tracers_flux_z(tr,k,j,i) = q4 * tracers_limits_z(tr,0,k,j,i) / r_L;
-            } else {
-              tracers_flux_z(tr,k,j,i) = q4 * tracers_limits_z(tr,1,k,j,i) / r_R;
-            }
-          }
+          state_flux_z(idR,k,j,i) = rw;
+          state_flux_z(idU,k,j,i) = rw*u;
+          state_flux_z(idV,k,j,i) = rw*v;
+          state_flux_z(idW,k,j,i) = rw*w + p;
+          state_flux_z(idT,k,j,i) = rw*t;
+          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_z(tr,k,j,i) = rw * tracers_flux_z(tr,k,j,i); }
         }
       });
 
@@ -1268,7 +1119,7 @@ namespace modules {
       int j_beg = coupler.get_j_beg();
 
       if (etime == 0) {
-        nc.create(fname , NC_CLOBBER | NC_64BIT_DATA);
+        nc.create(fname , NC_CLOBBER );
 
         nc.create_dim( "x" , coupler.get_nx_glob() );
         nc.create_dim( "y" , coupler.get_ny_glob() );
