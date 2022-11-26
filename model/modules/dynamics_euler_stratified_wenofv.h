@@ -257,8 +257,13 @@ namespace modules {
 
       // Since tracers are full mass, it's helpful before reconstruction to remove the background density for potentially
       // more accurate reconstructions of tracer concentrations
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(num_tracers,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i ) {
-        tracers(l,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i ) {
+        state(idU,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+        state(idV,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+        state(idW,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+        for (int tr=0; tr < num_tracers; tr++) {
+          tracers(tr,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+        }
       });
 
       halo_exchange( coupler , state , tracers );
@@ -290,6 +295,12 @@ namespace modules {
         // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
         state_limits_x(idR,1,k,j,i  ) += hy_dens_cells(k);
         state_limits_x(idR,0,k,j,i+1) += hy_dens_cells(k);
+        state_limits_x(idU,1,k,j,i  ) *= state_limits_x(idR,1,k,j,i  );
+        state_limits_x(idU,0,k,j,i+1) *= state_limits_x(idR,0,k,j,i+1);
+        state_limits_x(idV,1,k,j,i  ) *= state_limits_x(idR,1,k,j,i  );
+        state_limits_x(idV,0,k,j,i+1) *= state_limits_x(idR,0,k,j,i+1);
+        state_limits_x(idW,1,k,j,i  ) *= state_limits_x(idR,1,k,j,i  );
+        state_limits_x(idW,0,k,j,i+1) *= state_limits_x(idR,0,k,j,i+1);
         state_limits_x(idT,1,k,j,i  ) += hy_dens_theta_cells(k);
         state_limits_x(idT,0,k,j,i+1) += hy_dens_theta_cells(k);
 
@@ -322,6 +333,12 @@ namespace modules {
           // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
           state_limits_y(idR,1,k,j  ,i) += hy_dens_cells(k);
           state_limits_y(idR,0,k,j+1,i) += hy_dens_cells(k);
+          state_limits_y(idU,1,k,j  ,i) *= state_limits_y(idR,1,k,j  ,i);
+          state_limits_y(idU,0,k,j+1,i) *= state_limits_y(idR,0,k,j+1,i);
+          state_limits_y(idV,1,k,j  ,i) *= state_limits_y(idR,1,k,j  ,i);
+          state_limits_y(idV,0,k,j+1,i) *= state_limits_y(idR,0,k,j+1,i);
+          state_limits_y(idW,1,k,j  ,i) *= state_limits_y(idR,1,k,j  ,i);
+          state_limits_y(idW,0,k,j+1,i) *= state_limits_y(idR,0,k,j+1,i);
           state_limits_y(idT,1,k,j  ,i) += hy_dens_theta_cells(k);
           state_limits_y(idT,0,k,j+1,i) += hy_dens_theta_cells(k);
 
@@ -356,7 +373,7 @@ namespace modules {
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) {
             // We wet w-momentum to zero in the boundaries
-            if ( l == idW && (k+s < hs) || (k+s >= nz+hs) ) {
+            if ( l == idW && ((k+s < hs) || (k+s >= nz+hs)) ) {
               stencil(s) = 0;
             } else {
               int ind = min( nz+hs-1 , max( (int) hs , k+s ) );
@@ -370,6 +387,12 @@ namespace modules {
         // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
         state_limits_z(idR,1,k  ,j,i) += hy_dens_edges(k  );
         state_limits_z(idR,0,k+1,j,i) += hy_dens_edges(k+1);
+        state_limits_z(idU,1,k  ,j,i) *= state_limits_z(idR,1,k  ,j,i);
+        state_limits_z(idU,0,k+1,j,i) *= state_limits_z(idR,0,k+1,j,i);
+        state_limits_z(idV,1,k  ,j,i) *= state_limits_z(idR,1,k  ,j,i);
+        state_limits_z(idV,0,k+1,j,i) *= state_limits_z(idR,0,k+1,j,i);
+        state_limits_z(idW,1,k  ,j,i) *= state_limits_z(idR,1,k  ,j,i);
+        state_limits_z(idW,0,k+1,j,i) *= state_limits_z(idR,0,k+1,j,i);
         state_limits_z(idT,1,k  ,j,i) += hy_dens_theta_edges(k  );
         state_limits_z(idT,0,k+1,j,i) += hy_dens_theta_edges(k+1);
         // We wet w-momentum to zero at the boundaries
@@ -619,6 +642,15 @@ namespace modules {
             }
           }
         }
+
+        if (i < nx && j < ny && k < nz) {
+          state(idU,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          state(idV,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          state(idW,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          for (int tr=0; tr < num_tracers; tr++) {
+            tracers(tr,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          }
+        }
       });
 
       // Deallocate state and tracer limits because they are no longer needed
@@ -664,7 +696,6 @@ namespace modules {
           tracers_tend(l,k,j,i) = -( tracers_flux_x(l,k  ,j  ,i+1) - tracers_flux_x(l,k,j,i) ) / dx
                                   -( tracers_flux_y(l,k  ,j+1,i  ) - tracers_flux_y(l,k,j,i) ) / dy
                                   -( tracers_flux_z(l,k+1,j  ,i  ) - tracers_flux_z(l,k,j,i) ) / dz;
-          tracers(l,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
         }
       });
     }
