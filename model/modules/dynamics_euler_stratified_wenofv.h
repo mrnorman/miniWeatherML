@@ -440,10 +440,6 @@ namespace modules {
       real4d tracers_native_y("tracers_native_y",num_tracers,nz,ny+1,nx);
       real4d tracers_native_z("tracers_native_z",num_tracers,nz+1,ny,nx);
 
-      real4d tracers_relax_x("tracers_relax_x",num_tracers,nz,ny,nx+1);
-      real4d tracers_relax_y("tracers_relax_y",num_tracers,nz,ny+1,nx);
-      real4d tracers_relax_z("tracers_relax_z",num_tracers,nz+1,ny,nx);
-
       real4d tracers_x("tracers_x",num_tracers,nz,ny,nx+1);
       real4d tracers_y("tracers_y",num_tracers,nz,ny+1,nx);
       real4d tracers_z("tracers_z",num_tracers,nz+1,ny,nx);
@@ -458,7 +454,6 @@ namespace modules {
           real ru_advec   , r_advec   , u_advec   , v_advec   , w_advec   , t_advec   , p_advec  ;
           real ru_acoust  , r_acoust  , u_acoust  , v_acoust  , w_acoust  , t_acoust  , p_acoust ;
           real ru_native  , r_native  , u_native  , v_native  , w_native  , t_native  , p_native ;
-          real ru_relax   , r_relax   , u_relax   , v_relax   , w_relax   , t_relax   , p_relax  ;
           riemann_central_x( state_limits_x , tracers_limits_x , k , j , i , num_tracers, C0, gamma,
                              ru_central , r_central , u_central , v_central , w_central , t_central ,
                              p_central , tracers_central_x );
@@ -496,7 +491,6 @@ namespace modules {
           real rv_advec   , r_advec   , u_advec   , v_advec   , w_advec   , t_advec   , p_advec  ;
           real rv_acoust  , r_acoust  , u_acoust  , v_acoust  , w_acoust  , t_acoust  , p_acoust ;
           real rv_native  , r_native  , u_native  , v_native  , w_native  , t_native  , p_native ;
-          real rv_relax   , r_relax   , u_relax   , v_relax   , w_relax   , t_relax   , p_relax  ;
           riemann_central_y( state_limits_y , tracers_limits_y , k , j , i , num_tracers, C0, gamma,
                              rv_central , r_central , u_central , v_central , w_central , t_central ,
                              p_central , tracers_central_y );
@@ -550,7 +544,6 @@ namespace modules {
           real rw_advec   , r_advec   , u_advec   , v_advec   , w_advec   , t_advec   , p_advec  ;
           real rw_acoust  , r_acoust  , u_acoust  , v_acoust  , w_acoust  , t_acoust  , p_acoust ;
           real rw_native  , r_native  , u_native  , v_native  , w_native  , t_native  , p_native ;
-          real rw_relax   , r_relax   , u_relax   , v_relax   , w_relax   , t_relax   , p_relax  ;
           riemann_central_z( state_limits_z , tracers_limits_z , k , j , i , num_tracers, C0, gamma,
                              rw_central , r_central , u_central , v_central , w_central , t_central ,
                              p_central , tracers_central_z );
