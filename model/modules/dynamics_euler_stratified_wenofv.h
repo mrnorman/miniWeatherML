@@ -21,13 +21,15 @@ namespace modules {
 
     // Order of accuracy (numerical convergence for smooth flows) for the dynamical core
     #ifndef MW_ORD
-      int  static constexpr ord = 5;
+      int  static constexpr ord = 9;
     #else
       int  static constexpr ord = MW_ORD;
     #endif
     int  static constexpr hs  = (ord-1)/2; // Number of halo cells ("hs" == "halo size")
 
     int  static constexpr num_state = 5;
+
+    bool static constexpr do_weno = false;
 
     // IDs for the variables in the state vector
     int  static constexpr idR = 0;  // Density
@@ -258,8 +260,13 @@ namespace modules {
 
       // Since tracers are full mass, it's helpful before reconstruction to remove the background density for potentially
       // more accurate reconstructions of tracer concentrations
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(num_tracers,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i ) {
-        tracers(l,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i ) {
+        state(idU,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+        state(idV,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+        state(idW,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+        for (int tr=0; tr < num_tracers; tr++) {
+          tracers(tr,hs+k,hs+j,hs+i) /= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+        }
       });
 
       halo_exchange( coupler , state , tracers );
@@ -284,13 +291,19 @@ namespace modules {
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
           state_limits_x(l,1,k,j,i  ) = gll(0);
           state_limits_x(l,0,k,j,i+1) = gll(1);
         }
         // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
         state_limits_x(idR,1,k,j,i  ) += hy_dens_cells(k);
         state_limits_x(idR,0,k,j,i+1) += hy_dens_cells(k);
+        state_limits_x(idU,1,k,j,i  ) *= state_limits_x(idR,1,k,j,i  );
+        state_limits_x(idU,0,k,j,i+1) *= state_limits_x(idR,0,k,j,i+1);
+        state_limits_x(idV,1,k,j,i  ) *= state_limits_x(idR,1,k,j,i  );
+        state_limits_x(idV,0,k,j,i+1) *= state_limits_x(idR,0,k,j,i+1);
+        state_limits_x(idW,1,k,j,i  ) *= state_limits_x(idR,1,k,j,i  );
+        state_limits_x(idW,0,k,j,i+1) *= state_limits_x(idR,0,k,j,i+1);
         state_limits_x(idT,1,k,j,i  ) += hy_dens_theta_cells(k);
         state_limits_x(idT,0,k,j,i+1) += hy_dens_theta_cells(k);
 
@@ -300,7 +313,7 @@ namespace modules {
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,hs+j,i+s); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
           tracers_limits_x(l,1,k,j,i  ) = gll(0) * state_limits_x(idR,1,k,j,i  );
           tracers_limits_x(l,0,k,j,i+1) = gll(1) * state_limits_x(idR,0,k,j,i+1);
         }
@@ -316,13 +329,19 @@ namespace modules {
             SArray<real,1,ord> stencil;
             SArray<real,1,2>   gll;
             for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
             state_limits_y(l,1,k,j  ,i) = gll(0);
             state_limits_y(l,0,k,j+1,i) = gll(1);
           }
           // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
           state_limits_y(idR,1,k,j  ,i) += hy_dens_cells(k);
           state_limits_y(idR,0,k,j+1,i) += hy_dens_cells(k);
+          state_limits_y(idU,1,k,j  ,i) *= state_limits_y(idR,1,k,j  ,i);
+          state_limits_y(idU,0,k,j+1,i) *= state_limits_y(idR,0,k,j+1,i);
+          state_limits_y(idV,1,k,j  ,i) *= state_limits_y(idR,1,k,j  ,i);
+          state_limits_y(idV,0,k,j+1,i) *= state_limits_y(idR,0,k,j+1,i);
+          state_limits_y(idW,1,k,j  ,i) *= state_limits_y(idR,1,k,j  ,i);
+          state_limits_y(idW,0,k,j+1,i) *= state_limits_y(idR,0,k,j+1,i);
           state_limits_y(idT,1,k,j  ,i) += hy_dens_theta_cells(k);
           state_limits_y(idT,0,k,j+1,i) += hy_dens_theta_cells(k);
 
@@ -332,7 +351,7 @@ namespace modules {
             SArray<real,1,ord> stencil;
             SArray<real,1,2>   gll;
             for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,j+s,hs+i); }
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
             tracers_limits_y(l,1,k,j  ,i) = gll(0) * state_limits_y(idR,1,k,j  ,i);
             tracers_limits_y(l,0,k,j+1,i) = gll(1) * state_limits_y(idR,0,k,j+1,i);
           }
@@ -357,20 +376,26 @@ namespace modules {
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) {
             // We wet w-momentum to zero in the boundaries
-            if ( l == idW && (k+s < hs) || (k+s >= nz+hs) ) {
+            if ( l == idW && ((k+s < hs) || (k+s >= nz+hs)) ) {
               stencil(s) = 0;
             } else {
               int ind = min( nz+hs-1 , max( (int) hs , k+s ) );
               stencil(s) = state(l,ind,hs+j,hs+i);
             }
           }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
           state_limits_z(l,1,k  ,j,i) = gll(0);
           state_limits_z(l,0,k+1,j,i) = gll(1);
         }
         // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
         state_limits_z(idR,1,k  ,j,i) += hy_dens_edges(k  );
         state_limits_z(idR,0,k+1,j,i) += hy_dens_edges(k+1);
+        state_limits_z(idU,1,k  ,j,i) *= state_limits_z(idR,1,k  ,j,i);
+        state_limits_z(idU,0,k+1,j,i) *= state_limits_z(idR,0,k+1,j,i);
+        state_limits_z(idV,1,k  ,j,i) *= state_limits_z(idR,1,k  ,j,i);
+        state_limits_z(idV,0,k+1,j,i) *= state_limits_z(idR,0,k+1,j,i);
+        state_limits_z(idW,1,k  ,j,i) *= state_limits_z(idR,1,k  ,j,i);
+        state_limits_z(idW,0,k+1,j,i) *= state_limits_z(idR,0,k+1,j,i);
         state_limits_z(idT,1,k  ,j,i) += hy_dens_theta_edges(k  );
         state_limits_z(idT,0,k+1,j,i) += hy_dens_theta_edges(k+1);
         // We wet w-momentum to zero at the boundaries
@@ -386,7 +411,7 @@ namespace modules {
             int ind = min( nz+hs-1 , max( (int) hs , k+s ) );
             stencil(s) = tracers(l,ind,hs+j,hs+i);
           }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
           tracers_limits_z(l,1,k  ,j,i) = gll(0) * state_limits_z(idR,1,k  ,j,i);
           tracers_limits_z(l,0,k+1,j,i) = gll(1) * state_limits_z(idR,0,k+1,j,i);
         }
@@ -403,22 +428,63 @@ namespace modules {
       auto tracers_flux_y = dm.get<real,4>("tracers_flux_y");
       auto tracers_flux_z = dm.get<real,4>("tracers_flux_z");
 
+      real4d tracers_central_x("tracers_central_x",num_tracers,nz,ny,nx+1);
+      real4d tracers_central_y("tracers_central_y",num_tracers,nz,ny+1,nx);
+      real4d tracers_central_z("tracers_central_z",num_tracers,nz+1,ny,nx);
+
+      real4d tracers_advec_x("tracers_advec_x",num_tracers,nz,ny,nx+1);
+      real4d tracers_advec_y("tracers_advec_y",num_tracers,nz,ny+1,nx);
+      real4d tracers_advec_z("tracers_advec_z",num_tracers,nz+1,ny,nx);
+
+      real4d tracers_native_x("tracers_native_x",num_tracers,nz,ny,nx+1);
+      real4d tracers_native_y("tracers_native_y",num_tracers,nz,ny+1,nx);
+      real4d tracers_native_z("tracers_native_z",num_tracers,nz+1,ny,nx);
+
+      real4d tracers_relax_x("tracers_relax_x",num_tracers,nz,ny,nx+1);
+      real4d tracers_relax_y("tracers_relax_y",num_tracers,nz,ny+1,nx);
+      real4d tracers_relax_z("tracers_relax_z",num_tracers,nz+1,ny,nx);
+
+      real4d tracers_x("tracers_x",num_tracers,nz,ny,nx+1);
+      real4d tracers_y("tracers_y",num_tracers,nz,ny+1,nx);
+      real4d tracers_z("tracers_z",num_tracers,nz+1,ny,nx);
+
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i ) {
         ////////////////////////////////////////////////////////
         // X-direction
         ////////////////////////////////////////////////////////
         if (j < ny && k < nz) {
-          real ru, r , u, v , w , t , p;
-          riemann_native_x( state_limits_x , tracers_limits_x , k , j , i , num_tracers, C0, gamma,
-                            ru , r , u , v , w , t , p , tracers_flux_x );
+          real ru_central , r_central , u_central , v_central , w_central , t_central , p_central;
+          real ru_advec   , r_advec   , u_advec   , v_advec   , w_advec   , t_advec   , p_advec  ;
+          real ru_acoust  , r_acoust  , u_acoust  , v_acoust  , w_acoust  , t_acoust  , p_acoust ;
+          real ru_native  , r_native  , u_native  , v_native  , w_native  , t_native  , p_native ;
+          real ru_relax   , r_relax   , u_relax   , v_relax   , w_relax   , t_relax   , p_relax  ;
+          riemann_central_x( state_limits_x , tracers_limits_x , k , j , i , num_tracers, C0, gamma,
+                             ru_central , r_central , u_central , v_central , w_central , t_central ,
+                             p_central , tracers_central_x );
+          riemann_advec_x  ( state_limits_x , tracers_limits_x , k , j , i , num_tracers, C0, gamma,
+                             ru_advec   , r_advec   , u_advec   , v_advec   , w_advec   , t_advec ,
+                             p_advec   , tracers_advec_x   );
+          riemann_native_x ( state_limits_x , tracers_limits_x , k , j , i , num_tracers, C0, gamma,
+                             ru_native  , r_native  , u_native  , v_native  , w_native  , t_native ,
+                             p_native  , tracers_native_x  );
+          riemann_acoust_x ( state_limits_x , tracers_limits_x , k , j , i , num_tracers, C0, gamma,
+                             ru_acoust  , p_acoust );
+
+          real ru = ru_native ;
+          real u  = u_native ;
+          real v  = v_native ;
+          real w  = w_native ;
+          real t  = t_native ;
+          real p  = p_native ;
+          for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_native_x(tr,k,j,i); }
 
           state_flux_x(idR,k,j,i) = ru;
           state_flux_x(idU,k,j,i) = ru*u + p;
           state_flux_x(idV,k,j,i) = ru*v;
           state_flux_x(idW,k,j,i) = ru*w;
           state_flux_x(idT,k,j,i) = ru*t;
-          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_x(tr,k,j,i) = ru * tracers_flux_x(tr,k,j,i); }
+          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_x(tr,k,j,i) = ru * tracers_x(tr,k,j,i); }
         }
 
         ////////////////////////////////////////////////////////
@@ -426,16 +492,37 @@ namespace modules {
         ////////////////////////////////////////////////////////
         // If we are simulating in 2-D, then do not do Riemann in the y-direction
         if ( (! sim2d) && i < nx && k < nz) {
-          real rv, r , u, v , w , t , p;
-          riemann_native_y( state_limits_y , tracers_limits_y , k , j , i , num_tracers, C0, gamma,
-                            rv , r , u , v , w , t , p , tracers_flux_y );
+          real rv_central , r_central , u_central , v_central , w_central , t_central , p_central;
+          real rv_advec   , r_advec   , u_advec   , v_advec   , w_advec   , t_advec   , p_advec  ;
+          real rv_acoust  , r_acoust  , u_acoust  , v_acoust  , w_acoust  , t_acoust  , p_acoust ;
+          real rv_native  , r_native  , u_native  , v_native  , w_native  , t_native  , p_native ;
+          real rv_relax   , r_relax   , u_relax   , v_relax   , w_relax   , t_relax   , p_relax  ;
+          riemann_central_y( state_limits_y , tracers_limits_y , k , j , i , num_tracers, C0, gamma,
+                             rv_central , r_central , u_central , v_central , w_central , t_central ,
+                             p_central , tracers_central_y );
+          riemann_advec_y  ( state_limits_y , tracers_limits_y , k , j , i , num_tracers, C0, gamma,
+                             rv_advec   , r_advec   , u_advec   , v_advec   , w_advec   , t_advec ,
+                             p_advec   , tracers_advec_y   );
+          riemann_native_y ( state_limits_y , tracers_limits_y , k , j , i , num_tracers, C0, gamma,
+                             rv_native  , r_native  , u_native  , v_native  , w_native  , t_native ,
+                             p_native  , tracers_native_y  );
+          riemann_acoust_y ( state_limits_y , tracers_limits_y , k , j , i , num_tracers, C0, gamma,
+                             rv_acoust  , p_acoust );
+
+          real rv = rv_native ;
+          real u  = u_native ;
+          real v  = v_native ;
+          real w  = w_native ;
+          real t  = t_native ;
+          real p  = p_native ;
+          for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_native_y(tr,k,j,i); }
 
           state_flux_y(idR,k,j,i) = rv;
           state_flux_y(idU,k,j,i) = rv*u;
           state_flux_y(idV,k,j,i) = rv*v + p;
           state_flux_y(idW,k,j,i) = rv*w;
           state_flux_y(idT,k,j,i) = rv*t;
-          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_y(tr,k,j,i) = rv * tracers_flux_y(tr,k,j,i); }
+          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_y(tr,k,j,i) = rv * tracers_y(tr,k,j,i); }
         } else if (i < nx && k < nz) {
           state_flux_y(idR,k,j,i) = 0;
           state_flux_y(idU,k,j,i) = 0;
@@ -459,16 +546,46 @@ namespace modules {
             for (int l = 0; l < num_tracers; l++) { tracers_limits_z(l,1,nz,j,i) = tracers_limits_z(l,0,nz,j,i); }
           }
 
-          real rw, r , u, v , w , t , p;
-          riemann_native_z( state_limits_z , tracers_limits_z , k , j , i , num_tracers, C0, gamma,
-                            rw , r , u , v , w , t , p , tracers_flux_z );
+          real rw_central , r_central , u_central , v_central , w_central , t_central , p_central;
+          real rw_advec   , r_advec   , u_advec   , v_advec   , w_advec   , t_advec   , p_advec  ;
+          real rw_acoust  , r_acoust  , u_acoust  , v_acoust  , w_acoust  , t_acoust  , p_acoust ;
+          real rw_native  , r_native  , u_native  , v_native  , w_native  , t_native  , p_native ;
+          real rw_relax   , r_relax   , u_relax   , v_relax   , w_relax   , t_relax   , p_relax  ;
+          riemann_central_z( state_limits_z , tracers_limits_z , k , j , i , num_tracers, C0, gamma,
+                             rw_central , r_central , u_central , v_central , w_central , t_central ,
+                             p_central , tracers_central_z );
+          riemann_advec_z  ( state_limits_z , tracers_limits_z , k , j , i , num_tracers, C0, gamma,
+                             rw_advec   , r_advec   , u_advec   , v_advec   , w_advec   , t_advec ,
+                             p_advec   , tracers_advec_z   );
+          riemann_native_z ( state_limits_z , tracers_limits_z , k , j , i , num_tracers, C0, gamma,
+                             rw_native  , r_native  , u_native  , v_native  , w_native  , t_native ,
+                             p_native  , tracers_native_z  );
+          riemann_acoust_z ( state_limits_z , tracers_limits_z , k , j , i , num_tracers, C0, gamma,
+                             rw_acoust  , p_acoust );
+
+          real rw = rw_native ;
+          real u  = u_native ;
+          real v  = v_native ;
+          real w  = w_native ;
+          real t  = t_native ;
+          real p  = p_native ;
+          for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_native_z(tr,k,j,i); }
 
           state_flux_z(idR,k,j,i) = rw;
           state_flux_z(idU,k,j,i) = rw*u;
           state_flux_z(idV,k,j,i) = rw*v;
           state_flux_z(idW,k,j,i) = rw*w + p;
           state_flux_z(idT,k,j,i) = rw*t;
-          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_z(tr,k,j,i) = rw * tracers_flux_z(tr,k,j,i); }
+          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_z(tr,k,j,i) = rw * tracers_z(tr,k,j,i); }
+        }
+
+        if (i < nx && j < ny && k < nz) {
+          state(idU,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          state(idV,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          state(idW,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          for (int tr=0; tr < num_tracers; tr++) {
+            tracers(tr,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          }
         }
       });
 
@@ -515,7 +632,6 @@ namespace modules {
           tracers_tend(l,k,j,i) = -( tracers_flux_x(l,k  ,j  ,i+1) - tracers_flux_x(l,k,j,i) ) / dx
                                   -( tracers_flux_y(l,k  ,j+1,i  ) - tracers_flux_y(l,k,j,i) ) / dy
                                   -( tracers_flux_z(l,k+1,j  ,i  ) - tracers_flux_z(l,k,j,i) ) / dz;
-          tracers(l,hs+k,hs+j,hs+i) *= ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
         }
       });
     }
@@ -1550,15 +1666,18 @@ namespace modules {
                                                     SArray<real,2,ord,ord>  const &sten_to_coefs          ,
                                                     SArray<real,3,hs+1,hs+1,hs+1> const &weno_recon_lower ,
                                                     SArray<real,1,hs+2> const &idl                        ,
-                                                    real sigma ) {
-      // Reconstruct values
-      SArray<real,1,ord> wenoCoefs;
-      weno::compute_weno_coefs<ord>( weno_recon_lower , sten_to_coefs , stencil , wenoCoefs , idl , sigma );
+                                                    real sigma , bool do_weno ) {
+      SArray<real,1,ord> coefs;
+      if (do_weno) {
+        weno::compute_weno_coefs<ord>( weno_recon_lower , sten_to_coefs , stencil , coefs , idl , sigma );
+      } else {
+        coefs = yakl::intrinsics::matmul_cr( sten_to_coefs , stencil );
+      }
       // Transform ord weno coefficients into 2 GLL points
       for (int ii=0; ii<2; ii++) {
         real tmp = 0;
         for (int s=0; s < ord; s++) {
-          tmp += coefs_to_gll(s,ii) * wenoCoefs(s);
+          tmp += coefs_to_gll(s,ii) * coefs(s);
         }
         gll(ii) = tmp;
       }

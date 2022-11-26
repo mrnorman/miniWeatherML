@@ -156,14 +156,12 @@ YAKL_INLINE void riemann_native_x( real5d const &state_limits_x , real5d const &
   real p = C0 * pow(r*t,gamma);
   real cs2 = gamma*p/r;
   real cs  = sqrt(cs2);
-
-  // COMPUTE UPWIND STATE FLUXES
-  // Get left and right fluxes
-  real q1_L = state_limits_x(idR,0,k,j,i);   real q1_R = state_limits_x(idR,1,k,j,i);
-  real q2_L = state_limits_x(idU,0,k,j,i);   real q2_R = state_limits_x(idU,1,k,j,i);
-  real q3_L = state_limits_x(idV,0,k,j,i);   real q3_R = state_limits_x(idV,1,k,j,i);
-  real q4_L = state_limits_x(idW,0,k,j,i);   real q4_R = state_limits_x(idW,1,k,j,i);
-  real q5_L = state_limits_x(idT,0,k,j,i);   real q5_R = state_limits_x(idT,1,k,j,i);
+  // Get left and right state
+  real q1_L = r_L    ;   real q1_R = r_R    ;
+  real q2_L = r_L*u_L;   real q2_R = r_R*u_R;
+  real q3_L = r_L*v_L;   real q3_R = r_R*v_R;
+  real q4_L = r_L*w_L;   real q4_R = r_R*w_R;
+  real q5_L = r_L*t_L;   real q5_R = r_R*t_R;
   // Compute upwind characteristics
   // Waves 1-3, velocity: u
   real w1, w2, w3;
@@ -180,7 +178,7 @@ YAKL_INLINE void riemann_native_x( real5d const &state_limits_x , real5d const &
   real w5 =  u*q1_R/(2*cs) - q2_R/(2*cs) + q5_R/(2*t);
   // Wave 6, velocity: u+cs
   real w6 = -u*q1_L/(2*cs) + q2_L/(2*cs) + q5_L/(2*t);
-  // Use right eigenmatrix to compute upwind flux
+  // Use right eigenmatrix to compute upwind state
   real q1 = w1 + w5 + w6;
   real q2 = u*w1 + (u-cs)*w5 + (u+cs)*w6;
   real q3 = w2 + v*w5 + v*w6;
@@ -224,14 +222,12 @@ YAKL_INLINE void riemann_native_y( real5d const &state_limits_y , real5d const &
   real p = C0 * pow(r*t,gamma);
   real cs2 = gamma*p/r;
   real cs  = sqrt(cs2);
-
-  // COMPUTE UPWIND STATE FLUXES
-  // Get left and right fluxes
-  real q1_L = state_limits_y(idR,0,k,j,i);   real q1_R = state_limits_y(idR,1,k,j,i);
-  real q2_L = state_limits_y(idU,0,k,j,i);   real q2_R = state_limits_y(idU,1,k,j,i);
-  real q3_L = state_limits_y(idV,0,k,j,i);   real q3_R = state_limits_y(idV,1,k,j,i);
-  real q4_L = state_limits_y(idW,0,k,j,i);   real q4_R = state_limits_y(idW,1,k,j,i);
-  real q5_L = state_limits_y(idT,0,k,j,i);   real q5_R = state_limits_y(idT,1,k,j,i);
+  // Get left and right state
+  real q1_L = r_L    ;   real q1_R = r_R    ;
+  real q2_L = r_L*u_L;   real q2_R = r_R*u_R;
+  real q3_L = r_L*v_L;   real q3_R = r_R*v_R;
+  real q4_L = r_L*w_L;   real q4_R = r_R*w_R;
+  real q5_L = r_L*t_L;   real q5_R = r_R*t_R;
   // Compute upwind characteristics
   // Waves 1-3, velocity: v
   real w1, w2, w3;
@@ -248,7 +244,7 @@ YAKL_INLINE void riemann_native_y( real5d const &state_limits_y , real5d const &
   real w5 =  v*q1_R/(2*cs) - q3_R/(2*cs) + q5_R/(2*t);
   // Wave 6, velocity: v+cs
   real w6 = -v*q1_L/(2*cs) + q3_L/(2*cs) + q5_L/(2*t);
-  // Use right eigenmatrix to compute upwind flux
+  // Use right eigenmatrix to compute upwind state
   real q1 = w1 + w5 + w6;
   real q2 = w2 + u*w5 + u*w6;
   real q3 = v*w1 + (v-cs)*w5 + (v+cs)*w6;
@@ -292,12 +288,12 @@ YAKL_INLINE void riemann_native_z( real5d const &state_limits_z , real5d const &
   real p = C0 * pow(r*t,gamma);
   real cs2 = gamma*p/r;
   real cs  = sqrt(cs2);
-  // Get left and right fluxes
-  real q1_L = state_limits_z(idR,0,k,j,i);   real q1_R = state_limits_z(idR,1,k,j,i);
-  real q2_L = state_limits_z(idU,0,k,j,i);   real q2_R = state_limits_z(idU,1,k,j,i);
-  real q3_L = state_limits_z(idV,0,k,j,i);   real q3_R = state_limits_z(idV,1,k,j,i);
-  real q4_L = state_limits_z(idW,0,k,j,i);   real q4_R = state_limits_z(idW,1,k,j,i);
-  real q5_L = state_limits_z(idT,0,k,j,i);   real q5_R = state_limits_z(idT,1,k,j,i);
+  // Get left and right state
+  real q1_L = r_L    ;   real q1_R = r_R    ;
+  real q2_L = r_L*u_L;   real q2_R = r_R*u_R;
+  real q3_L = r_L*v_L;   real q3_R = r_R*v_R;
+  real q4_L = r_L*w_L;   real q4_R = r_R*w_R;
+  real q5_L = r_L*t_L;   real q5_R = r_R*t_R;
   // Compute upwind characteristics
   // Waves 1-3, velocity: w
   real w1, w2, w3;
@@ -314,7 +310,7 @@ YAKL_INLINE void riemann_native_z( real5d const &state_limits_z , real5d const &
   real w5 =  w*q1_R/(2*cs) - q4_R/(2*cs) + q5_R/(2*t);
   // Wave 6, velocity: w+cs
   real w6 = -w*q1_L/(2*cs) + q4_L/(2*cs) + q5_L/(2*t);
-  // Use right eigenmatrix to compute upwind flux
+  // Use right eigenmatrix to compute upwind state
   real q1 = w1 + w5 + w6;
   real q2 = w2 + u*w5 + u*w6;
   real q3 = w3 + v*w5 + v*w6;
@@ -336,6 +332,72 @@ YAKL_INLINE void riemann_native_z( real5d const &state_limits_z , real5d const &
 
 
 
+
+YAKL_INLINE void riemann_acoust_x( real5d const &state_limits_x , real5d const &tracers_limits_x ,
+                                   int k , int j , int i , int num_tracers, real C0, real gamma,
+                                   real &ru_upw , real &p_upw ) {
+  int  static constexpr idR = 0;  // Density
+  int  static constexpr idU = 1;  // u-momentum
+  int  static constexpr idV = 2;  // v-momentum
+  int  static constexpr idW = 3;  // w-momentum
+  int  static constexpr idT = 4;  // Density * potential temperature
+  real r_L  = state_limits_x(idR,0,k,j,i);        real r_R  = state_limits_x(idR,1,k,j,i);
+  real ru_L = state_limits_x(idU,0,k,j,i);        real ru_R = state_limits_x(idU,1,k,j,i);
+  real rt_L = state_limits_x(idT,0,k,j,i);        real rt_R = state_limits_x(idT,1,k,j,i);
+  real p_L  = C0*pow(rt_L,gamma);                 real p_R  = C0*pow(rt_R,gamma);
+  real p = 0.5_fp * (p_L + p_R);
+  real r = 0.5_fp * (r_L + r_R);
+  real cs2 = gamma*p/r;
+  real cs = sqrt(cs2);
+  real w1 = p_R/2 - ru_R*cs/2;
+  real w2 = p_L/2 + ru_L*cs/2;
+  p_upw  = w1 + w2;
+  ru_upw = (w2 - w1) / cs;
+}
+
+YAKL_INLINE void riemann_acoust_y( real5d const &state_limits_y , real5d const &tracers_limits_y ,
+                                   int k , int j , int i , int num_tracers, real C0, real gamma,
+                                   real &rv_upw , real &p_upw ) {
+  int  static constexpr idR = 0;  // Density
+  int  static constexpr idU = 1;  // u-momentum
+  int  static constexpr idV = 2;  // v-momentum
+  int  static constexpr idW = 3;  // w-momentum
+  int  static constexpr idT = 4;  // Density * potential temperature
+  real r_L  = state_limits_y(idR,0,k,j,i);        real r_R  = state_limits_y(idR,1,k,j,i);
+  real rv_L = state_limits_y(idV,0,k,j,i);        real rv_R = state_limits_y(idV,1,k,j,i);
+  real rt_L = state_limits_y(idT,0,k,j,i);        real rt_R = state_limits_y(idT,1,k,j,i);
+  real p_L  = C0*pow(rt_L,gamma);                 real p_R  = C0*pow(rt_R,gamma);
+  real p = 0.5_fp * (p_L + p_R);
+  real r = 0.5_fp * (r_L + r_R);
+  real cs2 = gamma*p/r;
+  real cs = sqrt(cs2);
+  real w1 = p_R/2 - rv_R*cs/2;
+  real w2 = p_L/2 + rv_L*cs/2;
+  p_upw  = w1 + w2;
+  rv_upw = (w2 - w1) / cs;
+}
+
+YAKL_INLINE void riemann_acoust_z( real5d const &state_limits_z , real5d const &tracers_limits_z ,
+                                   int k , int j , int i , int num_tracers, real C0, real gamma,
+                                   real &rw_upw , real &p_upw ) {
+  int  static constexpr idR = 0;  // Density
+  int  static constexpr idU = 1;  // u-momentum
+  int  static constexpr idV = 2;  // v-momentum
+  int  static constexpr idW = 3;  // w-momentum
+  int  static constexpr idT = 4;  // Density * potential temperature
+  real r_L  = state_limits_z(idR,0,k,j,i);        real r_R  = state_limits_z(idR,1,k,j,i);
+  real rw_L = state_limits_z(idW,0,k,j,i);        real rw_R = state_limits_z(idW,1,k,j,i);
+  real rt_L = state_limits_z(idT,0,k,j,i);        real rt_R = state_limits_z(idT,1,k,j,i);
+  real p_L  = C0*pow(rt_L,gamma);                 real p_R  = C0*pow(rt_R,gamma);
+  real p = 0.5_fp * (p_L + p_R);
+  real r = 0.5_fp * (r_L + r_R);
+  real cs2 = gamma*p/r;
+  real cs = sqrt(cs2);
+  real w1 = p_R/2 - rw_R*cs/2;
+  real w2 = p_L/2 + rw_L*cs/2;
+  p_upw  = w1 + w2;
+  rw_upw = (w2 - w1) / cs;
+}
 
 
 

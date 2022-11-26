@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
       // Run the runtime modules
       dycore.time_step             ( coupler , dtphys );  // Move the flow forward according to the Euler equations
       micro .time_step             ( coupler , dtphys );  // Perform phase changes for water + precipitation / falling
-      modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
+      // modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
       // column_nudger.nudge_to_column( coupler , dtphys );  // Nudge slightly back toward unstable profile
                                                           // so that supercell persists for all time
 
