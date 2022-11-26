@@ -103,9 +103,8 @@ namespace modules {
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
     real compute_time_step( core::Coupler const &coupler ) const {
-      real constexpr maxwave = 350 + 80;
-      real cfl = 0.5;
-      if (coupler.get_ny_glob() == 1) cfl = 0.5;
+      real maxwave = init_data_int == DATA_THERMAL ? 350 + 35 : 350 + 80;
+      real cfl = 0.6;
       return cfl * std::min( std::min( dx , dy ) , dz ) / maxwave;
     }
 
@@ -137,10 +136,10 @@ namespace modules {
       
       for (int icycle = 0; icycle < ncycles; icycle++) {
         // SSPRK3 requires temporary arrays to hold intermediate state and tracers arrays
-        real4d state_tmp   ("state_tmp"   ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs);
-        real4d state_tend  ("state_tend"  ,num_state  ,nz     ,ny     ,nx     );
-        real4d tracers_tmp ("tracers_tmp" ,num_tracers,nz+2*hs,ny+2*hs,nx+2*hs);
-        real4d tracers_tend("tracers_tend",num_tracers,nz     ,ny     ,nx     );
+        auto state_tmp    = state  .createDeviceObject();
+        auto tracers_tmp  = tracers.createDeviceObject();
+        real4d state_tend  ("state_tend"  ,num_state  ,nz,ny,nx);
+        real4d tracers_tend("tracers_tend",num_tracers,nz,ny,nx);
         //////////////
         // Stage 1
         //////////////
@@ -446,6 +445,13 @@ namespace modules {
 
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i ) {
+        int constexpr NATIVE  = 0;
+        int constexpr ADVEC   = 1;
+        int constexpr CENTRAL = 2;
+        int constexpr ACOUST  = 3;
+        int mass_flux_method = NATIVE ;
+        int pressure_method  = NATIVE ;
+        int advected_method  = NATIVE ;
         ////////////////////////////////////////////////////////
         // X-direction
         ////////////////////////////////////////////////////////
@@ -466,13 +472,21 @@ namespace modules {
           riemann_acoust_x ( state_limits_x , tracers_limits_x , k , j , i , num_tracers, C0, gamma,
                              ru_acoust  , p_acoust );
 
-          real ru = ru_native ;
-          real u  = u_native ;
-          real v  = v_native ;
-          real w  = w_native ;
-          real t  = t_native ;
-          real p  = p_native ;
-          for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_native_x(tr,k,j,i); }
+          real ru, u, v, w, t, p;
+          if      (mass_flux_method == NATIVE ) { ru = ru_native ; }
+          else if (mass_flux_method == ADVEC  ) { ru = ru_advec  ; }
+          else if (mass_flux_method == CENTRAL) { ru = ru_central; }
+          else if (mass_flux_method == ACOUST ) { ru = ru_acoust ; }
+          if      (pressure_method  == NATIVE ) { p = p_native ; }
+          else if (pressure_method  == ADVEC  ) { p = p_advec  ; }
+          else if (pressure_method  == CENTRAL) { p = p_central; }
+          else if (pressure_method  == ACOUST ) { p = p_acoust ; }
+          if      (advected_method  == NATIVE ) { u = u_native ; v = v_native ; w = w_native ; t = t_native ; }
+          else if (advected_method  == ADVEC  ) { u = u_advec  ; v = v_advec  ; w = w_advec  ; t = t_advec  ; }
+          else if (advected_method  == CENTRAL) { u = u_central; v = v_central; w = w_central; t = t_central; }
+          if      (advected_method  == NATIVE ) { for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_native_x (tr,k,j,i); } }
+          else if (advected_method  == ADVEC  ) { for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_advec_x  (tr,k,j,i); } }
+          else if (advected_method  == CENTRAL) { for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_central_x(tr,k,j,i); } }
 
           state_flux_x(idR,k,j,i) = ru;
           state_flux_x(idU,k,j,i) = ru*u + p;
@@ -503,13 +517,21 @@ namespace modules {
           riemann_acoust_y ( state_limits_y , tracers_limits_y , k , j , i , num_tracers, C0, gamma,
                              rv_acoust  , p_acoust );
 
-          real rv = rv_native ;
-          real u  = u_native ;
-          real v  = v_native ;
-          real w  = w_native ;
-          real t  = t_native ;
-          real p  = p_native ;
-          for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_native_y(tr,k,j,i); }
+          real rv, u, v, w, t, p;
+          if      (mass_flux_method == NATIVE ) { rv = rv_native ; }
+          else if (mass_flux_method == ADVEC  ) { rv = rv_advec  ; }
+          else if (mass_flux_method == CENTRAL) { rv = rv_central; }
+          else if (mass_flux_method == ACOUST ) { rv = rv_acoust ; }
+          if      (pressure_method  == NATIVE ) { p = p_native ; }
+          else if (pressure_method  == ADVEC  ) { p = p_advec  ; }
+          else if (pressure_method  == CENTRAL) { p = p_central; }
+          else if (pressure_method  == ACOUST ) { p = p_acoust ; }
+          if      (advected_method  == NATIVE ) { u = u_native ; v = v_native ; w = w_native ; t = t_native ; }
+          else if (advected_method  == ADVEC  ) { u = u_advec  ; v = v_advec  ; w = w_advec  ; t = t_advec  ; }
+          else if (advected_method  == CENTRAL) { u = u_central; v = v_central; w = w_central; t = t_central; }
+          if      (advected_method  == NATIVE ) { for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_native_y (tr,k,j,i); } }
+          else if (advected_method  == ADVEC  ) { for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_advec_y  (tr,k,j,i); } }
+          else if (advected_method  == CENTRAL) { for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_central_y(tr,k,j,i); } }
 
           state_flux_y(idR,k,j,i) = rv;
           state_flux_y(idU,k,j,i) = rv*u;
@@ -556,13 +578,21 @@ namespace modules {
           riemann_acoust_z ( state_limits_z , tracers_limits_z , k , j , i , num_tracers, C0, gamma,
                              rw_acoust  , p_acoust );
 
-          real rw = rw_native ;
-          real u  = u_native ;
-          real v  = v_native ;
-          real w  = w_native ;
-          real t  = t_native ;
-          real p  = p_native ;
-          for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_native_z(tr,k,j,i); }
+          real rw, u, v, w, t, p;
+          if      (mass_flux_method == NATIVE ) { rw = rw_native ; }
+          else if (mass_flux_method == ADVEC  ) { rw = rw_advec  ; }
+          else if (mass_flux_method == CENTRAL) { rw = rw_central; }
+          else if (mass_flux_method == ACOUST ) { rw = rw_acoust ; }
+          if      (pressure_method  == NATIVE ) { p = p_native ; }
+          else if (pressure_method  == ADVEC  ) { p = p_advec  ; }
+          else if (pressure_method  == CENTRAL) { p = p_central; }
+          else if (pressure_method  == ACOUST ) { p = p_acoust ; }
+          if      (advected_method  == NATIVE ) { u = u_native ; v = v_native ; w = w_native ; t = t_native ; }
+          else if (advected_method  == ADVEC  ) { u = u_advec  ; v = v_advec  ; w = w_advec  ; t = t_advec  ; }
+          else if (advected_method  == CENTRAL) { u = u_central; v = v_central; w = w_central; t = t_central; }
+          if      (advected_method  == NATIVE ) { for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_native_z (tr,k,j,i); } }
+          else if (advected_method  == ADVEC  ) { for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_advec_z  (tr,k,j,i); } }
+          else if (advected_method  == CENTRAL) { for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_central_z(tr,k,j,i); } }
 
           state_flux_z(idR,k,j,i) = rw;
           state_flux_z(idU,k,j,i) = rw*u;
