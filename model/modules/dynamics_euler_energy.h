@@ -583,7 +583,7 @@ namespace modules {
                 
                 real rho = std::abs(z-zlen/2) >= zlen/4 ? 1 : 2;
                 real u   = std::abs(z-zlen/2) >= zlen/4 ? alpha : -alpha;
-                real w   = lambda * sin(2*M_PI*n*x/L);
+                real w   =             lambda * sin(2*M_PI*n*x/L);
                 real v   = sim2d ? 0 : lambda * sin(2*M_PI*n*y/L);
                 real p   = 2.5;
 
