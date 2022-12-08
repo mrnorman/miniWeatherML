@@ -79,24 +79,6 @@ namespace modules {
     SArray<real,1,hs+2>           weno_idl;         // Ideal weights for WENO
     real                          weno_sigma;       // WENO sigma parameter (handicap high-order TV estimate)
 
-    realHost4d halo_send_buf_S_host;
-    realHost4d halo_send_buf_N_host;
-    realHost4d halo_send_buf_W_host;
-    realHost4d halo_send_buf_E_host;
-    realHost4d halo_recv_buf_S_host;
-    realHost4d halo_recv_buf_N_host;
-    realHost4d halo_recv_buf_W_host;
-    realHost4d halo_recv_buf_E_host;
-
-    realHost3d edge_send_buf_S_host;
-    realHost3d edge_send_buf_N_host;
-    realHost3d edge_send_buf_W_host;
-    realHost3d edge_send_buf_E_host;
-    realHost3d edge_recv_buf_S_host;
-    realHost3d edge_recv_buf_N_host;
-    realHost3d edge_recv_buf_W_host;
-    realHost3d edge_recv_buf_E_host;
-
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
     real compute_time_step( core::Coupler const &coupler ) const {
@@ -899,24 +881,6 @@ namespace modules {
 
       }
 
-      halo_send_buf_W_host = realHost4d("halo_send_buf_W_host",num_state+num_tracers,nz,ny,hs);
-      halo_send_buf_E_host = realHost4d("halo_send_buf_E_host",num_state+num_tracers,nz,ny,hs);
-      halo_send_buf_S_host = realHost4d("halo_send_buf_S_host",num_state+num_tracers,nz,hs,nx);
-      halo_send_buf_N_host = realHost4d("halo_send_buf_N_host",num_state+num_tracers,nz,hs,nx);
-      halo_recv_buf_S_host = realHost4d("halo_recv_buf_S_host",num_state+num_tracers,nz,hs,nx);
-      halo_recv_buf_N_host = realHost4d("halo_recv_buf_N_host",num_state+num_tracers,nz,hs,nx);
-      halo_recv_buf_W_host = realHost4d("halo_recv_buf_W_host",num_state+num_tracers,nz,ny,hs);
-      halo_recv_buf_E_host = realHost4d("halo_recv_buf_E_host",num_state+num_tracers,nz,ny,hs);
-
-      edge_send_buf_S_host = realHost3d("edge_send_buf_S_host",num_state+num_tracers,nz,nx);
-      edge_send_buf_N_host = realHost3d("edge_send_buf_N_host",num_state+num_tracers,nz,nx);
-      edge_send_buf_W_host = realHost3d("edge_send_buf_W_host",num_state+num_tracers,nz,ny);
-      edge_send_buf_E_host = realHost3d("edge_send_buf_E_host",num_state+num_tracers,nz,ny);
-      edge_recv_buf_S_host = realHost3d("edge_recv_buf_S_host",num_state+num_tracers,nz,nx);
-      edge_recv_buf_N_host = realHost3d("edge_recv_buf_N_host",num_state+num_tracers,nz,nx);
-      edge_recv_buf_W_host = realHost3d("edge_recv_buf_W_host",num_state+num_tracers,nz,ny);
-      edge_recv_buf_E_host = realHost3d("edge_recv_buf_E_host",num_state+num_tracers,nz,ny);
-
       // Convert the initialized state and tracers arrays back to the coupler state
       convert_dynamics_to_coupler( coupler , state , tracers );
 
@@ -1388,6 +1352,15 @@ namespace modules {
 
       int npack = num_state + num_tracers;
 
+      realHost4d halo_send_buf_W_host("halo_send_buf_W_host",npack,nz,ny,hs);
+      realHost4d halo_send_buf_E_host("halo_send_buf_E_host",npack,nz,ny,hs);
+      realHost4d halo_send_buf_S_host("halo_send_buf_S_host",npack,nz,hs,nx);
+      realHost4d halo_send_buf_N_host("halo_send_buf_N_host",npack,nz,hs,nx);
+      realHost4d halo_recv_buf_S_host("halo_recv_buf_S_host",npack,nz,hs,nx);
+      realHost4d halo_recv_buf_N_host("halo_recv_buf_N_host",npack,nz,hs,nx);
+      realHost4d halo_recv_buf_W_host("halo_recv_buf_W_host",npack,nz,ny,hs);
+      realHost4d halo_recv_buf_E_host("halo_recv_buf_E_host",npack,nz,ny,hs);
+
       real4d halo_send_buf_W("halo_send_buf_W",npack,nz,ny,hs);
       real4d halo_send_buf_E("halo_send_buf_E",npack,nz,ny,hs);
 
@@ -1507,6 +1480,15 @@ namespace modules {
       YAKL_SCOPE( ny    , this->ny    );
 
       int npack = num_state + num_tracers;
+
+      realHost3d edge_send_buf_S_host("edge_send_buf_S_host",num_state+num_tracers,nz,nx);
+      realHost3d edge_send_buf_N_host("edge_send_buf_N_host",num_state+num_tracers,nz,nx);
+      realHost3d edge_send_buf_W_host("edge_send_buf_W_host",num_state+num_tracers,nz,ny);
+      realHost3d edge_send_buf_E_host("edge_send_buf_E_host",num_state+num_tracers,nz,ny);
+      realHost3d edge_recv_buf_S_host("edge_recv_buf_S_host",num_state+num_tracers,nz,nx);
+      realHost3d edge_recv_buf_N_host("edge_recv_buf_N_host",num_state+num_tracers,nz,nx);
+      realHost3d edge_recv_buf_W_host("edge_recv_buf_W_host",num_state+num_tracers,nz,ny);
+      realHost3d edge_recv_buf_E_host("edge_recv_buf_E_host",num_state+num_tracers,nz,ny);
 
       real3d edge_send_buf_W("edge_send_buf_W",npack,nz,ny);
       real3d edge_send_buf_E("edge_send_buf_E",npack,nz,ny);
