@@ -767,7 +767,7 @@ namespace modules {
       auto &dm = coupler.get_data_manager_readwrite();
 
       coupler.set_option<int>("idWV",idWV);
-      dm.register_and_allocate<bool>("tracer_adds_mass","",{nz});
+      dm.register_and_allocate<bool>("tracer_adds_mass","",{num_tracers});
       auto dm_tracer_adds_mass = dm.get<bool,1>("tracer_adds_mass");
       tracer_adds_mass.deep_copy_to(dm_tracer_adds_mass);
 
