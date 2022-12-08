@@ -764,6 +764,13 @@ namespace modules {
       fname          = coupler.get_option<std::string>("out_fname");
       out_freq       = coupler.get_option<real       >("out_freq" );
 
+      auto &dm = coupler.get_data_manager_readwrite();
+
+      coupler.set_option<int>("idWV",idWV);
+      dm.register_and_allocate<bool>("tracer_adds_mass","",{nz});
+      auto dm_tracer_adds_mass = dm.get<bool,1>("tracer_adds_mass");
+      tracer_adds_mass.deep_copy_to(dm_tracer_adds_mass);
+
       // Set an integer version of the input_data so we can test it inside GPU kernels
       if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
       else if (init_data == "supercell") { init_data_int = DATA_SUPERCELL; }
@@ -918,7 +925,6 @@ namespace modules {
 
       // Some modules might need to use hydrostasis to project values into material boundaries
       // So let's put it into the coupler's data manager just in case
-      auto &dm = coupler.get_data_manager_readwrite();
       dm.register_and_allocate<real>("hy_dens_cells"      ,"hydrostatic density cell averages"      ,{nz});
       dm.register_and_allocate<real>("hy_dens_theta_cells","hydrostatic density*theta cell averages",{nz});
       auto dm_hy_dens_cells       = dm.get<real,1>("hy_dens_cells"      );
