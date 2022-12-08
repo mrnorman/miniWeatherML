@@ -81,6 +81,16 @@ namespace modules {
       });
 
       coupler.set_option<std::string>("micro","kessler");
+      coupler.set_option<real>("R_d"    ,R_d    );
+      coupler.set_option<real>("cp_d"   ,cp_d   );
+      coupler.set_option<real>("cv_d"   ,cv_d   );
+      coupler.set_option<real>("gamma_d",gamma_d);
+      coupler.set_option<real>("kappa_d",kappa_d);
+      coupler.set_option<real>("R_v"    ,R_v    );
+      coupler.set_option<real>("cp_v"   ,cp_v   );
+      coupler.set_option<real>("cv_v"   ,cv_v   );
+      coupler.set_option<real>("p0"     ,p0     );
+      coupler.set_option<real>("grav"   ,grav   );
     }
 
 

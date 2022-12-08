@@ -721,12 +721,12 @@ namespace modules {
 
       sim2d = (coupler.get_ny_glob() == 1);
 
-      R_d   = coupler.get_R_d ();
-      R_v   = coupler.get_R_v ();
-      cp_d  = coupler.get_cp_d();
-      cp_v  = coupler.get_cp_v();
-      p0    = coupler.get_p0  ();
-      grav  = coupler.get_grav();
+      R_d   = coupler.get_option<real>("R_d" );
+      R_v   = coupler.get_option<real>("R_v" );
+      cp_d  = coupler.get_option<real>("cp_d");
+      cp_v  = coupler.get_option<real>("cp_v");
+      p0    = coupler.get_option<real>("p0"  );
+      grav  = coupler.get_option<real>("grav");
       kappa = R_d / cp_d;
       gamma = cp_d / (cp_d - R_d);
       C0    = pow( R_d * pow( p0 , -kappa ) , gamma );

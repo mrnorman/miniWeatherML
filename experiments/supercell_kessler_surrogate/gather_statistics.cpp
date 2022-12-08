@@ -56,8 +56,6 @@ int main(int argc, char** argv) {
     // To gather statistics on how frequently microphysics is active
     custom_modules::StatisticsGatherer          statistics_gatherer;
 
-    coupler.set_phys_constants( micro.R_d , micro.R_v , micro.cp_d , micro.cp_v , micro.grav , micro.p0 );
-
     // Run the initialization modules
     micro .init                 ( coupler ); // Allocate micro state and register its tracers in the coupler
     dycore.init                 ( coupler ); // Dycore should initialize its own state here
