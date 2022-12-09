@@ -57,11 +57,11 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::SimpleBounds;
       auto &dm = coupler.get_data_manager_readonly();
-      auto rho  = dm.get<real const,3>("density");
-      auto uvel = dm.get<real const,3>("umom");
-      auto vvel = dm.get<real const,3>("umom");
-      auto wvel = dm.get<real const,3>("umom");
-      auto temp = dm.get<real const,3>("energy");
+      auto rho    = dm.get<real const,3>("density");
+      auto umom   = dm.get<real const,3>("umom");
+      auto vmom   = dm.get<real const,3>("vmom");
+      auto wmom   = dm.get<real const,3>("wmom");
+      auto energy = dm.get<real const,3>("energy");
       auto nx = coupler.get_nx();
       auto ny = coupler.get_ny();
       auto nz = coupler.get_nz();
@@ -72,10 +72,10 @@ namespace modules {
       real3d dt3d("dt3d",nz,ny,nx);
       parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         real r = rho (k,j,i);
-        real u = uvel(k,j,i)/r;
-        real v = vvel(k,j,i)/r;
-        real w = wvel(k,j,i)/r;
-        real re = temp(k,j,i);
+        real u = umom(k,j,i)/r;
+        real v = vmom(k,j,i)/r;
+        real w = wmom(k,j,i)/r;
+        real re = energy(k,j,i);
         real K = (u*u + v*v + w*w)/2;
         real p = (gamma-1)*(re - r*K);
         real cs = sqrt(gamma*p/r);
@@ -86,7 +86,7 @@ namespace modules {
       real dt_loc = yakl::intrinsics::minval(dt3d);
       real dt_glob;
       auto data_type = coupler.get_mpi_data_type();
-      MPI_Allreduce(&dt_loc, &dt_glob, 1, data_type, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(&dt_loc, &dt_glob, 1, data_type, MPI_MIN, MPI_COMM_WORLD);
       return dt_glob;
     }
 
@@ -588,8 +588,8 @@ namespace modules {
                 
                 real rho = std::abs(z-zlen/2) >= zlen/4 ? 1 : 2;
                 real u   = std::abs(z-zlen/2) >= zlen/4 ? alpha : -alpha;
-                real w   =             lambda * sin(2*M_PI*n*x/L);
-                real v   = sim2d ? 0 : lambda * sin(2*M_PI*n*y/L);
+                real w   =             lambda * sin(2*M_PI*n*(x-xlen/2)/L);
+                real v   = sim2d ? 0 : lambda * sin(2*M_PI*n*(y-ylen/2)/L);
                 real p   = 2.5;
 
                 real K = (u*u+v*v+w*w)/2;

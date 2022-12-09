@@ -185,24 +185,23 @@ namespace core {
         for (int rr=0; rr < nranks; rr++) {
           MPI_Barrier(MPI_COMM_WORLD);
           if (rr == myrank) {
-            std::cout << "Hello! My Rank is    : " << myrank << "\n";
-            std::cout << "My proc grid ID is   : " << px << " , " << py << "\n";
-            std::cout << "I have               : " << nx << " x " << ny << " columns." << "\n";
-            std::cout << "I start at index     : " << i_beg << " x " << j_beg << "\n";
-            std::cout << "My neighbor matrix is:\n";
+            std::cout << "Hello! My Rank is    : " << myrank << std::endl;
+            std::cout << "My proc grid ID is   : " << px << " , " << py << std::endl;
+            std::cout << "I have               : " << nx << " x " << ny << " x " << nz <<  " columns." << std::endl;
+            std::cout << "I start at index     : " << i_beg << " x " << j_beg << std::endl;
+            std::cout << "I end at index       : " << i_end << " x " << j_end << std::endl;
+            std::cout << "My neighbor matrix is:" << std::endl;
             for (int j = 2; j >= 0; j--) {
               for (int i = 0; i < 3; i++) {
                 std::cout << std::setw(6) << neigh(j,i) << " ";
               }
-              printf("\n");
+              std::cout << std::endl;
             }
-            printf("\n");
+            std::cout << std::endl;
           }
           MPI_Barrier(MPI_COMM_WORLD);
         }
         MPI_Barrier(MPI_COMM_WORLD);
-        MPI_Finalize();
-        abort();
       #endif
 
       dm.add_dimension( "x" , nx );
