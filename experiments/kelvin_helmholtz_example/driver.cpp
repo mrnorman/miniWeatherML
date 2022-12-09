@@ -25,6 +25,7 @@ int main(int argc, char** argv) {
     real   zlen      = config["zlen"    ].as<real>();
 
     coupler.set_option<std::string>( "standalone_input_file" , inFile );
+    coupler.set_option<std::string>( "out_fname" , config["out_fname"].as<std::string>() );
     coupler.distribute_mpi_and_allocate_coupled_state(nz, ny_glob, nx_glob);
     coupler.set_grid( xlen , ylen , zlen );
 

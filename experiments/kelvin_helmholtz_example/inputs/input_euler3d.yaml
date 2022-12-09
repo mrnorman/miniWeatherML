@@ -3,9 +3,9 @@
 sim_time: 10  # 86400
 
 # Number of cells to use in the CRMs
-nx_glob: 256
-ny_glob: 256
-nz     : 256
+nx_glob: 512
+ny_glob: 512
+nz     : 512
 
 # Domain size of the CRMs
 xlen: 1
@@ -18,6 +18,6 @@ init_data: kelvin_helmholtz
 out_fname: test.nc
 
 # Output frequency in seconds
-out_freq: 1
+out_freq: 0.25
 
 
