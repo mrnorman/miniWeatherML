@@ -167,14 +167,19 @@ namespace modules {
         // Let the user know what the max vertical velocity is to ensure the model hasn't crashed
         auto &dm = coupler.get_data_manager_readonly();
         using yakl::componentwise::operator/;
-        real maxw_loc = maxval( abs( dm.get_collapsed<real const>("wmom") / dm.get_collapsed<real const>("density") ) );
+        using yakl::componentwise::operator*;
+        using yakl::componentwise::operator+;
+        auto uvel = dm.get_collapsed<real const>("umom") / dm.get_collapsed<real const>("density");
+        auto vvel = dm.get_collapsed<real const>("vmom") / dm.get_collapsed<real const>("density");
+        auto wvel = dm.get_collapsed<real const>("wmom") / dm.get_collapsed<real const>("density");
+        real maxw_loc = sqrt( maxval( uvel*uvel + vvel*vvel + wvel*wvel ) );
         real maxw;
         auto data_type = coupler.get_mpi_data_type();
         MPI_Reduce( &maxw_loc , &maxw , 1 , data_type , MPI_MAX , 0 , MPI_COMM_WORLD );
         if (coupler.is_mainproc()) {
-          std::cout << "Etime , dtphys, maxw: " << std::scientific << std::setw(10) << etime   << " , " 
-                                                << std::scientific << std::setw(10) << dt_phys << " , "
-                                                << std::scientific << std::setw(10) << maxw    << std::endl;
+          std::cout << "Etime , dtphys, max_wind: " << std::scientific << std::setw(10) << etime   << " , " 
+                                                    << std::scientific << std::setw(10) << dt_phys << " , "
+                                                    << std::scientific << std::setw(10) << maxw    << std::endl;
         }
       }
     }
@@ -539,7 +544,7 @@ namespace modules {
       auto input_fname = coupler.get_option<std::string>("standalone_input_file");
       YAML::Node config = YAML::LoadFile(input_fname);
       auto init_data = config["init_data"].as<std::string>();
-      fname          = config["out_fname"].as<std::string>();
+      fname          = coupler.get_option<std::string>("out_fname");
       out_freq       = config["out_freq" ].as<real       >();
 
       auto &dm = coupler.get_data_manager_readwrite();

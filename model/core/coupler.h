@@ -108,7 +108,8 @@ namespace core {
     void distribute_mpi_and_allocate_coupled_state(int nz, size_t ny_glob, size_t nx_glob,
                                                    int nproc_x_in = -1 , int nproc_y_in = -1 ,
                                                    int px_in      = -1 , int py_in      = -1 ,
-                                                   int i_beg_in   = -1 , int j_beg_in   = -1 ) {
+                                                   int i_beg_in   = -1 , int i_end_in   = -1 ,
+                                                   int j_beg_in   = -1 , int j_end_in   = -1 ) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -155,7 +156,9 @@ namespace core {
       if (px_in      > 0) px      = px_in     ;
       if (py_in      > 0) py      = py_in     ;
       if (i_beg_in   > 0) i_beg   = i_beg_in  ;
+      if (i_end_in   > 0) i_end   = i_end_in  ;
       if (j_beg_in   > 0) j_beg   = j_beg_in  ;
+      if (j_end_in   > 0) j_end   = j_end_in  ;
 
       //Determine my number of grid cells
       int nx = i_end - i_beg + 1;

@@ -33,14 +33,23 @@ def ke_spectra(u,v,w) :
 
 avg_size = 50
 
-nc = Dataset("test.nc", "r")
+nc = Dataset("orig.nc", "r")
 u = nc.variables["uvel"][-1,:,:,:]
 v = nc.variables["vvel"][-1,:,:,:]
 w = nc.variables["wvel"][-1,:,:,:]
 freq,spd = ke_spectra(u,v,w)
 plt.loglog( rm(freq,avg_size) , rm(spd,avg_size) )
 
-plt.loglog( rm(freq,avg_size) , 1.e-1 * rm(freq,avg_size)**(-5./3.) )
+nc = Dataset("sgs.nc", "r")
+u = nc.variables["uvel"][-1,:,:,:]
+v = nc.variables["vvel"][-1,:,:,:]
+w = nc.variables["wvel"][-1,:,:,:]
+freq,spd = ke_spectra(u,v,w)
+plt.loglog( rm(freq,avg_size) , rm(spd,avg_size) )
+
+plt.loglog( rm(freq,avg_size) , 5.e-3 * rm(freq,avg_size)**(-5./3.) )
+
+plt.legend(["orig","sgs","k^{-5/3}"])
 
 #plt.xlim([4.e-2,freq[-1]])
 #plt.ylim()
