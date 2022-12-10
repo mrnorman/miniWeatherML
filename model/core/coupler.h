@@ -364,6 +364,7 @@ namespace core {
       for (int ifield = 0; ifield < num_fields; ifield++) {
         // Allocate
         fields_out.add_field( real3d(fields_in.get_field(ifield).label(),nz+2*hs,ny+2*hs_y,nx+2*hs) );
+        fields_out.get_field(ifield) = 0;
         // Fill internal domain
         parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           fields_out(ifield,hs+k,hs_y+j,hs+i) = fields_in(ifield,k,j,i);

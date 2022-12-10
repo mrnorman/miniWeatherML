@@ -31,20 +31,42 @@ def ke_spectra(u,v,w) :
   return freq2d , spd
     
 
-avg_size = 20
+avg_size = 21
 
-nc = Dataset("test.nc", "r")
-u = nc.variables["uvel"][-1,:,:,:]
-v = nc.variables["vvel"][-1,:,:,:]
-w = nc.variables["wvel"][-1,:,:,:]
+t = -1
+
+nc = Dataset("orig.nc", "r")
+u = nc.variables["uvel"][t,:,:,:]
+v = nc.variables["vvel"][t,:,:,:]
+w = nc.variables["wvel"][t,:,:,:]
 freq,spd = ke_spectra(u,v,w)
-plt.loglog( rm(freq,avg_size) , rm(spd,avg_size) )
+spd = rm(spd,avg_size)
+freq = freq[int((avg_size-1)/2):int((avg_size-1)/2+len(spd))]
+plt.loglog( freq , spd )
 
-plt.loglog( rm(freq,avg_size) , 1e-1 * rm(freq,avg_size)**(-5./3.) )
+print(len(spd))
+print(len(rm(spd,9)))
 
-#plt.legend(["orig","sgs","k^{-5/3}"])
+nc = Dataset("sgs.nc", "r")
+u = nc.variables["uvel"][t,:,:,:]
+v = nc.variables["vvel"][t,:,:,:]
+w = nc.variables["wvel"][t,:,:,:]
+freq,spd = ke_spectra(u,v,w)
+spd = rm(spd,avg_size)
+freq = freq[int((avg_size-1)/2):int((avg_size-1)/2+len(spd))]
+plt.loglog( freq , spd )
 
-#plt.xlim([4.e-2,freq[-1]])
+# npzfile = np.load('kh_test_hi_ke_spectra.npz')
+# freq_hi = npzfile['freq']
+# avg_size_hi = npzfile['avg_size']
+# spd_hi = npzfile['spd']
+# plt.loglog( rm(freq_hi,avg_size_hi) , rm(spd_hi,avg_size_hi) )
+
+plt.loglog( rm(freq,avg_size) , 1e-2 * rm(freq,avg_size)**(-5./3.) )
+
+plt.legend(["orig","sgs","k^{-5/3}"])
+
+#plt.xlim([6.e-2,freq[-1]])
 #plt.ylim()
 
 # example = 1.e-1 * freq**(-3.)

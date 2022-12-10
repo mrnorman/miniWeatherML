@@ -317,7 +317,7 @@ namespace modules {
           real cs = sqrt(gamma*p/r);
           real cs2 = cs*cs;
 
-          if constexpr (riemann_choice == RIEMANN_NATIVE) {
+          if (riemann_choice == RIEMANN_NATIVE) {
             real f1_L = q2_L                          ;   real f1_R = q2_R                          ;
             real f2_L = q2_L*q2_L/q1_L + p_L          ;   real f2_R = q2_R*q2_R/q1_R + p_R          ;
             real f3_L = q2_L*q3_L/q1_L                ;   real f3_R = q2_R*q3_R/q1_R                ;
@@ -349,7 +349,7 @@ namespace modules {
             state_flux_x(idV,k,j,i) = w1*v        + w2*v                     + w4;
             state_flux_x(idW,k,j,i) = w1*w        + w2*w                            + w5;
             state_flux_x(idT,k,j,i) = w1*(h-u*cs) + w2*(h+u*cs) + w3*(u*u-K) + w4*v + w5*w;
-          } else if constexpr (riemann_choice == RIEMANN_LLF) {
+          } else if (riemann_choice == RIEMANN_LLF) {
             real f1_L = q2_L                          ;   real f1_R = q2_R                          ;
             real f2_L = q2_L*q2_L/q1_L + p_L          ;   real f2_R = q2_R*q2_R/q1_R + p_R          ;
             real f3_L = q2_L*q3_L/q1_L                ;   real f3_R = q2_R*q3_R/q1_R                ;
@@ -362,7 +362,7 @@ namespace modules {
             state_flux_x(idV,k,j,i) = 0.5_fp * ( f3_L + f3_R - maxwave * ( q3_R - q3_L ) );
             state_flux_x(idW,k,j,i) = 0.5_fp * ( f4_L + f4_R - maxwave * ( q4_R - q4_L ) );
             state_flux_x(idT,k,j,i) = 0.5_fp * ( f5_L + f5_R - maxwave * ( q5_R - q5_L ) );
-          } else if constexpr (riemann_choice == RIEMANN_PRESSURE) {
+          } else if (riemann_choice == RIEMANN_PRESSURE) {
             real q1_U, q2_U, q3_U, q4_U, q5_U, q6_U;
             // Waves 1-4
             if (u    > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
@@ -426,7 +426,7 @@ namespace modules {
           real cs = sqrt(gamma*p/r);
           real cs2 = cs*cs;
 
-          if constexpr (riemann_choice == RIEMANN_NATIVE) {
+          if (riemann_choice == RIEMANN_NATIVE) {
             real f1_L = q3_L                          ;   real f1_R = q3_R                          ;
             real f2_L = q3_L*q2_L/q1_L                ;   real f2_R = q3_R*q2_R/q1_R                ;
             real f3_L = q3_L*q3_L/q1_L + p_L          ;   real f3_R = q3_R*q3_R/q1_R + p_R          ;
@@ -458,7 +458,7 @@ namespace modules {
             state_flux_y(idV,k,j,i) = w1*(v-cs)   + w2*(v+cs)   + w3*v;
             state_flux_y(idW,k,j,i) = w1*w        + w2*w                            + w5;
             state_flux_y(idT,k,j,i) = w1*(h-v*cs) + w2*(h+v*cs) + w3*(v*v-K) + w4*u + w5*w;
-          } else if constexpr (riemann_choice == RIEMANN_LLF) {
+          } else if (riemann_choice == RIEMANN_LLF) {
             real f1_L = q3_L                          ;   real f1_R = q3_R                          ;
             real f2_L = q3_L*q2_L/q1_L                ;   real f2_R = q3_R*q2_R/q1_R                ;
             real f3_L = q3_L*q3_L/q1_L + p_L          ;   real f3_R = q3_R*q3_R/q1_R + p_R          ;
@@ -471,7 +471,7 @@ namespace modules {
             state_flux_y(idV,k,j,i) = 0.5_fp * ( f3_L + f3_R - maxwave * ( q3_R - q3_L ) );
             state_flux_y(idW,k,j,i) = 0.5_fp * ( f4_L + f4_R - maxwave * ( q4_R - q4_L ) );
             state_flux_y(idT,k,j,i) = 0.5_fp * ( f5_L + f5_R - maxwave * ( q5_R - q5_L ) );
-          } else if constexpr (riemann_choice == RIEMANN_PRESSURE) {
+          } else if (riemann_choice == RIEMANN_PRESSURE) {
             real q1_U, q2_U, q3_U, q4_U, q5_U, q6_U;
             // Waves 1-4
             if (v    > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
@@ -547,7 +547,7 @@ namespace modules {
           real cs = sqrt(gamma*p/r);
           real cs2 = cs*cs;
 
-          if constexpr (riemann_choice == RIEMANN_NATIVE) {
+          if (riemann_choice == RIEMANN_NATIVE) {
             real f1_L = q4_L                          ;   real f1_R = q4_R                          ;
             real f2_L = q4_L*q2_L/q1_L                ;   real f2_R = q4_R*q2_R/q1_R                ;
             real f3_L = q4_L*q3_L/q1_L                ;   real f3_R = q4_R*q3_R/q1_R                ;
@@ -579,7 +579,7 @@ namespace modules {
             state_flux_z(idV,k,j,i) = w1*v        + w2*v                            + w4;
             state_flux_z(idW,k,j,i) = w1*(w-cs)   + w2*(w+cs)   + w3*w;
             state_flux_z(idT,k,j,i) = w1*(h-w*cs) + w2*(h+w*cs) + w3*(w*w-K) + w4*u + w5*v;
-          } else if constexpr (riemann_choice == RIEMANN_LLF) {
+          } else if (riemann_choice == RIEMANN_LLF) {
             real f1_L = q4_L                          ;   real f1_R = q4_R                          ;
             real f2_L = q4_L*q2_L/q1_L                ;   real f2_R = q4_R*q2_R/q1_R                ;
             real f3_L = q4_L*q3_L/q1_L                ;   real f3_R = q4_R*q3_R/q1_R                ;
@@ -592,7 +592,7 @@ namespace modules {
             state_flux_z(idV,k,j,i) = 0.5_fp * ( f3_L + f3_R - maxwave * ( q3_R - q3_L ) );
             state_flux_z(idW,k,j,i) = 0.5_fp * ( f4_L + f4_R - maxwave * ( q4_R - q4_L ) );
             state_flux_z(idT,k,j,i) = 0.5_fp * ( f5_L + f5_R - maxwave * ( q5_R - q5_L ) );
-          } else if constexpr (riemann_choice == RIEMANN_PRESSURE) {
+          } else if (riemann_choice == RIEMANN_PRESSURE) {
             real q1_U, q2_U, q3_U, q4_U, q5_U, q6_U;
             // Waves 1-4
             if (w    > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
