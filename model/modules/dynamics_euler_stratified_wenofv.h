@@ -38,6 +38,14 @@ namespace modules {
     int  static constexpr idW = 3;  // w-momentum
     int  static constexpr idT = 4;  // Density * potential temperature
 
+    int  static constexpr RIEMANN_NATIVE  = 0;
+    int  static constexpr RIEMANN_ADVEC   = 1;
+    int  static constexpr RIEMANN_CENTRAL = 2;
+    int  static constexpr RIEMANN_ACOUST  = 3;
+    int riemann_pressure ;
+    int riemann_mass_flux;
+    int riemann_advected ;
+
     // IDs for the test cases
     int  static constexpr DATA_THERMAL   = 0;
     int  static constexpr DATA_SUPERCELL = 1;
@@ -443,15 +451,12 @@ namespace modules {
       real4d tracers_y("tracers_y",num_tracers,nz,ny+1,nx);
       real4d tracers_z("tracers_z",num_tracers,nz+1,ny,nx);
 
+      YAKL_SCOPE( riemann_pressure  , this->riemann_pressure  );
+      YAKL_SCOPE( riemann_mass_flux , this->riemann_mass_flux );
+      YAKL_SCOPE( riemann_advected  , this->riemann_advected  );
+
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i ) {
-        int constexpr NATIVE  = 0;
-        int constexpr ADVEC   = 1;
-        int constexpr CENTRAL = 2;
-        int constexpr ACOUST  = 3;
-        int mass_flux_method = NATIVE ;
-        int pressure_method  = NATIVE ;
-        int advected_method  = NATIVE ;
         ////////////////////////////////////////////////////////
         // X-direction
         ////////////////////////////////////////////////////////
@@ -473,20 +478,24 @@ namespace modules {
                              ru_acoust  , p_acoust );
 
           real ru, u, v, w, t, p;
-          if      (mass_flux_method == NATIVE ) { ru = ru_native ; }
-          else if (mass_flux_method == ADVEC  ) { ru = ru_advec  ; }
-          else if (mass_flux_method == CENTRAL) { ru = ru_central; }
-          else if (mass_flux_method == ACOUST ) { ru = ru_acoust ; }
-          if      (pressure_method  == NATIVE ) { p = p_native ; }
-          else if (pressure_method  == ADVEC  ) { p = p_advec  ; }
-          else if (pressure_method  == CENTRAL) { p = p_central; }
-          else if (pressure_method  == ACOUST ) { p = p_acoust ; }
-          if      (advected_method  == NATIVE ) { u = u_native ; v = v_native ; w = w_native ; t = t_native ; }
-          else if (advected_method  == ADVEC  ) { u = u_advec  ; v = v_advec  ; w = w_advec  ; t = t_advec  ; }
-          else if (advected_method  == CENTRAL) { u = u_central; v = v_central; w = w_central; t = t_central; }
-          if      (advected_method  == NATIVE ) { for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_native_x (tr,k,j,i); } }
-          else if (advected_method  == ADVEC  ) { for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_advec_x  (tr,k,j,i); } }
-          else if (advected_method  == CENTRAL) { for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_central_x(tr,k,j,i); } }
+          if      (riemann_mass_flux == RIEMANN_NATIVE ) { ru = ru_native ; }
+          else if (riemann_mass_flux == RIEMANN_ADVEC  ) { ru = ru_advec  ; }
+          else if (riemann_mass_flux == RIEMANN_CENTRAL) { ru = ru_central; }
+          else if (riemann_mass_flux == RIEMANN_ACOUST ) { ru = ru_acoust ; }
+          else                                           { endrun("ERROR: invalid riemann_mass_flux"); }
+          if      (riemann_pressure  == RIEMANN_NATIVE ) { p = p_native ; }
+          else if (riemann_pressure  == RIEMANN_ADVEC  ) { p = p_advec  ; }
+          else if (riemann_pressure  == RIEMANN_CENTRAL) { p = p_central; }
+          else if (riemann_pressure  == RIEMANN_ACOUST ) { p = p_acoust ; }
+          else                                           { endrun("ERROR: invalid riemann_pressure"); }
+          if      (riemann_advected  == RIEMANN_NATIVE ) { u = u_native ; v = v_native ; w = w_native ; t = t_native ; }
+          else if (riemann_advected  == RIEMANN_ADVEC  ) { u = u_advec  ; v = v_advec  ; w = w_advec  ; t = t_advec  ; }
+          else if (riemann_advected  == RIEMANN_CENTRAL) { u = u_central; v = v_central; w = w_central; t = t_central; }
+          else                                           { endrun("ERROR: invalid riemann_advected"); }
+          if      (riemann_advected  == RIEMANN_NATIVE ) { for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_native_x (tr,k,j,i); } }
+          else if (riemann_advected  == RIEMANN_ADVEC  ) { for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_advec_x  (tr,k,j,i); } }
+          else if (riemann_advected  == RIEMANN_CENTRAL) { for (int tr=0; tr < num_tracers; tr++) { tracers_x(tr,k,j,i) = tracers_central_x(tr,k,j,i); } }
+          else                                           { endrun("ERROR: invalid riemann_advected"); }
 
           state_flux_x(idR,k,j,i) = ru;
           state_flux_x(idU,k,j,i) = ru*u + p;
@@ -518,20 +527,20 @@ namespace modules {
                              rv_acoust  , p_acoust );
 
           real rv, u, v, w, t, p;
-          if      (mass_flux_method == NATIVE ) { rv = rv_native ; }
-          else if (mass_flux_method == ADVEC  ) { rv = rv_advec  ; }
-          else if (mass_flux_method == CENTRAL) { rv = rv_central; }
-          else if (mass_flux_method == ACOUST ) { rv = rv_acoust ; }
-          if      (pressure_method  == NATIVE ) { p = p_native ; }
-          else if (pressure_method  == ADVEC  ) { p = p_advec  ; }
-          else if (pressure_method  == CENTRAL) { p = p_central; }
-          else if (pressure_method  == ACOUST ) { p = p_acoust ; }
-          if      (advected_method  == NATIVE ) { u = u_native ; v = v_native ; w = w_native ; t = t_native ; }
-          else if (advected_method  == ADVEC  ) { u = u_advec  ; v = v_advec  ; w = w_advec  ; t = t_advec  ; }
-          else if (advected_method  == CENTRAL) { u = u_central; v = v_central; w = w_central; t = t_central; }
-          if      (advected_method  == NATIVE ) { for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_native_y (tr,k,j,i); } }
-          else if (advected_method  == ADVEC  ) { for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_advec_y  (tr,k,j,i); } }
-          else if (advected_method  == CENTRAL) { for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_central_y(tr,k,j,i); } }
+          if      (riemann_mass_flux == RIEMANN_NATIVE ) { rv = rv_native ; }
+          else if (riemann_mass_flux == RIEMANN_ADVEC  ) { rv = rv_advec  ; }
+          else if (riemann_mass_flux == RIEMANN_CENTRAL) { rv = rv_central; }
+          else if (riemann_mass_flux == RIEMANN_ACOUST ) { rv = rv_acoust ; }
+          if      (riemann_pressure  == RIEMANN_NATIVE ) { p = p_native ; }
+          else if (riemann_pressure  == RIEMANN_ADVEC  ) { p = p_advec  ; }
+          else if (riemann_pressure  == RIEMANN_CENTRAL) { p = p_central; }
+          else if (riemann_pressure  == RIEMANN_ACOUST ) { p = p_acoust ; }
+          if      (riemann_advected  == RIEMANN_NATIVE ) { u = u_native ; v = v_native ; w = w_native ; t = t_native ; }
+          else if (riemann_advected  == RIEMANN_ADVEC  ) { u = u_advec  ; v = v_advec  ; w = w_advec  ; t = t_advec  ; }
+          else if (riemann_advected  == RIEMANN_CENTRAL) { u = u_central; v = v_central; w = w_central; t = t_central; }
+          if      (riemann_advected  == RIEMANN_NATIVE ) { for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_native_y (tr,k,j,i); } }
+          else if (riemann_advected  == RIEMANN_ADVEC  ) { for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_advec_y  (tr,k,j,i); } }
+          else if (riemann_advected  == RIEMANN_CENTRAL) { for (int tr=0; tr < num_tracers; tr++) { tracers_y(tr,k,j,i) = tracers_central_y(tr,k,j,i); } }
 
           state_flux_y(idR,k,j,i) = rv;
           state_flux_y(idU,k,j,i) = rv*u;
@@ -579,20 +588,20 @@ namespace modules {
                              rw_acoust  , p_acoust );
 
           real rw, u, v, w, t, p;
-          if      (mass_flux_method == NATIVE ) { rw = rw_native ; }
-          else if (mass_flux_method == ADVEC  ) { rw = rw_advec  ; }
-          else if (mass_flux_method == CENTRAL) { rw = rw_central; }
-          else if (mass_flux_method == ACOUST ) { rw = rw_acoust ; }
-          if      (pressure_method  == NATIVE ) { p = p_native ; }
-          else if (pressure_method  == ADVEC  ) { p = p_advec  ; }
-          else if (pressure_method  == CENTRAL) { p = p_central; }
-          else if (pressure_method  == ACOUST ) { p = p_acoust ; }
-          if      (advected_method  == NATIVE ) { u = u_native ; v = v_native ; w = w_native ; t = t_native ; }
-          else if (advected_method  == ADVEC  ) { u = u_advec  ; v = v_advec  ; w = w_advec  ; t = t_advec  ; }
-          else if (advected_method  == CENTRAL) { u = u_central; v = v_central; w = w_central; t = t_central; }
-          if      (advected_method  == NATIVE ) { for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_native_z (tr,k,j,i); } }
-          else if (advected_method  == ADVEC  ) { for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_advec_z  (tr,k,j,i); } }
-          else if (advected_method  == CENTRAL) { for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_central_z(tr,k,j,i); } }
+          if      (riemann_mass_flux == RIEMANN_NATIVE ) { rw = rw_native ; }
+          else if (riemann_mass_flux == RIEMANN_ADVEC  ) { rw = rw_advec  ; }
+          else if (riemann_mass_flux == RIEMANN_CENTRAL) { rw = rw_central; }
+          else if (riemann_mass_flux == RIEMANN_ACOUST ) { rw = rw_acoust ; }
+          if      (riemann_pressure  == RIEMANN_NATIVE ) { p = p_native ; }
+          else if (riemann_pressure  == RIEMANN_ADVEC  ) { p = p_advec  ; }
+          else if (riemann_pressure  == RIEMANN_CENTRAL) { p = p_central; }
+          else if (riemann_pressure  == RIEMANN_ACOUST ) { p = p_acoust ; }
+          if      (riemann_advected  == RIEMANN_NATIVE ) { u = u_native ; v = v_native ; w = w_native ; t = t_native ; }
+          else if (riemann_advected  == RIEMANN_ADVEC  ) { u = u_advec  ; v = v_advec  ; w = w_advec  ; t = t_advec  ; }
+          else if (riemann_advected  == RIEMANN_CENTRAL) { u = u_central; v = v_central; w = w_central; t = t_central; }
+          if      (riemann_advected  == RIEMANN_NATIVE ) { for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_native_z (tr,k,j,i); } }
+          else if (riemann_advected  == RIEMANN_ADVEC  ) { for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_advec_z  (tr,k,j,i); } }
+          else if (riemann_advected  == RIEMANN_CENTRAL) { for (int tr=0; tr < num_tracers; tr++) { tracers_z(tr,k,j,i) = tracers_central_z(tr,k,j,i); } }
 
           state_flux_z(idR,k,j,i) = rw;
           state_flux_z(idU,k,j,i) = rw*u;
@@ -664,6 +673,22 @@ namespace modules {
     void init(core::Coupler &coupler) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
+
+      YAML::Node config = YAML::LoadFile(coupler.get_option<std::string>("standalone_input_file"));
+      auto str_riemann_pressure  = config["riemann_pressure" ].as<std::string>();
+      auto str_riemann_mass_flux = config["riemann_mass_flux"].as<std::string>();
+      auto str_riemann_advected  = config["riemann_advected" ].as<std::string>();
+      if      (str_riemann_pressure  == "central") { riemann_pressure  = RIEMANN_CENTRAL; }
+      else if (str_riemann_pressure  == "native" ) { riemann_pressure  = RIEMANN_NATIVE;  }
+      else if (str_riemann_pressure  == "acoust" ) { riemann_pressure  = RIEMANN_ACOUST;  }
+      else if (str_riemann_pressure  == "advect" ) { riemann_pressure  = RIEMANN_ADVEC;   }
+      if      (str_riemann_mass_flux == "central") { riemann_mass_flux = RIEMANN_CENTRAL; }
+      else if (str_riemann_mass_flux == "native" ) { riemann_mass_flux = RIEMANN_NATIVE;  }
+      else if (str_riemann_mass_flux == "acoust" ) { riemann_mass_flux = RIEMANN_ACOUST;  }
+      else if (str_riemann_mass_flux == "advect" ) { riemann_mass_flux = RIEMANN_ADVEC;   }
+      if      (str_riemann_advected  == "central") { riemann_advected  = RIEMANN_CENTRAL; }
+      else if (str_riemann_advected  == "native" ) { riemann_advected  = RIEMANN_NATIVE;  }
+      else if (str_riemann_advected  == "advect" ) { riemann_advected  = RIEMANN_ADVEC;   }
 
       // Set class data from # grid points, grid spacing, domain sizes, whether it's 2-D, and physical constants
       nx    = coupler.get_nx();

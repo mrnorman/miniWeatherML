@@ -1,11 +1,11 @@
 ---
 # Simulation time in seconds
-sim_time: 3600  # 86400
+sim_time: 7200  # 86400
 
 # Number of cells to use in the CRMs
-nx_glob: 50
+nx_glob: 500
 ny_glob: 1
-nz     : 40
+nz     : 100
 
 # Domain size of the CRMs
 xlen: 100000
@@ -14,8 +14,6 @@ zlen: 20000
 
 init_data: supercell
 
-# Output filename
-out_fname: test.nc
 
 # GCM time step
 dt_gcm: 900
@@ -24,6 +22,11 @@ dt_gcm: 900
 dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 20.
+out_freq: 100.
 
+riemann_pressure:  native
+riemann_mass_flux: native
+riemann_advected:  native
+
+out_fname: test.nc
 
