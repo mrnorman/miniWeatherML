@@ -29,7 +29,9 @@ namespace modules {
 
     int  static constexpr num_state = 5;
 
-    bool static constexpr do_weno = false;
+    bool static constexpr weno_winds   = false;
+    bool static constexpr weno_scalars = false;
+    bool static constexpr weno_tracers = false;
 
     // IDs for the variables in the state vector
     int  static constexpr idR = 0;  // Density
@@ -298,6 +300,8 @@ namespace modules {
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s); }
+          bool do_weno = ( ( (l == 1 || l == 5) && weno_scalars ) ||
+                           ( (l >= 2 && l <= 4) && weno_winds   ) );
           reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
           state_limits_x(l,1,k,j,i  ) = gll(0);
           state_limits_x(l,0,k,j,i+1) = gll(1);
@@ -320,7 +324,7 @@ namespace modules {
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,hs+j,i+s); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,weno_tracers);
           tracers_limits_x(l,1,k,j,i  ) = gll(0) * state_limits_x(idR,1,k,j,i  );
           tracers_limits_x(l,0,k,j,i+1) = gll(1) * state_limits_x(idR,0,k,j,i+1);
         }
@@ -336,6 +340,8 @@ namespace modules {
             SArray<real,1,ord> stencil;
             SArray<real,1,2>   gll;
             for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
+            bool do_weno = ( ( (l == 1 || l == 5) && weno_scalars ) ||
+                             ( (l >= 2 && l <= 4) && weno_winds   ) );
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
             state_limits_y(l,1,k,j  ,i) = gll(0);
             state_limits_y(l,0,k,j+1,i) = gll(1);
@@ -358,7 +364,7 @@ namespace modules {
             SArray<real,1,ord> stencil;
             SArray<real,1,2>   gll;
             for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,j+s,hs+i); }
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
+            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,weno_tracers);
             tracers_limits_y(l,1,k,j  ,i) = gll(0) * state_limits_y(idR,1,k,j  ,i);
             tracers_limits_y(l,0,k,j+1,i) = gll(1) * state_limits_y(idR,0,k,j+1,i);
           }
@@ -390,6 +396,8 @@ namespace modules {
               stencil(s) = state(l,ind,hs+j,hs+i);
             }
           }
+          bool do_weno = ( ( (l == 1 || l == 5) && weno_scalars ) ||
+                           ( (l >= 2 && l <= 4) && weno_winds   ) );
           reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
           state_limits_z(l,1,k  ,j,i) = gll(0);
           state_limits_z(l,0,k+1,j,i) = gll(1);
@@ -418,7 +426,7 @@ namespace modules {
             int ind = min( nz+hs-1 , max( (int) hs , k+s ) );
             stencil(s) = tracers(l,ind,hs+j,hs+i);
           }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,weno_tracers);
           tracers_limits_z(l,1,k  ,j,i) = gll(0) * state_limits_z(idR,1,k  ,j,i);
           tracers_limits_z(l,0,k+1,j,i) = gll(1) * state_limits_z(idR,0,k+1,j,i);
         }

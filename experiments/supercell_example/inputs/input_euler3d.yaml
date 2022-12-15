@@ -1,11 +1,11 @@
 ---
 # Simulation time in seconds
-sim_time: 7200  # 86400
+sim_time: 86400  # 86400
 
 # Number of cells to use in the CRMs
-nx_glob: 500
-ny_glob: 1
-nz     : 100
+nx_glob: 250
+ny_glob: 250
+nz     : 50 
 
 # Domain size of the CRMs
 xlen: 100000
@@ -22,11 +22,11 @@ dt_gcm: 900
 dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 100.
+out_freq: 1800.
 
-riemann_pressure:  native
-riemann_mass_flux: native
-riemann_advected:  native
+riemann_pressure:  acoust
+riemann_mass_flux: acoust
+riemann_advected:  advect
 
-out_fname: test.nc
+out_fname: supercell_3d_nolim9__pressure_acoust__mf_acoust__advected_advect.nc
 

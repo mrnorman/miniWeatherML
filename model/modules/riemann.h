@@ -78,7 +78,13 @@ YAKL_INLINE void riemann_advec_x( real5d const &state_limits_x , real5d const &t
   int  static constexpr idV = 2;  // v-momentum
   int  static constexpr idW = 3;  // w-momentum
   int  static constexpr idT = 4;  // Density * potential temperature
-  int ind = state_limits_x(idU,0,k,j,i) + state_limits_x(idU,1,k,j,i) > 0 ? 0 : 1;
+  real ru2 = state_limits_x(idU,0,k,j,i) + state_limits_x(idU,1,k,j,i);
+  if (ru2 == 0) {
+    riemann_central_x(state_limits_x,tracers_limits_x,k,j,i,num_tracers,C0,gamma,
+                      ru_upw,r_upw,u_upw,v_upw,w_upw,theta_upw,p_upw,tracers_upw);
+    return;
+  }
+  int ind = ru2 > 0 ? 0 : 1;
   r_upw     = state_limits_x(idR,ind,k,j,i);
   u_upw     = state_limits_x(idU,ind,k,j,i) / r_upw;
   v_upw     = state_limits_x(idV,ind,k,j,i) / r_upw;
@@ -98,7 +104,13 @@ YAKL_INLINE void riemann_advec_y( real5d const &state_limits_y , real5d const &t
   int  static constexpr idV = 2;  // v-momentum
   int  static constexpr idW = 3;  // w-momentum
   int  static constexpr idT = 4;  // Density * potential temperature
-  int ind = state_limits_y(idV,0,k,j,i) + state_limits_y(idV,1,k,j,i) > 0 ? 0 : 1;
+  real rv2 = state_limits_y(idV,0,k,j,i) + state_limits_y(idV,1,k,j,i);
+  if (rv2 == 0) {
+    riemann_central_y(state_limits_y,tracers_limits_y,k,j,i,num_tracers,C0,gamma,
+                      rv_upw,r_upw,u_upw,v_upw,w_upw,theta_upw,p_upw,tracers_upw);
+    return;
+  }
+  int ind = rv2 > 0 ? 0 : 1;
   r_upw     = state_limits_y(idR,ind,k,j,i);
   u_upw     = state_limits_y(idU,ind,k,j,i) / r_upw;
   v_upw     = state_limits_y(idV,ind,k,j,i) / r_upw;
@@ -118,7 +130,13 @@ YAKL_INLINE void riemann_advec_z( real5d const &state_limits_z , real5d const &t
   int  static constexpr idV = 2;  // v-momentum
   int  static constexpr idW = 3;  // w-momentum
   int  static constexpr idT = 4;  // Density * potential temperature
-  int ind = state_limits_z(idW,0,k,j,i) + state_limits_z(idW,1,k,j,i) > 0 ? 0 : 1;
+  real rw2 = state_limits_z(idV,0,k,j,i) + state_limits_z(idV,1,k,j,i);
+  if (rw2 == 0) {
+    riemann_central_z(state_limits_z,tracers_limits_z,k,j,i,num_tracers,C0,gamma,
+                      rw_upw,r_upw,u_upw,v_upw,w_upw,theta_upw,p_upw,tracers_upw);
+    return;
+  }
+  int ind = rw2 > 0 ? 0 : 1;
   r_upw     = state_limits_z(idR,ind,k,j,i);
   u_upw     = state_limits_z(idU,ind,k,j,i) / r_upw;
   v_upw     = state_limits_z(idV,ind,k,j,i) / r_upw;
@@ -169,10 +187,14 @@ YAKL_INLINE void riemann_native_x( real5d const &state_limits_x , real5d const &
     w1 = q1_L - q5_L/t;
     w2 = q3_L - v*q5_L/t;
     w3 = q4_L - w*q5_L/t;
-  } else {
+  } else if (u < 0) {
     w1 = q1_R - q5_R/t;
     w2 = q3_R - v*q5_R/t;
     w3 = q4_R - w*q5_R/t;
+  } else {
+    w1 = 0.5_fp * ( (q1_R - q5_R/t  ) + (q1_L - q5_L/t  ) );
+    w2 = 0.5_fp * ( (q3_R - v*q5_R/t) + (q3_L - v*q5_L/t) );
+    w3 = 0.5_fp * ( (q4_R - w*q5_R/t) + (q4_L - w*q5_L/t) );
   }
   // Wave 5, velocity: u-cs
   real w5 =  u*q1_R/(2*cs) - q2_R/(2*cs) + q5_R/(2*t);
@@ -185,7 +207,6 @@ YAKL_INLINE void riemann_native_x( real5d const &state_limits_x , real5d const &
   real q4 = w3 + w*w5 + w*w6;
   real q5 =      t*w5 + t*w6;
 
-  int ind = state_limits_x(idU,0,k,j,i) + state_limits_x(idU,1,k,j,i) > 0 ? 0 : 1;
   r_upw     = q1;
   u_upw     = q2 / q1;
   v_upw     = q3 / q1;
@@ -194,7 +215,14 @@ YAKL_INLINE void riemann_native_x( real5d const &state_limits_x , real5d const &
   p_upw     = C0 * pow( r_upw * theta_upw , gamma );
   ru_upw    = r_upw * u_upw;
   for (int tr=0; tr < num_tracers; tr++) {
-    tracers_upw(tr,k,j,i) = tracers_limits_x(tr,ind,k,j,i) / state_limits_x(idR,ind,k,j,i);
+    if        (u > 0) {
+      tracers_upw(tr,k,j,i) = tracers_limits_x(tr,0,k,j,i) / state_limits_x(idR,0,k,j,i);
+    } else if (u < 0) { 
+      tracers_upw(tr,k,j,i) = tracers_limits_x(tr,1,k,j,i) / state_limits_x(idR,1,k,j,i);
+    } else {
+      tracers_upw(tr,k,j,i) = 0.5_fp * ( tracers_limits_x(tr,0,k,j,i) / state_limits_x(idR,0,k,j,i) +
+                                         tracers_limits_x(tr,1,k,j,i) / state_limits_x(idR,1,k,j,i) );
+    }
   }
 }
 
@@ -235,10 +263,14 @@ YAKL_INLINE void riemann_native_y( real5d const &state_limits_y , real5d const &
     w1 = q1_L - q5_L/t;
     w2 = q2_L - u*q5_L/t;
     w3 = q4_L - w*q5_L/t;
-  } else {
+  } else if (v < 0) {
     w1 = q1_R - q5_R/t;
     w2 = q2_R - u*q5_R/t;
     w3 = q4_R - w*q5_R/t;
+  } else {
+    w1 = 0.5_fp * ( (q1_R - q5_R/t  ) + (q1_L - q5_L/t  ) );
+    w2 = 0.5_fp * ( (q2_R - u*q5_R/t) + (q2_L - u*q5_L/t) );
+    w3 = 0.5_fp * ( (q4_R - w*q5_R/t) + (q4_L - w*q5_L/t) );
   }
   // Wave 5, velocity: v-cs
   real w5 =  v*q1_R/(2*cs) - q3_R/(2*cs) + q5_R/(2*t);
@@ -251,7 +283,6 @@ YAKL_INLINE void riemann_native_y( real5d const &state_limits_y , real5d const &
   real q4 = w3 + w*w5 + w*w6;
   real q5 =      t*w5 + t*w6;
 
-  int ind = state_limits_y(idV,0,k,j,i) + state_limits_y(idV,1,k,j,i) > 0 ? 0 : 1;
   r_upw     = q1;
   u_upw     = q2 / q1;
   v_upw     = q3 / q1;
@@ -260,7 +291,14 @@ YAKL_INLINE void riemann_native_y( real5d const &state_limits_y , real5d const &
   p_upw     = C0 * pow( r_upw * theta_upw , gamma );
   rv_upw    = r_upw * v_upw;
   for (int tr=0; tr < num_tracers; tr++) {
-    tracers_upw(tr,k,j,i) = tracers_limits_y(tr,ind,k,j,i) / state_limits_y(idR,ind,k,j,i);
+    if        (v > 0) {
+      tracers_upw(tr,k,j,i) = tracers_limits_y(tr,0,k,j,i) / state_limits_y(idR,0,k,j,i);
+    } else if (v < 0) { 
+      tracers_upw(tr,k,j,i) = tracers_limits_y(tr,1,k,j,i) / state_limits_y(idR,1,k,j,i);
+    } else {
+      tracers_upw(tr,k,j,i) = 0.5_fp * ( tracers_limits_y(tr,0,k,j,i) / state_limits_y(idR,0,k,j,i) +
+                                         tracers_limits_y(tr,1,k,j,i) / state_limits_y(idR,1,k,j,i) );
+    }
   }
 }
 
@@ -301,10 +339,14 @@ YAKL_INLINE void riemann_native_z( real5d const &state_limits_z , real5d const &
     w1 = q1_L - q5_L/t;
     w2 = q2_L - u*q5_L/t;
     w3 = q3_L - v*q5_L/t;
-  } else {
+  } else if (w < 0) {
     w1 = q1_R - q5_R/t;
     w2 = q2_R - u*q5_R/t;
     w3 = q3_R - v*q5_R/t;
+  } else {
+    w1 = 0.5_fp * ( (q1_R - q5_R/t  ) + (q1_L - q5_L/t  ) );
+    w2 = 0.5_fp * ( (q2_R - u*q5_R/t) + (q2_L - u*q5_L/t) );
+    w3 = 0.5_fp * ( (q3_R - v*q5_R/t) + (q3_L - v*q5_L/t) );
   }
   // Wave 5, velocity: w-cs
   real w5 =  w*q1_R/(2*cs) - q4_R/(2*cs) + q5_R/(2*t);
@@ -317,7 +359,6 @@ YAKL_INLINE void riemann_native_z( real5d const &state_limits_z , real5d const &
   real q4 = w*w1 + (w-cs)*w5 + (w+cs)*w6;
   real q5 =      t*w5 + t*w6;
 
-  int ind = state_limits_z(idW,0,k,j,i) + state_limits_z(idW,1,k,j,i) > 0 ? 0 : 1;
   r_upw     = q1;
   u_upw     = q2 / q1;
   v_upw     = q3 / q1;
@@ -326,7 +367,14 @@ YAKL_INLINE void riemann_native_z( real5d const &state_limits_z , real5d const &
   p_upw     = C0 * pow( r_upw * theta_upw , gamma );
   rw_upw    = r_upw * w_upw;
   for (int tr=0; tr < num_tracers; tr++) {
-    tracers_upw(tr,k,j,i) = tracers_limits_z(tr,ind,k,j,i) / state_limits_z(idR,ind,k,j,i);
+    if        (w > 0) {
+      tracers_upw(tr,k,j,i) = tracers_limits_z(tr,0,k,j,i) / state_limits_z(idR,0,k,j,i);
+    } else if (w < 0) { 
+      tracers_upw(tr,k,j,i) = tracers_limits_z(tr,1,k,j,i) / state_limits_z(idR,1,k,j,i);
+    } else {
+      tracers_upw(tr,k,j,i) = 0.5_fp * ( tracers_limits_z(tr,0,k,j,i) / state_limits_z(idR,0,k,j,i) +
+                                         tracers_limits_z(tr,1,k,j,i) / state_limits_z(idR,1,k,j,i) );
+    }
   }
 }
 
