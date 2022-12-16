@@ -266,6 +266,9 @@ namespace modules {
       YAKL_SCOPE( C0                         , this->C0                         );
       YAKL_SCOPE( gamma                      , this->gamma                      );
       YAKL_SCOPE( grav                       , this->grav                       );
+      YAKL_SCOPE( weno_scalars               , this->weno_scalars               );
+      YAKL_SCOPE( weno_winds                 , this->weno_winds                 );
+      YAKL_SCOPE( weno_tracers               , this->weno_tracers               );
 
       // Since tracers are full mass, it's helpful before reconstruction to remove the background density for potentially
       // more accurate reconstructions of tracer concentrations
@@ -300,8 +303,8 @@ namespace modules {
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s); }
-          bool do_weno = ( ( (l == 1 || l == 5) && weno_scalars ) ||
-                           ( (l >= 2 && l <= 4) && weno_winds   ) );
+          bool do_weno = ( ( (l == 0 || l == 4) && weno_scalars ) ||
+                           ( (l >= 1 && l <= 3) && weno_winds   ) );
           reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
           state_limits_x(l,1,k,j,i  ) = gll(0);
           state_limits_x(l,0,k,j,i+1) = gll(1);
@@ -340,8 +343,8 @@ namespace modules {
             SArray<real,1,ord> stencil;
             SArray<real,1,2>   gll;
             for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
-            bool do_weno = ( ( (l == 1 || l == 5) && weno_scalars ) ||
-                             ( (l >= 2 && l <= 4) && weno_winds   ) );
+            bool do_weno = ( ( (l == 0 || l == 4) && weno_scalars ) ||
+                             ( (l >= 1 && l <= 3) && weno_winds   ) );
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
             state_limits_y(l,1,k,j  ,i) = gll(0);
             state_limits_y(l,0,k,j+1,i) = gll(1);
@@ -396,8 +399,8 @@ namespace modules {
               stencil(s) = state(l,ind,hs+j,hs+i);
             }
           }
-          bool do_weno = ( ( (l == 1 || l == 5) && weno_scalars ) ||
-                           ( (l >= 2 && l <= 4) && weno_winds   ) );
+          bool do_weno = ( ( (l == 0 || l == 4) && weno_scalars ) ||
+                           ( (l >= 1 && l <= 3) && weno_winds   ) );
           reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma,do_weno);
           state_limits_z(l,1,k  ,j,i) = gll(0);
           state_limits_z(l,0,k+1,j,i) = gll(1);

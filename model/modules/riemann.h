@@ -130,7 +130,7 @@ YAKL_INLINE void riemann_advec_z( real5d const &state_limits_z , real5d const &t
   int  static constexpr idV = 2;  // v-momentum
   int  static constexpr idW = 3;  // w-momentum
   int  static constexpr idT = 4;  // Density * potential temperature
-  real rw2 = state_limits_z(idV,0,k,j,i) + state_limits_z(idV,1,k,j,i);
+  real rw2 = state_limits_z(idW,0,k,j,i) + state_limits_z(idW,1,k,j,i);
   if (rw2 == 0) {
     riemann_central_z(state_limits_z,tracers_limits_z,k,j,i,num_tracers,C0,gamma,
                       rw_upw,r_upw,u_upw,v_upw,w_upw,theta_upw,p_upw,tracers_upw);
