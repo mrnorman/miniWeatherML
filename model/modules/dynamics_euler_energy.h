@@ -667,6 +667,8 @@ namespace modules {
 
       bool sim2d = (coupler.get_ny_glob() == 1);
 
+      coupler.set_option<real>("gamma",gamma);
+
       // Use TransformMatrices class to create matrices & GLL points to convert degrees of freedom as needed
       TransformMatrices::sten_to_coefs           (sten_to_coefs   );
       TransformMatrices::coefs_to_gll_lower      (coefs_to_gll    );
