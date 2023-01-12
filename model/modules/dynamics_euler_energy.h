@@ -679,7 +679,9 @@ namespace modules {
       YAML::Node config = YAML::LoadFile(input_fname);
       auto init_data = config["init_data"].as<std::string>();
       fname          = coupler.get_option<std::string>("out_fname");
-      out_freq       = config["out_freq" ].as<real       >();
+      out_freq       = config["out_freq" ].as<real>();
+      auto alpha     = config["alpha"    ].as<real>(0.25);
+
 
       auto &dm = coupler.get_data_manager_readwrite();
 
@@ -715,7 +717,6 @@ namespace modules {
                 real y = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
                 real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
 
-                real alpha  = 0.25;
                 real lambda = 0.01;
                 int  n      = 2;
                 int  L      = 1;
