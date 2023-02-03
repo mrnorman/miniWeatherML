@@ -6,7 +6,7 @@ import numpy as np
 
 nc = Dataset("test.nc","r")
 
-data = nc.variables["density"][-1,:,:,:].transpose(2,1,0)
+data = nc.variables["density"][10,:,:,:].transpose(2,1,0)
 nx = data.shape[0]
 
 X, Y, Z = np.meshgrid(np.arange(nx), np.arange(nx), -np.arange(nx))

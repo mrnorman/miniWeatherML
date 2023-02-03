@@ -38,6 +38,7 @@ namespace modules {
 
     // IDs for the test cases
     int  static constexpr DATA_KELVIN_HELMHOLTZ = 0;
+    int  static constexpr DATA_VENTILATION      = 1;
 
     int  static constexpr RIEMANN_NATIVE   = 1;
     int  static constexpr RIEMANN_LLF      = 2;
@@ -45,17 +46,29 @@ namespace modules {
 
     int  static constexpr riemann_choice = RIEMANN_PRESSURE;
 
+    int  static constexpr MATERIAL_NONE = 0;
+    int  static constexpr MATERIAL_WALL = 1;
+    int  static constexpr MATERIAL_OPEN = 2;
+
+    int  static constexpr DIR_X = 0;
+    int  static constexpr DIR_Y = 1;
+    int  static constexpr DIR_Z = 2;
+
     real        etime;         // Elapsed time
     real        out_freq;      // Frequency out file output
     int         num_out;       // Number of outputs produced thus far
     std::string fname;         // File name for file output
     int         init_data_int; // Integer representation of the type of initial data to use (test case)
+    bool        periodic_x, periodic_y, periodic_z;
 
     SArray<real,2,ord,ord>        sten_to_coefs;    // Matrix to convert ord stencil avgs to ord poly coefs
     SArray<real,2,ord,2  >        coefs_to_gll;     // Matrix to convert ord poly coefs to two GLL points
     SArray<real,3,hs+1,hs+1,hs+1> weno_recon_lower; // WENO's lower-order reconstruction matrices (sten_to_coefs)
     SArray<real,1,hs+2>           weno_idl;         // Ideal weights for WENO
     real                          weno_sigma;       // WENO sigma parameter (handicap high-order TV estimate)
+
+    int3d  material;
+    real3d slip;
 
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
@@ -123,21 +136,15 @@ namespace modules {
         // SSPRK3 requires temporary arrays to hold intermediate state
         real4d state_tmp   ("state_tmp"   ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs);
         real4d state_tend  ("state_tend"  ,num_state  ,nz     ,ny     ,nx     );
-        //////////////
         // Stage 1
-        //////////////
         compute_tendencies( coupler , state     , state_tend , dt_dyn );
-        // Apply tendencies
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           for (int l = 0; l < num_state  ; l++) {
             state_tmp  (l,hs+k,hs+j,hs+i) = state  (l,hs+k,hs+j,hs+i) + dt_dyn * state_tend  (l,k,j,i);
           }
         });
-        //////////////
         // Stage 2
-        //////////////
         compute_tendencies( coupler , state_tmp , state_tend , (1._fp/4._fp) * dt_dyn );
-        // Apply tendencies
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           for (int l = 0; l < num_state  ; l++) {
             state_tmp  (l,hs+k,hs+j,hs+i) = (3._fp/4._fp) * state      (l,hs+k,hs+j,hs+i) + 
@@ -145,11 +152,8 @@ namespace modules {
                                             (1._fp/4._fp) * dt_dyn * state_tend  (l,k,j,i);
           }
         });
-        //////////////
         // Stage 3
-        //////////////
         compute_tendencies( coupler , state_tmp , state_tend , (2._fp/3._fp) * dt_dyn );
-        // Apply tendencies
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           for (int l = 0; l < num_state  ; l++) {
             state      (l,hs+k,hs+j,hs+i) = (1._fp/3._fp) * state      (l,hs+k,hs+j,hs+i) +
@@ -191,6 +195,126 @@ namespace modules {
     }
 
 
+    template <int D>
+    YAKL_INLINE void gather_stencil( SArray<real,1,ord> &stencil ,
+                                     int l , int k , int j , int i ,
+                                     int3d const &material ,
+                                     real3d const &slip ,
+                                     real4d const &state ) const {
+      bool normal_vel = ( (D==DIR_X) && (l==idU) ) ||
+                        ( (D==DIR_Y) && (l==idV) ) ||
+                        ( (D==DIR_Z) && (l==idW) ); // Is this variable normal velocity?
+      stencil(hs) = state(l,hs+k,hs+j,hs+i);  // Store center stencil value
+      { // Traverse left; once you hit a material boundary, apply BC's
+        bool hit_material = false;
+        real sticky_value;
+        for (int s=hs-1; s >= 0; s--) {
+          int ind_i, ind_j, ind_k;
+          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k; }
+          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k; }
+          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ; }
+          int mat = material(ind_k,ind_j,ind_i);
+          if (mat == MATERIAL_NONE) {
+            stencil(s) = state(l,ind_k,ind_j,ind_i);
+          } else { // Must be MATERIAL_OPEN or MATERIAL_WALL
+            if (! hit_material) {
+              hit_material = true;
+              if ( (mat == MATERIAL_OPEN) || (l == idR) || (l == idT) ) {
+                sticky_value = stencil(s+1);
+              } else {
+                if (normal_vel) { sticky_value = 0; }
+                else            { sticky_value = stencil(s+1)*slip(ind_k,ind_j,ind_i); }
+              }
+            }
+            stencil(s) = sticky_value;
+          }
+        }
+      }
+      { // Traverse right; once you hit a material boundary, apply BC's
+        bool hit_material = false;
+        real sticky_value;
+        for (int s=hs+1; s < ord; s++) {
+          int ind_i, ind_j, ind_k;
+          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k; }
+          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k; }
+          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ; }
+          int mat = material(ind_k,ind_j,ind_i);
+          if (mat == MATERIAL_NONE) {
+            stencil(s) = state(l,ind_k,ind_j,ind_i);
+          } else { // Must be MATERIAL_OPEN or MATERIAL_WALL
+            if (! hit_material) {
+              hit_material = true;
+              if ( (mat == MATERIAL_OPEN) || (l == idR) || (l == idT) ) {
+                sticky_value = stencil(s-1);
+              } else {
+                if (normal_vel) { sticky_value = 0; }
+                else            { sticky_value = stencil(s-1)*slip(ind_k,ind_j,ind_i); }
+              }
+            }
+            stencil(s) = sticky_value;
+          }
+        }
+      }
+    }
+
+
+    template <int D>
+    YAKL_INLINE void set_state_limits( real5d const &state_limits ,
+                                       int l , int k , int j , int i ,
+                                       int3d const &material ,
+                                       real3d const &slip    , 
+                                       SArray<real,1,2> const &gll ) const {
+      bool normal_vel = ( (D==DIR_X) && (l==idU) ) ||
+                        ( (D==DIR_Y) && (l==idV) ) ||
+                        ( (D==DIR_Z) && (l==idW) ); // Is this variable normal velocity?
+      bool trans_vel = ( (D==DIR_X) && ((l==idV) || (l==idW)) ) ||
+                       ( (D==DIR_Y) && ((l==idU) || (l==idW)) ) ||
+                       ( (D==DIR_Z) && ((l==idU) || (l==idV)) ); // Is this variable transverse velocity?
+      { // Handle the left interface of this cell
+        int k_ind, j_ind, i_ind;
+        if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i-1; }
+        if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j-1;  i_ind = i  ; }
+        if constexpr (D == DIR_Z) { k_ind = k-1;  j_ind = j  ;  i_ind = i  ; }
+        int mat = material(hs+k_ind,hs+j_ind,hs+i_ind);
+        if        ( mat == MATERIAL_NONE ) { // Only set this side of the cell interface
+            state_limits(l,1,k,j,i) = gll(0);
+        } else if ( mat == MATERIAL_OPEN ) { // Set both sides of the cell interface
+            state_limits(l,0,k,j,i) = gll(0);
+            state_limits(l,1,k,j,i) = gll(0);
+        } else if ( mat == MATERIAL_WALL ) { // Set both sides of the cell interface
+          if ( normal_vel || ( (slip(hs+k_ind,hs+j_ind,hs+i_ind) == 0.) && trans_vel ) ) {
+            state_limits(l,0,k,j,i) = 0;
+            state_limits(l,1,k,j,i) = 0;
+          } else {
+            state_limits(l,0,k,j,i) = gll(0);
+            state_limits(l,1,k,j,i) = gll(0);
+          }
+        }
+      }
+      { // Handle the right interface of this cell
+        int k_ind, j_ind, i_ind;
+        if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i+1; }
+        if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j+1;  i_ind = i  ; }
+        if constexpr (D == DIR_Z) { k_ind = k+1;  j_ind = j  ;  i_ind = i  ; }
+        int mat = material(hs+k_ind,hs+j_ind,hs+i_ind);
+        if        ( mat == MATERIAL_NONE ) { // Only set this side of the cell interface
+            state_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
+        } else if ( mat == MATERIAL_OPEN ) { // Set both sides of the cell interface
+            state_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
+            state_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
+        } else if ( mat == MATERIAL_WALL ) { // Set both sides of the cell interface
+          if ( normal_vel || ( (slip(hs+k_ind,hs+j_ind,hs+i_ind) == 0.) && trans_vel ) ) {
+            state_limits(l,0,k_ind,j_ind,i_ind) = 0;
+            state_limits(l,1,k_ind,j_ind,i_ind) = 0;
+          } else {
+            state_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
+            state_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
+          }
+        }
+      }
+    }
+
+
     // Compute the tendencies for state for one semi-discretized step inside the RK integrator
     // Tendencies are the time rate of change for a quantity
     // Coupler is non-const because we are writing to the flux variables
@@ -200,12 +324,16 @@ namespace modules {
       using std::min;
       using std::max;
 
-      auto nx = coupler.get_nx();
-      auto ny = coupler.get_ny();
-      auto nz = coupler.get_nz();
-      auto dx = coupler.get_dx();
-      auto dy = coupler.get_dy();
-      auto dz = coupler.get_dz();
+      auto nx      = coupler.get_nx();
+      auto ny      = coupler.get_ny();
+      auto nz      = coupler.get_nz();
+      auto dx      = coupler.get_dx();
+      auto dy      = coupler.get_dy();
+      auto dz      = coupler.get_dz();
+      auto i_beg   = coupler.get_i_beg();
+      auto j_beg   = coupler.get_j_beg();
+      auto nx_glob = coupler.get_nx_glob();
+      auto ny_glob = coupler.get_ny_glob();
       bool sim2d = ny == 1;
 
       // A slew of things to bring from class scope into local scope so that lambdas copy them by value to the GPU
@@ -214,8 +342,15 @@ namespace modules {
       YAKL_SCOPE( weno_recon_lower , this->weno_recon_lower );
       YAKL_SCOPE( weno_idl         , this->weno_idl         );
       YAKL_SCOPE( weno_sigma       , this->weno_sigma       );
+      YAKL_SCOPE( material         , this->material         );
+      YAKL_SCOPE( slip             , this->slip             );
 
+      // ghost cells assume periodicity, but this is overridden by material boundaries
       halo_exchange( coupler , state );
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(num_state,hs,ny,nx) , YAKL_LAMBDA (int l, int s, int j, int i ) {
+        state(l,      s,hs+j,hs+i) = state(l,      s+nz,hs+j,hs+i);
+        state(l,hs+nz+s,hs+j,hs+i) = state(l,hs+nz+s-nz,hs+j,hs+i);
+      });
 
       // These arrays store high-order-accurate samples of the state at cell edges after cell-centered recon
       real5d state_limits_x  ("state_limits_x",num_state,2,nz  ,ny  ,nx+1);
@@ -225,63 +360,50 @@ namespace modules {
       // Compute samples of state at cell edges using cell-centered reconstructions at high-order with WENO
       // At the end of this, we will have two samples per cell edge in each dimension, one from each adjacent cell.
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i ) {
-        ////////////////////////////////////////////////////////
-        // X-direction
-        ////////////////////////////////////////////////////////
-        // State
-        for (int l=0; l < num_state; l++) {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-          state_limits_x(l,1,k,j,i  ) = gll(0);
-          state_limits_x(l,0,k,j,i+1) = gll(1);
-        }
-
-        ////////////////////////////////////////////////////////
-        // Y-direction
-        ////////////////////////////////////////////////////////
-        // If we're simulating in only 2-D, then do not compute y-direction tendencies
-        if (!sim2d) {
-          // State
+        if ( material(hs+k,hs+j,hs+i) == MATERIAL_NONE ) { // Don't reconstruct for material cells
+          // X-direction
           for (int l=0; l < num_state; l++) {
-            // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
             SArray<real,1,ord> stencil;
+            gather_stencil<DIR_X>( stencil , l , k , j , i , material , slip , state);
             SArray<real,1,2>   gll;
-            for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            state_limits_y(l,1,k,j  ,i) = gll(0);
-            state_limits_y(l,0,k,j+1,i) = gll(1);
+            set_state_limits<DIR_X>( state_limits_x , l , k , j , i , material , slip , gll );
           }
-        } else {
-          for (int l=0; l < num_state; l++) {
-            state_limits_y(l,1,k,j  ,i) = 0;
-            state_limits_y(l,0,k,j+1,i) = 0;
-          }
-        }
 
-        ////////////////////////////////////////////////////////
-        // Z-direction
-        ////////////////////////////////////////////////////////
-        // State
-        for (int l=0; l < num_state; l++) {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) {
-            int ind_k = k+s;
-            if (ind_k < hs     ) ind_k += nz;
-            if (ind_k > hs+nz-1) ind_k -= nz;
-            stencil(s) = state(l,ind_k,hs+j,hs+i);
+          // Y-direction if needed, otherwise zero
+          if (!sim2d) {
+            for (int l=0; l < num_state; l++) {
+              SArray<real,1,ord> stencil;
+              gather_stencil<DIR_Y>( stencil , l , k , j , i , material , slip , state);
+              SArray<real,1,2>   gll;
+              reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+              set_state_limits<DIR_Y>( state_limits_y , l , k , j , i , material , slip , gll );
+            }
+          } else {
+            for (int l=0; l < num_state; l++) {
+              state_limits_y(l,1,k,j  ,i) = 0;
+              state_limits_y(l,0,k,j+1,i) = 0;
+            }
           }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-          state_limits_z(l,1,k  ,j,i) = gll(0);
-          state_limits_z(l,0,k+1,j,i) = gll(1);
-        }
+
+          // Z-direction
+          for (int l=0; l < num_state; l++) {
+            SArray<real,1,ord> stencil;
+            gather_stencil<DIR_Z>( stencil , l , k , j , i , material , slip , state);
+            SArray<real,1,2>   gll;
+            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+            set_state_limits<DIR_Z>( state_limits_z , l , k , j , i , material , slip , gll );
+          }
+        } // if (material(hs+k,hs+j,hs+i) == MATERIAL_NONE )
       });
 
       edge_exchange( coupler , state_limits_x , state_limits_y );
+      if (periodic_z) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(num_state,ny,nx) , YAKL_LAMBDA (int l, int j, int i ) {
+          state_limits_z(l,0,0 ,j,i) = state_limits_z(l,0,nz,j,i);
+          state_limits_z(l,1,nz,j,i) = state_limits_z(l,1,0 ,j,i);
+        });
+      }
 
       // The store a single values flux at cell edges
       auto &dm = coupler.get_data_manager_readwrite();
@@ -295,218 +417,234 @@ namespace modules {
         // X-direction
         ////////////////////////////////////////////////////////
         if (j < ny && k < nz) {
-          real q1_L = state_limits_x(idR,0,k,j,i);   real q1_R = state_limits_x(idR,1,k,j,i);
-          real q2_L = state_limits_x(idU,0,k,j,i);   real q2_R = state_limits_x(idU,1,k,j,i);
-          real q3_L = state_limits_x(idV,0,k,j,i);   real q3_R = state_limits_x(idV,1,k,j,i);
-          real q4_L = state_limits_x(idW,0,k,j,i);   real q4_R = state_limits_x(idW,1,k,j,i);
-          real q5_L = state_limits_x(idT,0,k,j,i);   real q5_R = state_limits_x(idT,1,k,j,i);
+          if ( (material(hs+k,hs+j,hs+i-1) == MATERIAL_NONE) || (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) ) {
+            real q1_L = state_limits_x(idR,0,k,j,i);   real q1_R = state_limits_x(idR,1,k,j,i);
+            real q2_L = state_limits_x(idU,0,k,j,i);   real q2_R = state_limits_x(idU,1,k,j,i);
+            real q3_L = state_limits_x(idV,0,k,j,i);   real q3_R = state_limits_x(idV,1,k,j,i);
+            real q4_L = state_limits_x(idW,0,k,j,i);   real q4_R = state_limits_x(idW,1,k,j,i);
+            real q5_L = state_limits_x(idT,0,k,j,i);   real q5_R = state_limits_x(idT,1,k,j,i);
 
-          real K_L = (q2_L*q2_L + q3_L*q3_L + q4_L*q4_L) / (2*q1_L*q1_L);
-          real p_L = (gamma-1)*(q5_L - q1_L*K_L);
-          real K_R = (q2_R*q2_R + q3_R*q3_R + q4_R*q4_R) / (2*q1_R*q1_R);
-          real p_R = (gamma-1)*(q5_R - q1_R*K_R);
+            real K_L = (q2_L*q2_L + q3_L*q3_L + q4_L*q4_L) / (2*q1_L*q1_L);
+            real p_L = (gamma-1)*(q5_L - q1_L*K_L);
+            real K_R = (q2_R*q2_R + q3_R*q3_R + q4_R*q4_R) / (2*q1_R*q1_R);
+            real p_R = (gamma-1)*(q5_R - q1_R*K_R);
 
-          real r = 0.5_fp * (q1_L + q1_R);
-          real u = 0.5_fp * (q2_L + q2_R)/r;
-          real v = 0.5_fp * (q3_L + q3_R)/r;
-          real w = 0.5_fp * (q4_L + q4_R)/r;
-          real e = 0.5_fp * (q5_L + q5_R)/r;
-          real K = (u*u+v*v+w*w)/2;
-          real p = (gamma-1)*(r*e - r*K);
-          real h = e+p/r;
-          real cs = sqrt(gamma*p/r);
-          real cs2 = cs*cs;
+            real r = 0.5_fp * (q1_L + q1_R);
+            real u = 0.5_fp * (q2_L + q2_R)/r;
+            real v = 0.5_fp * (q3_L + q3_R)/r;
+            real w = 0.5_fp * (q4_L + q4_R)/r;
+            real e = 0.5_fp * (q5_L + q5_R)/r;
+            real K = (u*u+v*v+w*w)/2;
+            real p = (gamma-1)*(r*e - r*K);
+            real h = e+p/r;
+            real cs = sqrt(gamma*p/r);
+            real cs2 = cs*cs;
 
-          if (riemann_choice == RIEMANN_NATIVE) {
-            real f1_L = q2_L                          ;   real f1_R = q2_R                          ;
-            real f2_L = q2_L*q2_L/q1_L + p_L          ;   real f2_R = q2_R*q2_R/q1_R + p_R          ;
-            real f3_L = q2_L*q3_L/q1_L                ;   real f3_R = q2_R*q3_R/q1_R                ;
-            real f4_L = q2_L*q4_L/q1_L                ;   real f4_R = q2_R*q4_R/q1_R                ;
-            real f5_L = q2_L*q5_L/q1_L + q2_L*p_L/q1_L;   real f5_R = q2_R*q5_R/q1_R + q2_R*p_R/q1_R;
+            if (riemann_choice == RIEMANN_NATIVE) {
+              real f1_L = q2_L                          ;   real f1_R = q2_R                          ;
+              real f2_L = q2_L*q2_L/q1_L + p_L          ;   real f2_R = q2_R*q2_R/q1_R + p_R          ;
+              real f3_L = q2_L*q3_L/q1_L                ;   real f3_R = q2_R*q3_R/q1_R                ;
+              real f4_L = q2_L*q4_L/q1_L                ;   real f4_R = q2_R*q4_R/q1_R                ;
+              real f5_L = q2_L*q5_L/q1_L + q2_L*p_L/q1_L;   real f5_R = q2_R*q5_R/q1_R + q2_R*p_R/q1_R;
 
-            real f1_U, f2_U, f3_U, f4_U, f5_U;
-            real rden1 = 1._fp / (2*(K*cs-cs*h));
-            real rden2 = 1._fp / (K-h);
-            real rden3 = 1._fp / (2*(K-h));
+              real f1_U, f2_U, f3_U, f4_U, f5_U;
+              real rden1 = 1._fp / (2*(K*cs-cs*h));
+              real rden2 = 1._fp / (K-h);
+              real rden3 = 1._fp / (2*(K-h));
 
-            // Wave 1
-            if (u-cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
-            else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
-            real w1 = -f1_U*(K*cs-(K-h)*u)*rden1 + f2_U*(cs*u-K+h)*rden1 + f3_U*v*rden3 + f4_U*w*rden3 - f5_U*rden3;
-            // Wave 2
-            if (u+cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
-            else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
-            real w2 = -f1_U*(K*cs+(K-h)*u)*rden1 + f2_U*(cs*u+K-h)*rden1 + f3_U*v*rden3 + f4_U*w*rden3 - f5_U*rden3;
-            // Waves 3-5
-            if (u    > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
-            else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
-            real w3 = f1_U*(2*K-h)*rden2             - f2_U*u*rden2   - f3_U*v*rden2             - f4_U*w*rden2         + f5_U*rden2;
-            real w4 = f1_U*(u*u*v+v*v*v+v*w*w)*rden3 - f2_U*u*v*rden2 + f3_U*(u*u+w*w-K-h)*rden2 - f4_U*v*w*rden2       + f5_U*v*rden2;
-            real w5 = f1_U*(K*w)*rden2               - f2_U*u*w*rden2 - f3_U*v*w*rden2           - f4_U*(w*w-K+h)*rden2 + f5_U*w*rden2;
+              // Wave 1
+              if (u-cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
+              else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
+              real w1 = -f1_U*(K*cs-(K-h)*u)*rden1 + f2_U*(cs*u-K+h)*rden1 + f3_U*v*rden3 + f4_U*w*rden3 - f5_U*rden3;
+              // Wave 2
+              if (u+cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
+              else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
+              real w2 = -f1_U*(K*cs+(K-h)*u)*rden1 + f2_U*(cs*u+K-h)*rden1 + f3_U*v*rden3 + f4_U*w*rden3 - f5_U*rden3;
+              // Waves 3-5
+              if (u    > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
+              else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
+              real w3 = f1_U*(2*K-h)*rden2             - f2_U*u*rden2   - f3_U*v*rden2             - f4_U*w*rden2         + f5_U*rden2;
+              real w4 = f1_U*(u*u*v+v*v*v+v*w*w)*rden3 - f2_U*u*v*rden2 + f3_U*(u*u+w*w-K-h)*rden2 - f4_U*v*w*rden2       + f5_U*v*rden2;
+              real w5 = f1_U*(K*w)*rden2               - f2_U*u*w*rden2 - f3_U*v*w*rden2           - f4_U*(w*w-K+h)*rden2 + f5_U*w*rden2;
 
-            state_flux_x(idR,k,j,i) = w1          + w2          + w3;
-            state_flux_x(idU,k,j,i) = w1*(u-cs)   + w2*(u+cs)   + w3*u;
-            state_flux_x(idV,k,j,i) = w1*v        + w2*v                     + w4;
-            state_flux_x(idW,k,j,i) = w1*w        + w2*w                            + w5;
-            state_flux_x(idT,k,j,i) = w1*(h-u*cs) + w2*(h+u*cs) + w3*(u*u-K) + w4*v + w5*w;
-          } else if (riemann_choice == RIEMANN_LLF) {
-            real f1_L = q2_L                          ;   real f1_R = q2_R                          ;
-            real f2_L = q2_L*q2_L/q1_L + p_L          ;   real f2_R = q2_R*q2_R/q1_R + p_R          ;
-            real f3_L = q2_L*q3_L/q1_L                ;   real f3_R = q2_R*q3_R/q1_R                ;
-            real f4_L = q2_L*q4_L/q1_L                ;   real f4_R = q2_R*q4_R/q1_R                ;
-            real f5_L = q2_L*q5_L/q1_L + q2_L*p_L/q1_L;   real f5_R = q2_R*q5_R/q1_R + q2_R*p_R/q1_R;
-            real maxwave = std::max( std::abs(q2_L/q1_L) + sqrt( gamma*p_L/q1_L ) , 
-                                     std::abs(q2_R/q1_R) + sqrt( gamma*p_R/q1_R ) );
-            state_flux_x(idR,k,j,i) = 0.5_fp * ( f1_L + f1_R - maxwave * ( q1_R - q1_L ) );
-            state_flux_x(idU,k,j,i) = 0.5_fp * ( f2_L + f2_R - maxwave * ( q2_R - q2_L ) );
-            state_flux_x(idV,k,j,i) = 0.5_fp * ( f3_L + f3_R - maxwave * ( q3_R - q3_L ) );
-            state_flux_x(idW,k,j,i) = 0.5_fp * ( f4_L + f4_R - maxwave * ( q4_R - q4_L ) );
-            state_flux_x(idT,k,j,i) = 0.5_fp * ( f5_L + f5_R - maxwave * ( q5_R - q5_L ) );
-          } else if (riemann_choice == RIEMANN_PRESSURE) {
-            real q1_U, q2_U, q3_U, q4_U, q5_U, q6_U;
-            // Waves 1-4
-            if (u    > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
-            else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
-            real w1 = q1_U - q6_U/cs2;
-            real w2 = q3_U - q6_U*v/cs2;
-            real w3 = q4_U - q6_U*w/cs2;
-            real w4 = q1_U*u*u - q2_U*u + q5_U - q6_U*(cs2+e*gamma)/(cs2*gamma);
-            // Wave 5
-            if (u-cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
-            else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
-            real w5 =  q1_U*u/(2*cs) - q2_U/(2*cs) + q6_U/(2*cs2);
-            // Wave 6
-            if (u+cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
-            else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
-            real w6 = -q1_U*u/(2*cs) + q2_U/(2*cs) + q6_U/(2*cs2);
-            q1_U = w1   + w5                                + w6;
-            q2_U = w1*u + w5*(u-cs)                         + w6*(u+cs);
-            q3_U = w2   + w5*v                              + w6*v;
-            q4_U = w3   + w5*w                              + w6*w;
-            q5_U = w4   - w5*(cs*gamma*u-cs2-e*gamma)/gamma + w6*(cs*gamma*u+cs2+e*gamma)/gamma;
-            q6_U =        w5*cs2                            + w6*cs2;
-            r = q1_U;
-            u = q2_U/r;
-            v = q3_U/r;
-            w = q4_U/r;
-            e = q5_U/r;
-            p = q6_U;
-            state_flux_x(idR,k,j,i) = r*u;
-            state_flux_x(idU,k,j,i) = r*u*u + p;
-            state_flux_x(idV,k,j,i) = r*u*v;
-            state_flux_x(idW,k,j,i) = r*u*w;
-            state_flux_x(idT,k,j,i) = r*u*e + u*p;
+              state_flux_x(idR,k,j,i) = w1          + w2          + w3;
+              state_flux_x(idU,k,j,i) = w1*(u-cs)   + w2*(u+cs)   + w3*u;
+              state_flux_x(idV,k,j,i) = w1*v        + w2*v                     + w4;
+              state_flux_x(idW,k,j,i) = w1*w        + w2*w                            + w5;
+              state_flux_x(idT,k,j,i) = w1*(h-u*cs) + w2*(h+u*cs) + w3*(u*u-K) + w4*v + w5*w;
+            } else if (riemann_choice == RIEMANN_LLF) {
+              real f1_L = q2_L                          ;   real f1_R = q2_R                          ;
+              real f2_L = q2_L*q2_L/q1_L + p_L          ;   real f2_R = q2_R*q2_R/q1_R + p_R          ;
+              real f3_L = q2_L*q3_L/q1_L                ;   real f3_R = q2_R*q3_R/q1_R                ;
+              real f4_L = q2_L*q4_L/q1_L                ;   real f4_R = q2_R*q4_R/q1_R                ;
+              real f5_L = q2_L*q5_L/q1_L + q2_L*p_L/q1_L;   real f5_R = q2_R*q5_R/q1_R + q2_R*p_R/q1_R;
+              real maxwave = std::max( std::abs(q2_L/q1_L) + sqrt( gamma*p_L/q1_L ) , 
+                                       std::abs(q2_R/q1_R) + sqrt( gamma*p_R/q1_R ) );
+              state_flux_x(idR,k,j,i) = 0.5_fp * ( f1_L + f1_R - maxwave * ( q1_R - q1_L ) );
+              state_flux_x(idU,k,j,i) = 0.5_fp * ( f2_L + f2_R - maxwave * ( q2_R - q2_L ) );
+              state_flux_x(idV,k,j,i) = 0.5_fp * ( f3_L + f3_R - maxwave * ( q3_R - q3_L ) );
+              state_flux_x(idW,k,j,i) = 0.5_fp * ( f4_L + f4_R - maxwave * ( q4_R - q4_L ) );
+              state_flux_x(idT,k,j,i) = 0.5_fp * ( f5_L + f5_R - maxwave * ( q5_R - q5_L ) );
+            } else if (riemann_choice == RIEMANN_PRESSURE) {
+              real q1_U, q2_U, q3_U, q4_U, q5_U, q6_U;
+              // Waves 1-4
+              if (u    > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
+              else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
+              real w1 = q1_U - q6_U/cs2;
+              real w2 = q3_U - q6_U*v/cs2;
+              real w3 = q4_U - q6_U*w/cs2;
+              real w4 = q1_U*u*u - q2_U*u + q5_U - q6_U*(cs2+e*gamma)/(cs2*gamma);
+              // Wave 5
+              if (u-cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
+              else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
+              real w5 =  q1_U*u/(2*cs) - q2_U/(2*cs) + q6_U/(2*cs2);
+              // Wave 6
+              if (u+cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
+              else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
+              real w6 = -q1_U*u/(2*cs) + q2_U/(2*cs) + q6_U/(2*cs2);
+              q1_U = w1   + w5                                + w6;
+              q2_U = w1*u + w5*(u-cs)                         + w6*(u+cs);
+              q3_U = w2   + w5*v                              + w6*v;
+              q4_U = w3   + w5*w                              + w6*w;
+              q5_U = w4   - w5*(cs*gamma*u-cs2-e*gamma)/gamma + w6*(cs*gamma*u+cs2+e*gamma)/gamma;
+              q6_U =        w5*cs2                            + w6*cs2;
+              r = q1_U;
+              u = q2_U/r;
+              v = q3_U/r;
+              w = q4_U/r;
+              e = q5_U/r;
+              p = q6_U;
+              state_flux_x(idR,k,j,i) = r*u;
+              state_flux_x(idU,k,j,i) = r*u*u + p;
+              state_flux_x(idV,k,j,i) = r*u*v;
+              state_flux_x(idW,k,j,i) = r*u*w;
+              state_flux_x(idT,k,j,i) = r*u*e + u*p;
+            } // if riemann
+          } else { // if ( (material(hs+k,hs+j,hs+i-1) == MATERIAL_NONE) || (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) )
+            state_flux_x(idR,k,j,i) = 0;
+            state_flux_x(idU,k,j,i) = 0;
+            state_flux_x(idV,k,j,i) = 0;
+            state_flux_x(idW,k,j,i) = 0;
+            state_flux_x(idT,k,j,i) = 0;
           }
-        }
+        } // if (j < ny && k < nz)
 
         ////////////////////////////////////////////////////////
         // Y-direction
         ////////////////////////////////////////////////////////
         // If we are simulating in 2-D, then do not do Riemann in the y-direction
         if ( (! sim2d) && i < nx && k < nz) {
-          real q1_L = state_limits_y(idR,0,k,j,i);   real q1_R = state_limits_y(idR,1,k,j,i);
-          real q2_L = state_limits_y(idU,0,k,j,i);   real q2_R = state_limits_y(idU,1,k,j,i);
-          real q3_L = state_limits_y(idV,0,k,j,i);   real q3_R = state_limits_y(idV,1,k,j,i);
-          real q4_L = state_limits_y(idW,0,k,j,i);   real q4_R = state_limits_y(idW,1,k,j,i);
-          real q5_L = state_limits_y(idT,0,k,j,i);   real q5_R = state_limits_y(idT,1,k,j,i);
+          if ( (material(hs+k,hs+j-1,hs+i) == MATERIAL_NONE) || (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) ) {
+            real q1_L = state_limits_y(idR,0,k,j,i);   real q1_R = state_limits_y(idR,1,k,j,i);
+            real q2_L = state_limits_y(idU,0,k,j,i);   real q2_R = state_limits_y(idU,1,k,j,i);
+            real q3_L = state_limits_y(idV,0,k,j,i);   real q3_R = state_limits_y(idV,1,k,j,i);
+            real q4_L = state_limits_y(idW,0,k,j,i);   real q4_R = state_limits_y(idW,1,k,j,i);
+            real q5_L = state_limits_y(idT,0,k,j,i);   real q5_R = state_limits_y(idT,1,k,j,i);
 
-          real K_L = (q2_L*q2_L + q3_L*q3_L + q4_L*q4_L) / (2*q1_L*q1_L);
-          real p_L = (gamma-1)*(q5_L - q1_L*K_L);
-          real K_R = (q2_R*q2_R + q3_R*q3_R + q4_R*q4_R) / (2*q1_R*q1_R);
-          real p_R = (gamma-1)*(q5_R - q1_R*K_R);
+            real K_L = (q2_L*q2_L + q3_L*q3_L + q4_L*q4_L) / (2*q1_L*q1_L);
+            real p_L = (gamma-1)*(q5_L - q1_L*K_L);
+            real K_R = (q2_R*q2_R + q3_R*q3_R + q4_R*q4_R) / (2*q1_R*q1_R);
+            real p_R = (gamma-1)*(q5_R - q1_R*K_R);
 
-          real r = 0.5_fp * (q1_L + q1_R);
-          real u = 0.5_fp * (q2_L + q2_R)/r;
-          real v = 0.5_fp * (q3_L + q3_R)/r;
-          real w = 0.5_fp * (q4_L + q4_R)/r;
-          real e = 0.5_fp * (q5_L + q5_R)/r;
-          real K = (u*u+v*v+w*w)/2;
-          real p = (gamma-1)*(r*e - r*K);
-          real h = e+p/r;
-          real cs = sqrt(gamma*p/r);
-          real cs2 = cs*cs;
+            real r = 0.5_fp * (q1_L + q1_R);
+            real u = 0.5_fp * (q2_L + q2_R)/r;
+            real v = 0.5_fp * (q3_L + q3_R)/r;
+            real w = 0.5_fp * (q4_L + q4_R)/r;
+            real e = 0.5_fp * (q5_L + q5_R)/r;
+            real K = (u*u+v*v+w*w)/2;
+            real p = (gamma-1)*(r*e - r*K);
+            real h = e+p/r;
+            real cs = sqrt(gamma*p/r);
+            real cs2 = cs*cs;
 
-          if (riemann_choice == RIEMANN_NATIVE) {
-            real f1_L = q3_L                          ;   real f1_R = q3_R                          ;
-            real f2_L = q3_L*q2_L/q1_L                ;   real f2_R = q3_R*q2_R/q1_R                ;
-            real f3_L = q3_L*q3_L/q1_L + p_L          ;   real f3_R = q3_R*q3_R/q1_R + p_R          ;
-            real f4_L = q3_L*q4_L/q1_L                ;   real f4_R = q3_R*q4_R/q1_R                ;
-            real f5_L = q3_L*q5_L/q1_L + q3_L*p_L/q1_L;   real f5_R = q3_R*q5_R/q1_R + q3_R*p_R/q1_R;
+            if (riemann_choice == RIEMANN_NATIVE) {
+              real f1_L = q3_L                          ;   real f1_R = q3_R                          ;
+              real f2_L = q3_L*q2_L/q1_L                ;   real f2_R = q3_R*q2_R/q1_R                ;
+              real f3_L = q3_L*q3_L/q1_L + p_L          ;   real f3_R = q3_R*q3_R/q1_R + p_R          ;
+              real f4_L = q3_L*q4_L/q1_L                ;   real f4_R = q3_R*q4_R/q1_R                ;
+              real f5_L = q3_L*q5_L/q1_L + q3_L*p_L/q1_L;   real f5_R = q3_R*q5_R/q1_R + q3_R*p_R/q1_R;
 
-            real f1_U, f2_U, f3_U, f4_U, f5_U;
-            real rden1 = 1._fp / (2*(K*cs-cs*h));
-            real rden2 = 1._fp / (K-h);
-            real rden3 = 1._fp / (2*(K-h));
+              real f1_U, f2_U, f3_U, f4_U, f5_U;
+              real rden1 = 1._fp / (2*(K*cs-cs*h));
+              real rden2 = 1._fp / (K-h);
+              real rden3 = 1._fp / (2*(K-h));
 
-            // Wave 1
-            if (v-cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
-            else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
-            real w1 = -f1_U*(K*cs-(K-h)*v)*rden1 + f2_U*u*rden3 + f3_U*(cs*v-K+h)*rden1 + f4_U*w*rden3 - f5_U*rden3;
-            // Wave 2
-            if (v+cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
-            else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
-            real w2 = -f1_U*(K*cs+(K-h)*v)*rden1 + f2_U*u*rden3 + f3_U*(cs*v+K-h)*rden1 + f4_U*w*rden3 - f5_U*rden3;
-            // Waves 3-5
-            if (v    > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
-            else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
-            real w3 = f1_U*(2*K-h)*rden2             - f2_U*u*rden2             - f3_U*v*rden2   - f4_U*w*rden2         + f5_U*rden2;
-            real w4 = f1_U*(u*u*u+u*v*v+u*w*w)*rden3 + f2_U*(v*v+w*w-K-h)*rden2 - f3_U*u*v*rden2 - f4_U*u*w*rden2       + f5_U*u*rden2;
-            real w5 = f1_U*K*w*rden2                 - f2_U*u*w*rden2           - f3_U*v*w*rden2 - f4_U*(w*w-K+h)*rden2 + f5_U*w*rden2;
+              // Wave 1
+              if (v-cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
+              else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
+              real w1 = -f1_U*(K*cs-(K-h)*v)*rden1 + f2_U*u*rden3 + f3_U*(cs*v-K+h)*rden1 + f4_U*w*rden3 - f5_U*rden3;
+              // Wave 2
+              if (v+cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
+              else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
+              real w2 = -f1_U*(K*cs+(K-h)*v)*rden1 + f2_U*u*rden3 + f3_U*(cs*v+K-h)*rden1 + f4_U*w*rden3 - f5_U*rden3;
+              // Waves 3-5
+              if (v    > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
+              else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
+              real w3 = f1_U*(2*K-h)*rden2             - f2_U*u*rden2             - f3_U*v*rden2   - f4_U*w*rden2         + f5_U*rden2;
+              real w4 = f1_U*(u*u*u+u*v*v+u*w*w)*rden3 + f2_U*(v*v+w*w-K-h)*rden2 - f3_U*u*v*rden2 - f4_U*u*w*rden2       + f5_U*u*rden2;
+              real w5 = f1_U*K*w*rden2                 - f2_U*u*w*rden2           - f3_U*v*w*rden2 - f4_U*(w*w-K+h)*rden2 + f5_U*w*rden2;
 
-            state_flux_y(idR,k,j,i) = w1          + w2          + w3;
-            state_flux_y(idU,k,j,i) = w1*u        + w2*u                     + w4;
-            state_flux_y(idV,k,j,i) = w1*(v-cs)   + w2*(v+cs)   + w3*v;
-            state_flux_y(idW,k,j,i) = w1*w        + w2*w                            + w5;
-            state_flux_y(idT,k,j,i) = w1*(h-v*cs) + w2*(h+v*cs) + w3*(v*v-K) + w4*u + w5*w;
-          } else if (riemann_choice == RIEMANN_LLF) {
-            real f1_L = q3_L                          ;   real f1_R = q3_R                          ;
-            real f2_L = q3_L*q2_L/q1_L                ;   real f2_R = q3_R*q2_R/q1_R                ;
-            real f3_L = q3_L*q3_L/q1_L + p_L          ;   real f3_R = q3_R*q3_R/q1_R + p_R          ;
-            real f4_L = q3_L*q4_L/q1_L                ;   real f4_R = q3_R*q4_R/q1_R                ;
-            real f5_L = q3_L*q5_L/q1_L + q3_L*p_L/q1_L;   real f5_R = q3_R*q5_R/q1_R + q3_R*p_R/q1_R;
-            real maxwave = std::max( std::abs(q3_L/q1_L) + sqrt( gamma*p_L/q1_L ) , 
-                                     std::abs(q3_R/q1_R) + sqrt( gamma*p_R/q1_R ) );
-            state_flux_y(idR,k,j,i) = 0.5_fp * ( f1_L + f1_R - maxwave * ( q1_R - q1_L ) );
-            state_flux_y(idU,k,j,i) = 0.5_fp * ( f2_L + f2_R - maxwave * ( q2_R - q2_L ) );
-            state_flux_y(idV,k,j,i) = 0.5_fp * ( f3_L + f3_R - maxwave * ( q3_R - q3_L ) );
-            state_flux_y(idW,k,j,i) = 0.5_fp * ( f4_L + f4_R - maxwave * ( q4_R - q4_L ) );
-            state_flux_y(idT,k,j,i) = 0.5_fp * ( f5_L + f5_R - maxwave * ( q5_R - q5_L ) );
-          } else if (riemann_choice == RIEMANN_PRESSURE) {
-            real q1_U, q2_U, q3_U, q4_U, q5_U, q6_U;
-            // Waves 1-4
-            if (v    > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
-            else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
-            real w1 = q1_U - q6_U/cs2;
-            real w2 = q2_U - q6_U*u/cs2;
-            real w3 = q4_U - q6_U*w/cs2;
-            real w4 = q1_U*v*v - q3_U*v + q5_U - q6_U*(cs2+e*gamma)/(cs2*gamma);
-            // Wave 5
-            if (v-cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
-            else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
-            real w5 =  q1_U*v/(2*cs) - q3_U/(2*cs) + q6_U/(2*cs2);
-            // Wave 6
-            if (v+cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
-            else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
-            real w6 = -q1_U*v/(2*cs) + q3_U/(2*cs) + q6_U/(2*cs2);
-            q1_U = w1   + w5                                + w6;
-            q2_U = w2   + w5*u                              + w6*u;
-            q3_U = w1*v + w5*(v-cs)                         + w6*(v+cs);
-            q4_U = w3   + w5*w                              + w6*w;
-            q5_U = w4   - w5*(cs*gamma*v-cs2-e*gamma)/gamma + w6*(cs*gamma*v+cs2+e*gamma)/gamma;
-            q6_U =        w5*cs2                            + w6*cs2;
-            r = q1_U;
-            u = q2_U/r;
-            v = q3_U/r;
-            w = q4_U/r;
-            e = q5_U/r;
-            p = q6_U;
-            state_flux_y(idR,k,j,i) = r*v;
-            state_flux_y(idU,k,j,i) = r*v*u;
-            state_flux_y(idV,k,j,i) = r*v*v + p;
-            state_flux_y(idW,k,j,i) = r*v*w;
-            state_flux_y(idT,k,j,i) = r*v*e + v*p;
+              state_flux_y(idR,k,j,i) = w1          + w2          + w3;
+              state_flux_y(idU,k,j,i) = w1*u        + w2*u                     + w4;
+              state_flux_y(idV,k,j,i) = w1*(v-cs)   + w2*(v+cs)   + w3*v;
+              state_flux_y(idW,k,j,i) = w1*w        + w2*w                            + w5;
+              state_flux_y(idT,k,j,i) = w1*(h-v*cs) + w2*(h+v*cs) + w3*(v*v-K) + w4*u + w5*w;
+            } else if (riemann_choice == RIEMANN_LLF) {
+              real f1_L = q3_L                          ;   real f1_R = q3_R                          ;
+              real f2_L = q3_L*q2_L/q1_L                ;   real f2_R = q3_R*q2_R/q1_R                ;
+              real f3_L = q3_L*q3_L/q1_L + p_L          ;   real f3_R = q3_R*q3_R/q1_R + p_R          ;
+              real f4_L = q3_L*q4_L/q1_L                ;   real f4_R = q3_R*q4_R/q1_R                ;
+              real f5_L = q3_L*q5_L/q1_L + q3_L*p_L/q1_L;   real f5_R = q3_R*q5_R/q1_R + q3_R*p_R/q1_R;
+              real maxwave = std::max( std::abs(q3_L/q1_L) + sqrt( gamma*p_L/q1_L ) , 
+                                       std::abs(q3_R/q1_R) + sqrt( gamma*p_R/q1_R ) );
+              state_flux_y(idR,k,j,i) = 0.5_fp * ( f1_L + f1_R - maxwave * ( q1_R - q1_L ) );
+              state_flux_y(idU,k,j,i) = 0.5_fp * ( f2_L + f2_R - maxwave * ( q2_R - q2_L ) );
+              state_flux_y(idV,k,j,i) = 0.5_fp * ( f3_L + f3_R - maxwave * ( q3_R - q3_L ) );
+              state_flux_y(idW,k,j,i) = 0.5_fp * ( f4_L + f4_R - maxwave * ( q4_R - q4_L ) );
+              state_flux_y(idT,k,j,i) = 0.5_fp * ( f5_L + f5_R - maxwave * ( q5_R - q5_L ) );
+            } else if (riemann_choice == RIEMANN_PRESSURE) {
+              real q1_U, q2_U, q3_U, q4_U, q5_U, q6_U;
+              // Waves 1-4
+              if (v    > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
+              else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
+              real w1 = q1_U - q6_U/cs2;
+              real w2 = q2_U - q6_U*u/cs2;
+              real w3 = q4_U - q6_U*w/cs2;
+              real w4 = q1_U*v*v - q3_U*v + q5_U - q6_U*(cs2+e*gamma)/(cs2*gamma);
+              // Wave 5
+              if (v-cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
+              else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
+              real w5 =  q1_U*v/(2*cs) - q3_U/(2*cs) + q6_U/(2*cs2);
+              // Wave 6
+              if (v+cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
+              else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
+              real w6 = -q1_U*v/(2*cs) + q3_U/(2*cs) + q6_U/(2*cs2);
+              q1_U = w1   + w5                                + w6;
+              q2_U = w2   + w5*u                              + w6*u;
+              q3_U = w1*v + w5*(v-cs)                         + w6*(v+cs);
+              q4_U = w3   + w5*w                              + w6*w;
+              q5_U = w4   - w5*(cs*gamma*v-cs2-e*gamma)/gamma + w6*(cs*gamma*v+cs2+e*gamma)/gamma;
+              q6_U =        w5*cs2                            + w6*cs2;
+              r = q1_U;
+              u = q2_U/r;
+              v = q3_U/r;
+              w = q4_U/r;
+              e = q5_U/r;
+              p = q6_U;
+              state_flux_y(idR,k,j,i) = r*v;
+              state_flux_y(idU,k,j,i) = r*v*u;
+              state_flux_y(idV,k,j,i) = r*v*v + p;
+              state_flux_y(idW,k,j,i) = r*v*w;
+              state_flux_y(idT,k,j,i) = r*v*e + v*p;
+            } // if riemann
+          } else { // if ( (material(hs+k,hs+j,hs+i-1) == MATERIAL_NONE) || (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) )
+            state_flux_y(idR,k,j,i) = 0;
+            state_flux_y(idU,k,j,i) = 0;
+            state_flux_y(idV,k,j,i) = 0;
+            state_flux_y(idW,k,j,i) = 0;
+            state_flux_y(idT,k,j,i) = 0;
           }
-        } else if (i < nx && k < nz) {
+        } else if (i < nx && k < nz) { // if ( (! sim2d) && i < nx && k < nz)
           state_flux_y(idR,k,j,i) = 0;
           state_flux_y(idU,k,j,i) = 0;
           state_flux_y(idV,k,j,i) = 0;
@@ -518,116 +656,117 @@ namespace modules {
         // Z-direction
         ////////////////////////////////////////////////////////
         if (i < nx && j < ny) {
-          // Boundary conditions
-          if (k == 0) {
-            for (int l = 0; l < num_state; l++) { state_limits_z(l,0,0 ,j,i) = state_limits_z(l,0,nz,j,i); }
+          if ( (material(hs+k-1,hs+j,hs+i) == MATERIAL_NONE) || (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) ) {
+            real q1_L = state_limits_z(idR,0,k,j,i);   real q1_R = state_limits_z(idR,1,k,j,i);
+            real q2_L = state_limits_z(idU,0,k,j,i);   real q2_R = state_limits_z(idU,1,k,j,i);
+            real q3_L = state_limits_z(idV,0,k,j,i);   real q3_R = state_limits_z(idV,1,k,j,i);
+            real q4_L = state_limits_z(idW,0,k,j,i);   real q4_R = state_limits_z(idW,1,k,j,i);
+            real q5_L = state_limits_z(idT,0,k,j,i);   real q5_R = state_limits_z(idT,1,k,j,i);
+
+            real K_L = (q2_L*q2_L + q3_L*q3_L + q4_L*q4_L) / (2*q1_L*q1_L);
+            real p_L = (gamma-1)*(q5_L - q1_L*K_L);
+            real K_R = (q2_R*q2_R + q3_R*q3_R + q4_R*q4_R) / (2*q1_R*q1_R);
+            real p_R = (gamma-1)*(q5_R - q1_R*K_R);
+
+            real r = 0.5_fp * (q1_L + q1_R);
+            real u = 0.5_fp * (q2_L + q2_R)/r;
+            real v = 0.5_fp * (q3_L + q3_R)/r;
+            real w = 0.5_fp * (q4_L + q4_R)/r;
+            real e = 0.5_fp * (q5_L + q5_R)/r;
+            real K = (u*u+v*v+w*w)/2;
+            real p = (gamma-1)*(r*e - r*K);
+            real h = e+p/r;
+            real cs = sqrt(gamma*p/r);
+            real cs2 = cs*cs;
+
+            if (riemann_choice == RIEMANN_NATIVE) {
+              real f1_L = q4_L                          ;   real f1_R = q4_R                          ;
+              real f2_L = q4_L*q2_L/q1_L                ;   real f2_R = q4_R*q2_R/q1_R                ;
+              real f3_L = q4_L*q3_L/q1_L                ;   real f3_R = q4_R*q3_R/q1_R                ;
+              real f4_L = q4_L*q4_L/q1_L + p_L          ;   real f4_R = q4_R*q4_R/q1_R + p_R          ;
+              real f5_L = q4_L*q5_L/q1_L + q4_L*p_L/q1_L;   real f5_R = q4_R*q5_R/q1_R + q4_R*p_R/q1_R;
+
+              real f1_U, f2_U, f3_U, f4_U, f5_U;
+              real rden1 = 1._fp / (2*(K*cs-cs*h));
+              real rden2 = 1._fp / (K-h);
+              real rden3 = 1._fp / (2*(K-h));
+
+              // Wave 1
+              if (w-cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
+              else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
+              real w1 = -f1_U*(K*cs-(K-h)*w)*rden1 + f2_U*u*rden3 + f3_U*v*rden3 + f4_U*(cs*w-K+h)*rden1 - f5_U*rden3;
+              // Wave 2
+              if (w+cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
+              else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
+              real w2 = -f1_U*(K*cs+(K-h)*w)*rden1 + f2_U*u*rden3 + f3_U*v*rden3 + f4_U*(cs*w+K-h)*rden1 - f5_U*rden3;
+              // Waves 3-5
+              if (w    > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
+              else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
+              real w3 = f1_U*(2*K-h)*rden2             - f2_U*u*rden2             - f3_U*v*rden2         - f4_U*w*rden2   + f5_U*rden2;
+              real w4 = f1_U*(u*u*u+u*v*v+u*w*w)*rden3 + f2_U*(v*v+w*w-K-h)*rden2 - f3_U*u*v*rden2       - f4_U*u*w*rden2 + f5_U*u*rden2;
+              real w5 = f1_U*K*v*rden2                 - f2_U*u*v*rden2           - f3_U*(v*v-K+h)*rden2 - f4_U*v*w*rden2 + f5_U*v*rden2;
+
+              state_flux_z(idR,k,j,i) = w1          + w2          + w3;
+              state_flux_z(idU,k,j,i) = w1*u        + w2*u                     + w4;
+              state_flux_z(idV,k,j,i) = w1*v        + w2*v                            + w4;
+              state_flux_z(idW,k,j,i) = w1*(w-cs)   + w2*(w+cs)   + w3*w;
+              state_flux_z(idT,k,j,i) = w1*(h-w*cs) + w2*(h+w*cs) + w3*(w*w-K) + w4*u + w5*v;
+            } else if (riemann_choice == RIEMANN_LLF) {
+              real f1_L = q4_L                          ;   real f1_R = q4_R                          ;
+              real f2_L = q4_L*q2_L/q1_L                ;   real f2_R = q4_R*q2_R/q1_R                ;
+              real f3_L = q4_L*q3_L/q1_L                ;   real f3_R = q4_R*q3_R/q1_R                ;
+              real f4_L = q4_L*q4_L/q1_L + p_L          ;   real f4_R = q4_R*q4_R/q1_R + p_R          ;
+              real f5_L = q4_L*q5_L/q1_L + q4_L*p_L/q1_L;   real f5_R = q4_R*q5_R/q1_R + q4_R*p_R/q1_R;
+              real maxwave = std::max( std::abs(q4_L/q1_L) + sqrt( gamma*p_L/q1_L ) , 
+                                       std::abs(q4_R/q1_R) + sqrt( gamma*p_R/q1_R ) );
+              state_flux_z(idR,k,j,i) = 0.5_fp * ( f1_L + f1_R - maxwave * ( q1_R - q1_L ) );
+              state_flux_z(idU,k,j,i) = 0.5_fp * ( f2_L + f2_R - maxwave * ( q2_R - q2_L ) );
+              state_flux_z(idV,k,j,i) = 0.5_fp * ( f3_L + f3_R - maxwave * ( q3_R - q3_L ) );
+              state_flux_z(idW,k,j,i) = 0.5_fp * ( f4_L + f4_R - maxwave * ( q4_R - q4_L ) );
+              state_flux_z(idT,k,j,i) = 0.5_fp * ( f5_L + f5_R - maxwave * ( q5_R - q5_L ) );
+            } else if (riemann_choice == RIEMANN_PRESSURE) {
+              real q1_U, q2_U, q3_U, q4_U, q5_U, q6_U;
+              // Waves 1-4
+              if (w    > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
+              else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
+              real w1 = q1_U - q6_U/cs2;
+              real w2 = q2_U - q6_U*u/cs2;
+              real w3 = q3_U - q6_U*v/cs2;
+              real w4 = q1_U*w*w - q4_U*w + q5_U - q6_U*(cs2+e*gamma)/(cs2*gamma);
+              // Wave 5
+              if (w-cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
+              else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
+              real w5 =  q1_U*w/(2*cs) - q4_U/(2*cs) + q6_U/(2*cs2);
+              // Wave 6
+              if (w+cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
+              else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
+              real w6 = -q1_U*w/(2*cs) + q4_U/(2*cs) + q6_U/(2*cs2);
+              q1_U = w1   + w5                                + w6;
+              q2_U = w2   + w5*u                              + w6*u;
+              q3_U = w3   + w5*v                              + w6*v;
+              q4_U = w1*w + w5*(w-cs)                         + w6*(w+cs);
+              q5_U = w4   - w5*(cs*gamma*w-cs2-e*gamma)/gamma + w6*(cs*gamma*w+cs2+e*gamma)/gamma;
+              q6_U =        w5*cs2                            + w6*cs2;
+              r = q1_U;
+              u = q2_U/r;
+              v = q3_U/r;
+              w = q4_U/r;
+              e = q5_U/r;
+              p = q6_U;
+              state_flux_z(idR,k,j,i) = r*w;
+              state_flux_z(idU,k,j,i) = r*w*u;
+              state_flux_z(idV,k,j,i) = r*w*v;
+              state_flux_z(idW,k,j,i) = r*w*w + p;
+              state_flux_z(idT,k,j,i) = r*w*e + w*p;
+            } // if riemann
+          } else { //if ( (material(hs+k-1,hs+j,hs+i) == MATERIAL_NONE) || (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) )
+            state_flux_z(idR,k,j,i) = 0;
+            state_flux_z(idU,k,j,i) = 0;
+            state_flux_z(idV,k,j,i) = 0;
+            state_flux_z(idW,k,j,i) = 0;
+            state_flux_z(idT,k,j,i) = 0;
           }
-          if (k == nz) {
-            for (int l = 0; l < num_state; l++) { state_limits_z(l,1,nz,j,i) = state_limits_z(l,1,0 ,j,i); }
-          }
-          real q1_L = state_limits_z(idR,0,k,j,i);   real q1_R = state_limits_z(idR,1,k,j,i);
-          real q2_L = state_limits_z(idU,0,k,j,i);   real q2_R = state_limits_z(idU,1,k,j,i);
-          real q3_L = state_limits_z(idV,0,k,j,i);   real q3_R = state_limits_z(idV,1,k,j,i);
-          real q4_L = state_limits_z(idW,0,k,j,i);   real q4_R = state_limits_z(idW,1,k,j,i);
-          real q5_L = state_limits_z(idT,0,k,j,i);   real q5_R = state_limits_z(idT,1,k,j,i);
-
-          real K_L = (q2_L*q2_L + q3_L*q3_L + q4_L*q4_L) / (2*q1_L*q1_L);
-          real p_L = (gamma-1)*(q5_L - q1_L*K_L);
-          real K_R = (q2_R*q2_R + q3_R*q3_R + q4_R*q4_R) / (2*q1_R*q1_R);
-          real p_R = (gamma-1)*(q5_R - q1_R*K_R);
-
-          real r = 0.5_fp * (q1_L + q1_R);
-          real u = 0.5_fp * (q2_L + q2_R)/r;
-          real v = 0.5_fp * (q3_L + q3_R)/r;
-          real w = 0.5_fp * (q4_L + q4_R)/r;
-          real e = 0.5_fp * (q5_L + q5_R)/r;
-          real K = (u*u+v*v+w*w)/2;
-          real p = (gamma-1)*(r*e - r*K);
-          real h = e+p/r;
-          real cs = sqrt(gamma*p/r);
-          real cs2 = cs*cs;
-
-          if (riemann_choice == RIEMANN_NATIVE) {
-            real f1_L = q4_L                          ;   real f1_R = q4_R                          ;
-            real f2_L = q4_L*q2_L/q1_L                ;   real f2_R = q4_R*q2_R/q1_R                ;
-            real f3_L = q4_L*q3_L/q1_L                ;   real f3_R = q4_R*q3_R/q1_R                ;
-            real f4_L = q4_L*q4_L/q1_L + p_L          ;   real f4_R = q4_R*q4_R/q1_R + p_R          ;
-            real f5_L = q4_L*q5_L/q1_L + q4_L*p_L/q1_L;   real f5_R = q4_R*q5_R/q1_R + q4_R*p_R/q1_R;
-
-            real f1_U, f2_U, f3_U, f4_U, f5_U;
-            real rden1 = 1._fp / (2*(K*cs-cs*h));
-            real rden2 = 1._fp / (K-h);
-            real rden3 = 1._fp / (2*(K-h));
-
-            // Wave 1
-            if (w-cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
-            else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
-            real w1 = -f1_U*(K*cs-(K-h)*w)*rden1 + f2_U*u*rden3 + f3_U*v*rden3 + f4_U*(cs*w-K+h)*rden1 - f5_U*rden3;
-            // Wave 2
-            if (w+cs > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
-            else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
-            real w2 = -f1_U*(K*cs+(K-h)*w)*rden1 + f2_U*u*rden3 + f3_U*v*rden3 + f4_U*(cs*w+K-h)*rden1 - f5_U*rden3;
-            // Waves 3-5
-            if (w    > 0) { f1_U=f1_L;  f2_U=f2_L;  f3_U=f3_L;  f4_U=f4_L;  f5_U=f5_L; }
-            else          { f1_U=f1_R;  f2_U=f2_R;  f3_U=f3_R;  f4_U=f4_R;  f5_U=f5_R; }
-            real w3 = f1_U*(2*K-h)*rden2             - f2_U*u*rden2             - f3_U*v*rden2         - f4_U*w*rden2   + f5_U*rden2;
-            real w4 = f1_U*(u*u*u+u*v*v+u*w*w)*rden3 + f2_U*(v*v+w*w-K-h)*rden2 - f3_U*u*v*rden2       - f4_U*u*w*rden2 + f5_U*u*rden2;
-            real w5 = f1_U*K*v*rden2                 - f2_U*u*v*rden2           - f3_U*(v*v-K+h)*rden2 - f4_U*v*w*rden2 + f5_U*v*rden2;
-
-            state_flux_z(idR,k,j,i) = w1          + w2          + w3;
-            state_flux_z(idU,k,j,i) = w1*u        + w2*u                     + w4;
-            state_flux_z(idV,k,j,i) = w1*v        + w2*v                            + w4;
-            state_flux_z(idW,k,j,i) = w1*(w-cs)   + w2*(w+cs)   + w3*w;
-            state_flux_z(idT,k,j,i) = w1*(h-w*cs) + w2*(h+w*cs) + w3*(w*w-K) + w4*u + w5*v;
-          } else if (riemann_choice == RIEMANN_LLF) {
-            real f1_L = q4_L                          ;   real f1_R = q4_R                          ;
-            real f2_L = q4_L*q2_L/q1_L                ;   real f2_R = q4_R*q2_R/q1_R                ;
-            real f3_L = q4_L*q3_L/q1_L                ;   real f3_R = q4_R*q3_R/q1_R                ;
-            real f4_L = q4_L*q4_L/q1_L + p_L          ;   real f4_R = q4_R*q4_R/q1_R + p_R          ;
-            real f5_L = q4_L*q5_L/q1_L + q4_L*p_L/q1_L;   real f5_R = q4_R*q5_R/q1_R + q4_R*p_R/q1_R;
-            real maxwave = std::max( std::abs(q4_L/q1_L) + sqrt( gamma*p_L/q1_L ) , 
-                                     std::abs(q4_R/q1_R) + sqrt( gamma*p_R/q1_R ) );
-            state_flux_z(idR,k,j,i) = 0.5_fp * ( f1_L + f1_R - maxwave * ( q1_R - q1_L ) );
-            state_flux_z(idU,k,j,i) = 0.5_fp * ( f2_L + f2_R - maxwave * ( q2_R - q2_L ) );
-            state_flux_z(idV,k,j,i) = 0.5_fp * ( f3_L + f3_R - maxwave * ( q3_R - q3_L ) );
-            state_flux_z(idW,k,j,i) = 0.5_fp * ( f4_L + f4_R - maxwave * ( q4_R - q4_L ) );
-            state_flux_z(idT,k,j,i) = 0.5_fp * ( f5_L + f5_R - maxwave * ( q5_R - q5_L ) );
-          } else if (riemann_choice == RIEMANN_PRESSURE) {
-            real q1_U, q2_U, q3_U, q4_U, q5_U, q6_U;
-            // Waves 1-4
-            if (w    > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
-            else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
-            real w1 = q1_U - q6_U/cs2;
-            real w2 = q2_U - q6_U*u/cs2;
-            real w3 = q3_U - q6_U*v/cs2;
-            real w4 = q1_U*w*w - q4_U*w + q5_U - q6_U*(cs2+e*gamma)/(cs2*gamma);
-            // Wave 5
-            if (w-cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
-            else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
-            real w5 =  q1_U*w/(2*cs) - q4_U/(2*cs) + q6_U/(2*cs2);
-            // Wave 6
-            if (w+cs > 0) { q1_U=q1_L;  q2_U=q2_L;  q3_U=q3_L;  q4_U=q4_L;  q5_U=q5_L;  q6_U=p_L; }
-            else          { q1_U=q1_R;  q2_U=q2_R;  q3_U=q3_R;  q4_U=q4_R;  q5_U=q5_R;  q6_U=p_R; }
-            real w6 = -q1_U*w/(2*cs) + q4_U/(2*cs) + q6_U/(2*cs2);
-            q1_U = w1   + w5                                + w6;
-            q2_U = w2   + w5*u                              + w6*u;
-            q3_U = w3   + w5*v                              + w6*v;
-            q4_U = w1*w + w5*(w-cs)                         + w6*(w+cs);
-            q5_U = w4   - w5*(cs*gamma*w-cs2-e*gamma)/gamma + w6*(cs*gamma*w+cs2+e*gamma)/gamma;
-            q6_U =        w5*cs2                            + w6*cs2;
-            r = q1_U;
-            u = q2_U/r;
-            v = q3_U/r;
-            w = q4_U/r;
-            e = q5_U/r;
-            p = q6_U;
-            state_flux_z(idR,k,j,i) = r*w;
-            state_flux_z(idU,k,j,i) = r*w*u;
-            state_flux_z(idV,k,j,i) = r*w*v;
-            state_flux_z(idW,k,j,i) = r*w*w + p;
-            state_flux_z(idT,k,j,i) = r*w*e + w*p;
-          }
-        }
+        } // if (i < nx && j < ny)
       });
 
       // Deallocate state because they are no longer needed
@@ -667,6 +806,12 @@ namespace modules {
 
       bool sim2d = (coupler.get_ny_glob() == 1);
 
+      material = int3d ("material",nz+2*hs,ny+2*hs,nx+2*hs);
+      slip     = real3d("slip"    ,nz+2*hs,ny+2*hs,nx+2*hs);
+
+      material = MATERIAL_NONE;
+      slip     = 1.;
+
       coupler.set_option<real>("gamma",gamma);
 
       // Use TransformMatrices class to create matrices & GLL points to convert degrees of freedom as needed
@@ -687,6 +832,7 @@ namespace modules {
 
       // Set an integer version of the input_data so we can test it inside GPU kernels
       if      (init_data == "kelvin_helmholtz") { init_data_int = DATA_KELVIN_HELMHOLTZ; }
+      else if (init_data == "ventilation"     ) { init_data_int = DATA_VENTILATION;      }
       else { endrun("ERROR: Invalid init_data in yaml input file"); }
 
       etime   = 0;
@@ -696,6 +842,10 @@ namespace modules {
       real4d state  ("state",num_state,nz+2*hs,ny+2*hs,nx+2*hs);
 
       if (init_data_int == DATA_KELVIN_HELMHOLTZ) {
+
+        periodic_x = true;
+        periodic_y = true;
+        periodic_z = true;
 
         int constexpr nqpoints = 9;
         SArray<real,1,nqpoints> qpoints;
@@ -738,6 +888,28 @@ namespace modules {
               }
             }
           }
+        });
+      }
+
+      if (init_data_int == DATA_VENTILATION) {
+
+        periodic_x = false;
+        periodic_y = true;
+        periodic_z = false;
+
+        auto i_beg = coupler.get_i_beg();
+        auto j_beg = coupler.get_j_beg();
+
+        // Use quadrature to initialize state data
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+          real T = 300;
+          real p = 1.e5;
+          real r = p/(R_d*T);
+          state(idR,hs+k,hs+j,hs+i) = r;
+          state(idU,hs+k,hs+j,hs+i) = 0;
+          state(idV,hs+k,hs+j,hs+i) = 0;
+          state(idW,hs+k,hs+j,hs+i) = 0;
+          state(idT,hs+k,hs+j,hs+i) = p/(gamma-1);
         });
       }
 
@@ -1138,15 +1310,22 @@ namespace modules {
         edge_recv_buf_N_host.deep_copy_to(edge_recv_buf_N);
       }
 
+      auto px   = coupler.get_px();
+      auto py   = coupler.get_py();
+      auto nproc_x = coupler.get_nproc_x();
+      auto nproc_y = coupler.get_nproc_y();
+      YAKL_SCOPE( periodic_x , this->periodic_x );
+      YAKL_SCOPE( periodic_y , this->periodic_y );
+
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(npack,nz,ny) , YAKL_LAMBDA (int v, int k, int j) {
-        state_limits_x(v,0,k,j,0 ) = edge_recv_buf_W(v,k,j);
-        state_limits_x(v,1,k,j,nx) = edge_recv_buf_E(v,k,j);
+        if ( periodic_x || (px > 0        ) ) state_limits_x(v,0,k,j,0 ) = edge_recv_buf_W(v,k,j);
+        if ( periodic_x || (px < nproc_x-1) ) state_limits_x(v,1,k,j,nx) = edge_recv_buf_E(v,k,j);
       });
 
       if (!sim2d) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(npack,nz,nx) , YAKL_LAMBDA (int v, int k, int i) {
-          state_limits_y(v,0,k,0 ,i) = edge_recv_buf_S(v,k,i);
-          state_limits_y(v,1,k,ny,i) = edge_recv_buf_N(v,k,i);
+          if ( periodic_y || (py > 0        ) ) state_limits_y(v,0,k,0 ,i) = edge_recv_buf_S(v,k,i);
+          if ( periodic_y || (py < nproc_y-1) ) state_limits_y(v,1,k,ny,i) = edge_recv_buf_N(v,k,i);
         });
       }
     }
