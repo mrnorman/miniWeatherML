@@ -51,7 +51,7 @@ namespace custom_modules {
         }
       });
 
-      if (etime > (num_out+1)*200) { print(input.is_mainproc()); num_out++; }
+      if (etime > (num_out+1)*200) { print(input.is_mainproc(), input.get_mpi_data_type()); num_out++; }
 
       numer += yakl::intrinsics::sum( active );
       denom += nx*ny*nz;
@@ -73,18 +73,18 @@ namespace custom_modules {
     }
 
 
-    void print(bool mainproc) {
+    void print(bool mainproc, MPI_Datatype mpi_data_type) {
       double numer_all;
       double denom_all;
-      MPI_Reduce( &numer , &numer_all , 1 , MPI_DOUBLE , MPI_SUM , 0 , MPI_COMM_WORLD );
-      MPI_Reduce( &denom , &denom_all , 1 , MPI_DOUBLE , MPI_SUM , 0 , MPI_COMM_WORLD );
+      MPI_Reduce( &numer , &numer_all , 1 , mpi_data_type , MPI_SUM , 0 , MPI_COMM_WORLD );
+      MPI_Reduce( &denom , &denom_all , 1 , mpi_data_type , MPI_SUM , 0 , MPI_COMM_WORLD );
       if (mainproc) {
         std::cout << "*** Ratio Active ***:  " << std::scientific << std::setw(10) << numer_all/denom_all << std::endl;
       }
     }
 
 
-    void finalize( core::Coupler &coupler ) {  print(coupler.is_mainproc());  }
+    void finalize( core::Coupler &coupler ) {  print(coupler.is_mainproc(),coupler.get_mpi_data_type());  }
 
   };
 

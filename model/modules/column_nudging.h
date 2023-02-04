@@ -82,8 +82,9 @@ namespace modules {
       });
 
       realHost2d column_total_host("column_total_host",num_fields,nz);
+      auto mpi_data_type = coupler.get_mpi_data_type();
       MPI_Allreduce( column_loc.createHostCopy().data() , column_total_host.data() , num_fields*nz ,
-                     MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD );
+                     mpi_data_type , MPI_SUM , MPI_COMM_WORLD );
       
       auto column_total = column_total_host.createDeviceCopy();
       int nranks = coupler.get_nranks();

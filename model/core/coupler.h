@@ -108,7 +108,8 @@ namespace core {
     void distribute_mpi_and_allocate_coupled_state(int nz, size_t ny_glob, size_t nx_glob,
                                                    int nproc_x_in = -1 , int nproc_y_in = -1 ,
                                                    int px_in      = -1 , int py_in      = -1 ,
-                                                   int i_beg_in   = -1 , int j_beg_in   = -1 ) {
+                                                   int i_beg_in   = -1 , int i_end_in   = -1 ,
+                                                   int j_beg_in   = -1 , int j_end_in   = -1 ) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -155,7 +156,9 @@ namespace core {
       if (px_in      > 0) px      = px_in     ;
       if (py_in      > 0) py      = py_in     ;
       if (i_beg_in   > 0) i_beg   = i_beg_in  ;
+      if (i_end_in   > 0) i_end   = i_end_in  ;
       if (j_beg_in   > 0) j_beg   = j_beg_in  ;
+      if (j_end_in   > 0) j_end   = j_end_in  ;
 
       //Determine my number of grid cells
       int nx = i_end - i_beg + 1;
@@ -182,45 +185,28 @@ namespace core {
         for (int rr=0; rr < nranks; rr++) {
           MPI_Barrier(MPI_COMM_WORLD);
           if (rr == myrank) {
-            std::cout << "Hello! My Rank is    : " << myrank << "\n";
-            std::cout << "My proc grid ID is   : " << px << " , " << py << "\n";
-            std::cout << "I have               : " << nx << " x " << ny << " columns." << "\n";
-            std::cout << "I start at index     : " << i_beg << " x " << j_beg << "\n";
-            std::cout << "My neighbor matrix is:\n";
+            std::cout << "Hello! My Rank is    : " << myrank << std::endl;
+            std::cout << "My proc grid ID is   : " << px << " , " << py << std::endl;
+            std::cout << "I have               : " << nx << " x " << ny << " x " << nz <<  " columns." << std::endl;
+            std::cout << "I start at index     : " << i_beg << " x " << j_beg << std::endl;
+            std::cout << "I end at index       : " << i_end << " x " << j_end << std::endl;
+            std::cout << "My neighbor matrix is:" << std::endl;
             for (int j = 2; j >= 0; j--) {
               for (int i = 0; i < 3; i++) {
                 std::cout << std::setw(6) << neigh(j,i) << " ";
               }
-              printf("\n");
+              std::cout << std::endl;
             }
-            printf("\n");
+            std::cout << std::endl;
           }
           MPI_Barrier(MPI_COMM_WORLD);
         }
         MPI_Barrier(MPI_COMM_WORLD);
-        MPI_Finalize();
-        abort();
       #endif
 
-      dm.register_and_allocate<real>("density_dry","dry density"         ,{nz,ny,nx},{"z","y","x"});
-      dm.register_and_allocate<real>("uvel"       ,"x-direction velocity",{nz,ny,nx},{"z","y","x"});
-      dm.register_and_allocate<real>("vvel"       ,"y-direction velocity",{nz,ny,nx},{"z","y","x"});
-      dm.register_and_allocate<real>("wvel"       ,"z-direction velocity",{nz,ny,nx},{"z","y","x"});
-      dm.register_and_allocate<real>("temp"       ,"temperature"         ,{nz,ny,nx},{"z","y","x"});
-
-      auto density_dry  = dm.get_collapsed<real>("density_dry");
-      auto uvel         = dm.get_collapsed<real>("uvel"       );
-      auto vvel         = dm.get_collapsed<real>("vvel"       );
-      auto wvel         = dm.get_collapsed<real>("wvel"       );
-      auto temp         = dm.get_collapsed<real>("temp"       );
-
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz*ny*nx) , YAKL_LAMBDA (int i) {
-        density_dry(i) = 0;
-        uvel       (i) = 0;
-        vvel       (i) = 0;
-        wvel       (i) = 0;
-        temp       (i) = 0;
-      });
+      dm.add_dimension( "x" , nx );
+      dm.add_dimension( "y" , ny );
+      dm.add_dimension( "z" , nz );
     }
 
 
@@ -277,6 +263,13 @@ namespace core {
 
 
     int get_num_tracers() const { return tracers.size(); }
+
+
+    MPI_Datatype get_mpi_data_type() const {
+      if      constexpr (std::is_same<real,float >()) { return MPI_FLOAT; }
+      else if constexpr (std::is_same<real,double>()) { return MPI_DOUBLE; }
+      else { endrun("ERROR: Invalid type for 'real'"); }
+    }
 
 
     template <class T>
@@ -371,6 +364,7 @@ namespace core {
       for (int ifield = 0; ifield < num_fields; ifield++) {
         // Allocate
         fields_out.add_field( real3d(fields_in.get_field(ifield).label(),nz+2*hs,ny+2*hs_y,nx+2*hs) );
+        fields_out.get_field(ifield) = 0;
         // Fill internal domain
         parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           fields_out(ifield,hs+k,hs_y+j,hs+i) = fields_in(ifield,k,j,i);
@@ -406,16 +400,17 @@ namespace core {
         // Allocate host receive buffers and receive the receive buffers
         realHost4d halo_recv_buf_W_host("coupler_halo_recv_buf_W_host",num_fields,nz+2*hs,ny+2*hs_y,hs);
         realHost4d halo_recv_buf_E_host("coupler_halo_recv_buf_E_host",num_fields,nz+2*hs,ny+2*hs_y,hs);
+        auto data_type = get_mpi_data_type();
         MPI_Request rReq[2];
-        MPI_Irecv( halo_recv_buf_W_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , MPI_DOUBLE , neigh(1,0) , tag0+0 , MPI_COMM_WORLD , &rReq[0] );
-        MPI_Irecv( halo_recv_buf_E_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , MPI_DOUBLE , neigh(1,2) , tag0+1 , MPI_COMM_WORLD , &rReq[1] );
+        MPI_Irecv( halo_recv_buf_W_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , data_type , neigh(1,0) , tag0+0 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_E_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , data_type , neigh(1,2) , tag0+1 , MPI_COMM_WORLD , &rReq[1] );
 
         // Copy send buffers to host and send the send buffers
         auto halo_send_buf_W_host = halo_send_buf_W.createHostCopy();
         auto halo_send_buf_E_host = halo_send_buf_E.createHostCopy();
         MPI_Request sReq[2];
-        MPI_Isend( halo_send_buf_W_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , MPI_DOUBLE , neigh(1,0) , tag0+1 , MPI_COMM_WORLD , &sReq[0] );
-        MPI_Isend( halo_send_buf_E_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , MPI_DOUBLE , neigh(1,2) , tag0+0 , MPI_COMM_WORLD , &sReq[1] );
+        MPI_Isend( halo_send_buf_W_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , data_type , neigh(1,0) , tag0+1 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_E_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , data_type , neigh(1,2) , tag0+0 , MPI_COMM_WORLD , &sReq[1] );
 
         // Wait for sends and receives to complete
         MPI_Status sStat[2];
@@ -445,16 +440,17 @@ namespace core {
         // Allocate host receive buffers and receive the receive buffers
         realHost4d halo_recv_buf_S_host("coupler_halo_recv_buf_S_host",num_fields,nz+2*hs,hs,nx+2*hs);
         realHost4d halo_recv_buf_N_host("coupler_halo_recv_buf_N_host",num_fields,nz+2*hs,hs,nx+2*hs);
+        auto data_type = get_mpi_data_type();
         MPI_Request rReq[2];
-        MPI_Irecv( halo_recv_buf_S_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , MPI_DOUBLE , neigh(0,1) , tag0+2 , MPI_COMM_WORLD , &rReq[0] );
-        MPI_Irecv( halo_recv_buf_N_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , MPI_DOUBLE , neigh(2,1) , tag0+3 , MPI_COMM_WORLD , &rReq[1] );
+        MPI_Irecv( halo_recv_buf_S_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , data_type , neigh(0,1) , tag0+2 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_N_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , data_type , neigh(2,1) , tag0+3 , MPI_COMM_WORLD , &rReq[1] );
 
         // Copy send buffers to host and send the send buffers
         auto halo_send_buf_S_host = halo_send_buf_S.createHostCopy();
         auto halo_send_buf_N_host = halo_send_buf_N.createHostCopy();
         MPI_Request sReq[2];
-        MPI_Isend( halo_send_buf_S_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , MPI_DOUBLE , neigh(0,1) , tag0+3 , MPI_COMM_WORLD , &sReq[0] );
-        MPI_Isend( halo_send_buf_N_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , MPI_DOUBLE , neigh(2,1) , tag0+2 , MPI_COMM_WORLD , &sReq[1] );
+        MPI_Isend( halo_send_buf_S_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , data_type , neigh(0,1) , tag0+3 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_N_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , data_type , neigh(2,1) , tag0+2 , MPI_COMM_WORLD , &sReq[1] );
 
         // Wait for sends and receives to complete
         MPI_Status sStat[2];

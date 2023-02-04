@@ -49,7 +49,8 @@ namespace modules {
 
     auto havg_fields_loc_host = havg_fields.createHostCopy();
     auto havg_fields_host = havg_fields_loc_host.createHostObject();
-    MPI_Allreduce( havg_fields_loc_host.data() , havg_fields_host.data() , havg_fields_host.size() , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD );
+    auto mpi_data_type = coupler.get_mpi_data_type();
+    MPI_Allreduce( havg_fields_loc_host.data() , havg_fields_host.data() , havg_fields_host.size() , mpi_data_type , MPI_SUM , MPI_COMM_WORLD );
     havg_fields_host.deep_copy_to(havg_fields);  // After this, havg_fields has the sum, not average, over tasks
 
     int num_tasks;
