@@ -196,34 +196,43 @@ namespace modules {
 
 
     template <int D>
-    YAKL_INLINE void gather_stencil( SArray<real,1,ord> &stencil ,
-                                     int l , int k , int j , int i ,
-                                     int3d const &material ,
-                                     real3d const &slip ,
-                                     real4d const &state ) const {
-      bool normal_vel = ( (D==DIR_X) && (l==idU) ) ||
-                        ( (D==DIR_Y) && (l==idV) ) ||
-                        ( (D==DIR_Z) && (l==idW) ); // Is this variable normal velocity?
+    YAKL_INLINE static void gather_stencil( SArray<real,1,ord> &stencil ,
+                                            int l , int k , int j , int i ,
+                                            int3d const &material ,
+                                            real3d const &slip ,
+                                            real4d const &state ) {
+      int norm, trans1, trans2;
+      if constexpr (D == DIR_X) { norm = idU;  trans1 = idV;  trans2 = idW; }
+      if constexpr (D == DIR_Y) { norm = idV;  trans1 = idU;  trans2 = idW; }
+      if constexpr (D == DIR_Z) { norm = idW;  trans1 = idU;  trans2 = idV; }
+      bool normal_vel = (l == norm);
+      bool trans_vel  = (l == trans1) || (l == trans2);
       stencil(hs) = state(l,hs+k,hs+j,hs+i);  // Store center stencil value
       { // Traverse left; once you hit a material boundary, apply BC's
         bool hit_material = false;
         real sticky_value;
         for (int s=hs-1; s >= 0; s--) {
-          int ind_i, ind_j, ind_k;
-          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k; }
-          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k; }
-          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ; }
+          int ind_i, ind_j, ind_k, n_i, n_j, n_k;
+          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k;  n_i=1;  n_j=0;  n_k=0; }
+          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k;  n_i=0;  n_j=1;  n_k=0; }
+          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ;  n_i=0;  n_j=0;  n_k=1; }
           int mat = material(ind_k,ind_j,ind_i);
+          int sl  = slip    (ind_k,ind_j,ind_i);
           if (mat == MATERIAL_NONE) {
             stencil(s) = state(l,ind_k,ind_j,ind_i);
           } else { // Must be MATERIAL_OPEN or MATERIAL_WALL
             if (! hit_material) {
               hit_material = true;
-              if ( (mat == MATERIAL_OPEN) || (l == idR) || (l == idT) ) {
-                sticky_value = stencil(s+1);
+              if      ( (mat == MATERIAL_WALL) && normal_vel ) { sticky_value = 0; }
+              else if ( (mat == MATERIAL_WALL) && trans_vel  ) { sticky_value = stencil(s+1)*sl; }
+              else if ( (mat == MATERIAL_WALL) && (l == idT) ) {
+                real rho   = state(idR,ind_k+n_k,ind_j+n_j,ind_i+n_i);
+                real loss1 = state(norm  ,ind_k+n_k,ind_j+n_j,ind_i+n_i);        // Normal velocity
+                real loss2 = state(trans1,ind_k+n_k,ind_j+n_j,ind_i+n_i)*(1-sl); // Transverse velocity 1
+                real loss3 = state(trans2,ind_k+n_k,ind_j+n_j,ind_i+n_i)*(1-sl); // Transverse velocity 2
+                sticky_value = stencil(s+1) - rho * (loss1*loss1 + loss2*loss2 + loss3*loss3)/2; //Correct for less KE
               } else {
-                if (normal_vel) { sticky_value = 0; }
-                else            { sticky_value = stencil(s+1)*slip(ind_k,ind_j,ind_i); }
+                sticky_value = stencil(s+1);
               }
             }
             stencil(s) = sticky_value;
@@ -234,21 +243,27 @@ namespace modules {
         bool hit_material = false;
         real sticky_value;
         for (int s=hs+1; s < ord; s++) {
-          int ind_i, ind_j, ind_k;
-          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k; }
-          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k; }
-          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ; }
+          int ind_i, ind_j, ind_k, n_i, n_j, n_k;
+          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k;  n_i=-1;  n_j= 0;  n_k= 0; }
+          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k;  n_i= 0;  n_j=-1;  n_k= 0; }
+          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ;  n_i= 0;  n_j= 0;  n_k=-1; }
           int mat = material(ind_k,ind_j,ind_i);
+          int sl  = slip    (ind_k,ind_j,ind_i);
           if (mat == MATERIAL_NONE) {
             stencil(s) = state(l,ind_k,ind_j,ind_i);
           } else { // Must be MATERIAL_OPEN or MATERIAL_WALL
             if (! hit_material) {
               hit_material = true;
-              if ( (mat == MATERIAL_OPEN) || (l == idR) || (l == idT) ) {
-                sticky_value = stencil(s-1);
+              if      ( (mat == MATERIAL_WALL) && normal_vel ) { sticky_value = 0; }
+              else if ( (mat == MATERIAL_WALL) && trans_vel  ) { sticky_value = stencil(s-1)*sl; }
+              else if ( (mat == MATERIAL_WALL) && (l == idT) ) {
+                real rho   = state(idR,ind_k+n_k,ind_j+n_j,ind_i+n_i);
+                real loss1 = state(norm  ,ind_k+n_k,ind_j+n_j,ind_i+n_i);        // Normal velocity
+                real loss2 = state(trans1,ind_k+n_k,ind_j+n_j,ind_i+n_i)*(1-sl); // Transverse velocity 1
+                real loss3 = state(trans2,ind_k+n_k,ind_j+n_j,ind_i+n_i)*(1-sl); // Transverse velocity 2
+                sticky_value = stencil(s-1) - rho * (loss1*loss1 + loss2*loss2 + loss3*loss3)/2; //Correct for less KE
               } else {
-                if (normal_vel) { sticky_value = 0; }
-                else            { sticky_value = stencil(s-1)*slip(ind_k,ind_j,ind_i); }
+                sticky_value = stencil(s-1);
               }
             }
             stencil(s) = sticky_value;
@@ -259,11 +274,11 @@ namespace modules {
 
 
     template <int D>
-    YAKL_INLINE void set_state_limits( real5d const &state_limits ,
-                                       int l , int k , int j , int i ,
-                                       int3d const &material ,
-                                       real3d const &slip    , 
-                                       SArray<real,1,2> const &gll ) const {
+    YAKL_INLINE static void set_state_limits( real5d const &state_limits ,
+                                              int l , int k , int j , int i ,
+                                              int3d const &material ,
+                                              real3d const &slip    , 
+                                              SArray<real,1,2> &gll ) {
       bool normal_vel = ( (D==DIR_X) && (l==idU) ) ||
                         ( (D==DIR_Y) && (l==idV) ) ||
                         ( (D==DIR_Z) && (l==idW) ); // Is this variable normal velocity?
@@ -276,20 +291,9 @@ namespace modules {
         if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j-1;  i_ind = i  ; }
         if constexpr (D == DIR_Z) { k_ind = k-1;  j_ind = j  ;  i_ind = i  ; }
         int mat = material(hs+k_ind,hs+j_ind,hs+i_ind);
-        if        ( mat == MATERIAL_NONE ) { // Only set this side of the cell interface
-            state_limits(l,1,k,j,i) = gll(0);
-        } else if ( mat == MATERIAL_OPEN ) { // Set both sides of the cell interface
-            state_limits(l,0,k,j,i) = gll(0);
-            state_limits(l,1,k,j,i) = gll(0);
-        } else if ( mat == MATERIAL_WALL ) { // Set both sides of the cell interface
-          if ( normal_vel || ( (slip(hs+k_ind,hs+j_ind,hs+i_ind) == 0.) && trans_vel ) ) {
-            state_limits(l,0,k,j,i) = 0;
-            state_limits(l,1,k,j,i) = 0;
-          } else {
-            state_limits(l,0,k,j,i) = gll(0);
-            state_limits(l,1,k,j,i) = gll(0);
-          }
-        }
+        if ( (mat == MATERIAL_WALL) && (normal_vel || ((slip(hs+k_ind,hs+j_ind,hs+i_ind) == 0.) && trans_vel)) ) gll(0) = 0;
+        state_limits(l,1,k,j,i) = gll(0);
+        if ( mat != MATERIAL_NONE ) state_limits(l,0,k,j,i) = gll(0);
       }
       { // Handle the right interface of this cell
         int k_ind, j_ind, i_ind;
@@ -297,20 +301,9 @@ namespace modules {
         if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j+1;  i_ind = i  ; }
         if constexpr (D == DIR_Z) { k_ind = k+1;  j_ind = j  ;  i_ind = i  ; }
         int mat = material(hs+k_ind,hs+j_ind,hs+i_ind);
-        if        ( mat == MATERIAL_NONE ) { // Only set this side of the cell interface
-            state_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
-        } else if ( mat == MATERIAL_OPEN ) { // Set both sides of the cell interface
-            state_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
-            state_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
-        } else if ( mat == MATERIAL_WALL ) { // Set both sides of the cell interface
-          if ( normal_vel || ( (slip(hs+k_ind,hs+j_ind,hs+i_ind) == 0.) && trans_vel ) ) {
-            state_limits(l,0,k_ind,j_ind,i_ind) = 0;
-            state_limits(l,1,k_ind,j_ind,i_ind) = 0;
-          } else {
-            state_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
-            state_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
-          }
-        }
+        if ( (mat == MATERIAL_WALL) && (normal_vel || ((slip(hs+k_ind,hs+j_ind,hs+i_ind) == 0.) && trans_vel)) ) gll(1) = 0;
+        state_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
+        if ( mat != MATERIAL_NONE ) state_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
       }
     }
 
@@ -775,12 +768,14 @@ namespace modules {
       state_limits_z = real5d();
 
       // Compute tendencies as the flux divergence + gravity source term
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        for (int l = 0; l < num_state; l++) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(num_state,nz,ny,nx) , YAKL_LAMBDA (int l, int k, int j, int i) {
+        if (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) {
           state_tend(l,k,j,i) = -( state_flux_x(l,k  ,j  ,i+1) - state_flux_x(l,k,j,i) ) / dx
                                 -( state_flux_y(l,k  ,j+1,i  ) - state_flux_y(l,k,j,i) ) / dy
                                 -( state_flux_z(l,k+1,j  ,i  ) - state_flux_z(l,k,j,i) ) / dz;
           if (l == idV && sim2d) state_tend(l,k,j,i) = 0;
+        } else {
+          state_tend(l,k,j,i) = 0;
         }
       });
     }
@@ -897,19 +892,53 @@ namespace modules {
         periodic_y = true;
         periodic_z = false;
 
-        auto i_beg = coupler.get_i_beg();
-        auto j_beg = coupler.get_j_beg();
+        YAKL_SCOPE( material , this->material );
+        YAKL_SCOPE( slip     , this->slip     );
+
+        auto px      = coupler.get_px();
+        auto nproc_x = coupler.get_nproc_x();
+        auto i_beg   = coupler.get_i_beg();
+        auto j_beg   = coupler.get_j_beg();
+        auto nx_glob = coupler.get_nx_glob();
+        auto ny_glob = coupler.get_ny_glob();
+
+        // Open BCs in the x-direction, periodic in the y, and solid wall in the z
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int j, int ii) {
+          if (px == 0        ) material(hs+k,hs+j,      ii) = MATERIAL_OPEN;
+          if (px == nproc_x-1) material(hs+k,hs+j,hs+nx+ii) = MATERIAL_OPEN;
+        });
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(hs,ny,nx) , YAKL_LAMBDA (int kk, int j, int i) {
+          material(      kk,hs+j,hs+i) = MATERIAL_WALL;
+          material(hs+nz+kk,hs+j,hs+i) = MATERIAL_WALL;
+        });
+
+        // Insert a square cylindrical obstruction
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+          int x0 = 0.2*nx_glob;
+          int y0 = ny_glob/2;
+          int xr = 0.1*ny_glob;
+          int yr = 0.1*ny_glob;
+          if ( (std::abs((int) (j_beg+j-y0)) < yr) &&
+               (std::abs((int) (i_beg+i-x0)) < xr) ) {
+            material(hs+k,hs+j,hs+i) = MATERIAL_WALL;
+          }
+        });
+
 
         // Use quadrature to initialize state data
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-          real T = 300;
-          real p = 1.e5;
-          real r = p/(R_d*T);
-          state(idR,hs+k,hs+j,hs+i) = r;
-          state(idU,hs+k,hs+j,hs+i) = 0;
-          state(idV,hs+k,hs+j,hs+i) = 0;
-          state(idW,hs+k,hs+j,hs+i) = 0;
-          state(idT,hs+k,hs+j,hs+i) = p/(gamma-1);
+          real T   = 300;
+          real p   = 1.e5;
+          real rho = p/(R_d*T);
+          real u   = 20;
+          real v   = 0;
+          real w   = 0;
+          real K   = (u*u+v*v+w*w)/2;
+          state(idR,hs+k,hs+j,hs+i) = rho;
+          state(idU,hs+k,hs+j,hs+i) = rho*u;
+          state(idV,hs+k,hs+j,hs+i) = rho*v;
+          state(idW,hs+k,hs+j,hs+i) = rho*w;
+          state(idT,hs+k,hs+j,hs+i) = rho*c_v*T + rho*K;
         });
       }
 
