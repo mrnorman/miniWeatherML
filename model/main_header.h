@@ -55,7 +55,7 @@ template <class T> inline void debug_print_val( T var , char const * file , int 
 
 int constexpr max_fields = 50;
 
-typedef float real;
+typedef double real;
 
 YAKL_INLINE real constexpr operator"" _fp( long double x ) {
   return static_cast<real>(x);

@@ -40,6 +40,10 @@ namespace modules {
     int  static constexpr DATA_SUPERCELL = 1;
     int  static constexpr DATA_BUILDING  = 2;
 
+    int  static constexpr BC_PERIODIC = 0;
+    int  static constexpr BC_OPEN     = 1;
+    int  static constexpr BC_WALL     = 2;
+
     // Hydrostatic background profiles for density and potential temperature as cell averages and cell edge values
     real1d      hy_dens_cells;
     real1d      hy_dens_theta_cells;
@@ -54,6 +58,7 @@ namespace modules {
     int         nx  , ny  , nz  ;  // # cells in each dimension
     real        dx  , dy  , dz  ;  // grid spacing in each dimension
     real        xlen, ylen, zlen;  // length of domain in each dimension
+    int         bc_x, bc_y, bc_z;
     bool        sim2d;             // Whether we're simulating in 2-D
 
     // Physical constants
@@ -404,7 +409,9 @@ namespace modules {
         }
       });
 
-      edge_exchange( coupler , state_limits_x , tracers_limits_x , state_limits_y , tracers_limits_y );
+      edge_exchange( coupler , state_limits_x , tracers_limits_x ,
+                               state_limits_y , tracers_limits_y ,
+                               state_limits_z , tracers_limits_z );
 
       // The store a single values flux at cell edges
       auto &dm = coupler.get_data_manager_readwrite();
@@ -688,16 +695,28 @@ namespace modules {
                                   -( tracers_flux_z(l,k+1,j  ,i  ) - tracers_flux_z(l,k,j,i) ) / dz;
         }
         if (use_immersed_boundaries) {
-          real delta = std::pow( dx*dy*dz , 1._fp/3._fp );
-          real beta  = immersed_proportion(k,j,i);
-          real C_d   = 1.e3*beta/delta;
-          real rho   = state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k);
-          real uvel  = state(idU,hs+k,hs+j,hs+i) / rho;
-          real vvel  = state(idV,hs+k,hs+j,hs+i) / rho;
-          real wvel  = state(idW,hs+k,hs+j,hs+i) / rho;
+          real delta     = std::pow( dx*dy*dz , 1._fp/3._fp );
+          real beta      = immersed_proportion(k,j,i);
+          real C_d       = 1.e3*beta/delta;
+          real C_t       = 1.e1*beta/delta;
+          real rho       = state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k);
+          real uvel      = state(idU,hs+k,hs+j,hs+i) / rho;
+          real vvel      = state(idV,hs+k,hs+j,hs+i) / rho;
+          real wvel      = state(idW,hs+k,hs+j,hs+i) / rho;
+          real rho_theta = state(idT,hs+k,hs+j,hs+i) + hy_dens_theta_cells(k);
+          real wind_mag  = sqrt(uvel*uvel+vvel*vvel+wvel*wvel);
+          state_tend(idR,k,j,i) += -C_t * (rho-hy_dens_cells(k)) * wind_mag;
           state_tend(idU,k,j,i) += -C_d * rho * std::abs(uvel) * uvel;
           state_tend(idV,k,j,i) += -C_d * rho * std::abs(vvel) * vvel;
           state_tend(idW,k,j,i) += -C_d * rho * std::abs(wvel) * wvel;
+          state_tend(idT,k,j,i) += -C_t * (rho_theta-hy_dens_theta_cells(k)) * wind_mag;
+          // if (immersed_proportion(k,j,i) == 1) {
+          //   state_tend(idR,k,j,i) = -state(idR,hs+k,hs+j,hs+i)/dt;
+          //   state_tend(idU,k,j,i) = -state(idU,hs+k,hs+j,hs+i)/dt;
+          //   state_tend(idV,k,j,i) = -state(idV,hs+k,hs+j,hs+i)/dt;
+          //   state_tend(idW,k,j,i) = -state(idW,hs+k,hs+j,hs+i)/dt;
+          //   state_tend(idT,k,j,i) = -state(idT,hs+k,hs+j,hs+i)/dt;
+          // }
         }
       });
     }
@@ -723,16 +742,16 @@ namespace modules {
 
       auto &dm = coupler.get_data_manager_readwrite();
 
-      dm.register_and_allocate<real>("density_dry","",{nz,nx,ny});
-      dm.register_and_allocate<real>("uvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("vvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("wvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("temp","",{nz,nx,ny});
+      dm.register_and_allocate<real>("density_dry","",{nz,ny,nx});
+      dm.register_and_allocate<real>("uvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("vvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("wvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("temp","",{nz,ny,nx});
 
       sim2d = (coupler.get_ny_glob() == 1);
 
-      R_d   = coupler.get_option<real>("R_d" ,287);
-      R_v   = coupler.get_option<real>("R_v" ,461);
+      R_d   = coupler.get_option<real>("R_d" ,287 );
+      R_v   = coupler.get_option<real>("R_v" ,461 );
       cp_d  = coupler.get_option<real>("cp_d",1003);
       cp_v  = coupler.get_option<real>("cp_v",1859);
       p0    = coupler.get_option<real>("p0"  ,1.e5);
@@ -785,7 +804,9 @@ namespace modules {
       else if (init_data == "building" ) { init_data_int = DATA_BUILDING;  }
       else { endrun("ERROR: Invalid init_data in yaml input file"); }
 
+      use_immersed_boundaries = false;
       immersed_proportion = real3d("immersed_proportion",nz,ny,nx);
+      immersed_proportion = 0;
 
       etime   = 0;
       num_out = 0;
@@ -802,26 +823,23 @@ namespace modules {
 
       if (init_data_int == DATA_SUPERCELL) {
 
-        use_immersed_boundaries = false;
-        immersed_proportion = 0;
+        bc_x = BC_PERIODIC;
+        bc_y = BC_PERIODIC;
+        bc_z = BC_WALL;
         init_supercell( coupler , state , tracers );
 
       } else if (init_data_int == DATA_THERMAL) {
 
-        use_immersed_boundaries = false;
-        immersed_proportion = 0;
+        bc_x = BC_PERIODIC;
+        bc_y = BC_PERIODIC;
+        bc_z = BC_WALL;
         // Define quadrature weights and points for 3-point rules
-        const int nqpoints = 3;
+        const int nqpoints = 9;
         SArray<real,1,nqpoints> qpoints;
         SArray<real,1,nqpoints> qweights;
 
-        qpoints(0) = 0.112701665379258311482073460022;
-        qpoints(1) = 0.500000000000000000000000000000;
-        qpoints(2) = 0.887298334620741688517926539980;
-
-        qweights(0) = 0.277777777777777777777777777779;
-        qweights(1) = 0.444444444444444444444444444444;
-        qweights(2) = 0.277777777777777777777777777779;
+        TransformMatrices::get_gll_points (qpoints );
+        TransformMatrices::get_gll_weights(qweights);
 
         YAKL_SCOPE( init_data_int       , this->init_data_int       );
         YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
@@ -912,21 +930,19 @@ namespace modules {
 
       } else if (init_data_int == DATA_BUILDING) {
 
+        bc_x = BC_OPEN;
+        bc_y = BC_PERIODIC;
+        bc_z = BC_WALL;
         use_immersed_boundaries = true;
         immersed_proportion = 0;
 
         // Define quadrature weights and points for 3-point rules
-        const int nqpoints = 3;
+        const int nqpoints = 9;
         SArray<real,1,nqpoints> qpoints;
         SArray<real,1,nqpoints> qweights;
 
-        qpoints(0) = 0.112701665379258311482073460022;
-        qpoints(1) = 0.500000000000000000000000000000;
-        qpoints(2) = 0.887298334620741688517926539980;
-
-        qweights(0) = 0.277777777777777777777777777779;
-        qweights(1) = 0.444444444444444444444444444444;
-        qweights(2) = 0.277777777777777777777777777779;
+        TransformMatrices::get_gll_points (qpoints );
+        TransformMatrices::get_gll_weights(qweights);
 
         YAKL_SCOPE( init_data_int       , this->init_data_int       );
         YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
@@ -997,11 +1013,11 @@ namespace modules {
               }
             }
           }
-          int x0 = 0.3 * nx_glob;
-          int y0 = 0.5 * ny_glob;
-          int xr = 0.1 * ny_glob;
-          int yr = 0.1 * ny_glob;
-          int ztop = 0.3 * nz;
+          int x0 = 0.25 * nx_glob;
+          int y0 = 0.50 * ny_glob;
+          int xr = 0.10 * ny_glob;
+          int yr = 0.10 * ny_glob;
+          int ztop = 0.2 * nz;
           if ( std::abs((int)(i_beg+i-x0)) < xr && std::abs((int)(j_beg+j-y0)) < yr && k < ztop ) {
             immersed_proportion(k,j,i) = 1;
             state(idU,hs+k,hs+j,hs+i) = 0;
@@ -1505,8 +1521,19 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      YAKL_SCOPE( nx    , this->nx    );
-      YAKL_SCOPE( ny    , this->ny    );
+      auto nx          = coupler.get_nx();
+      auto ny          = coupler.get_ny();
+      auto nz          = coupler.get_nz();
+      auto num_tracers = coupler.get_num_tracers();
+      auto sim2d       = coupler.is_sim2d();
+      auto px          = coupler.get_px();
+      auto py          = coupler.get_py();
+      auto nproc_x     = coupler.get_nproc_x();
+      auto nproc_y     = coupler.get_nproc_y();
+
+      YAKL_SCOPE( bc_x , this->bc_x );
+      YAKL_SCOPE( bc_y , this->bc_y );
+      YAKL_SCOPE( bc_z , this->bc_z );
 
       int npack = num_state + num_tracers;
 
@@ -1627,16 +1654,100 @@ namespace modules {
           }
         });
       }
+
+      ////////////////////////////////////
+      // Begin boundary conditions
+      ////////////////////////////////////
+      if (bc_z == BC_PERIODIC) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(hs,ny,nx) , YAKL_LAMBDA (int kk, int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            state(l,      kk,hs+j,hs+i) = state(l,      kk+nz,hs+j,hs+i);
+            state(l,hs+nz+kk,hs+j,hs+i) = state(l,hs+nz+kk-nz,hs+j,hs+i);
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers(l,      kk,hs+j,hs+i) = tracers(l,      kk+nz,hs+j,hs+i);
+            tracers(l,hs+nz+kk,hs+j,hs+i) = tracers(l,hs+nz+kk-nz,hs+j,hs+i);
+          }
+        });
+      } else if (bc_z == BC_WALL || bc_z == BC_OPEN) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(hs,ny,nx) , YAKL_LAMBDA (int kk, int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            if (l == idW && bc_z == BC_WALL) {
+              state(l,      kk,hs+j,hs+i) = 0;
+              state(l,hs+nz+kk,hs+j,hs+i) = 0;
+            } else {
+              state(l,      kk,hs+j,hs+i) = state(l,hs+0   ,hs+j,hs+i);
+              state(l,hs+nz+kk,hs+j,hs+i) = state(l,hs+nz-1,hs+j,hs+i);
+            }
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers(l,      kk,hs+j,hs+i) = tracers(l,hs+0   ,hs+j,hs+i);
+            tracers(l,hs+nz+kk,hs+j,hs+i) = tracers(l,hs+nz-1,hs+j,hs+i);
+          }
+        });
+      }
+      if (bc_x == BC_WALL || bc_x == BC_OPEN) {
+        if (px == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int j, int ii) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idU && bc_x == BC_WALL) { state(l,hs+k,hs+j,ii) = 0; }
+              else                             { state(l,hs+k,hs+j,ii) = state(l,hs+k,hs+j,hs+0); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+j,ii) = tracers(l,hs+k,hs+j,hs+0); }
+          });
+        }
+        if (px == nproc_x-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int j, int ii) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idU && bc_x == BC_WALL) { state(l,hs+k,hs+j,hs+nx+ii) = 0; }
+              else                             { state(l,hs+k,hs+j,hs+nx+ii) = state(l,hs+k,hs+j,hs+nx-1); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+j,hs+nx+ii) = tracers(l,hs+k,hs+j,hs+nx-1); }
+          });
+        }
+      }
+      if (bc_y == BC_WALL || bc_y == BC_OPEN) {
+        if (py == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int jj, int i) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idV && bc_y == BC_WALL) { state(l,hs+k,jj,hs+i) = 0; }
+              else                             { state(l,hs+k,jj,hs+i) = state(l,hs+k,hs+0,hs+i); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,jj,hs+i) = tracers(l,hs+k,hs+0,hs+i); }
+          });
+        }
+        if (py == nproc_y-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int jj, int i) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idV && bc_y == BC_WALL) { state(l,hs+k,hs+ny+jj,hs+i) = 0; }
+              else                             { state(l,hs+k,hs+ny+jj,hs+i) = state(l,hs+k,hs+ny-1,hs+i); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+ny+jj,hs+i) = tracers(l,hs+k,hs+ny-1,hs+i); }
+          });
+        }
+      }
     }
 
 
     void edge_exchange(core::Coupler const &coupler , real5d const &state_limits_x , real5d const &tracers_limits_x ,
-                                                      real5d const &state_limits_y , real5d const &tracers_limits_y ) const {
+                                                      real5d const &state_limits_y , real5d const &tracers_limits_y ,
+                                                      real5d const &state_limits_z , real5d const &tracers_limits_z ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      YAKL_SCOPE( nx    , this->nx    );
-      YAKL_SCOPE( ny    , this->ny    );
+      auto nx          = coupler.get_nx();
+      auto ny          = coupler.get_ny();
+      auto nz          = coupler.get_nz();
+      auto num_tracers = coupler.get_num_tracers();
+      auto sim2d       = coupler.is_sim2d();
+      auto px          = coupler.get_px();
+      auto py          = coupler.get_py();
+      auto nproc_x     = coupler.get_nproc_x();
+      auto nproc_y     = coupler.get_nproc_y();
+
+      YAKL_SCOPE( bc_x , this->bc_x );
+      YAKL_SCOPE( bc_y , this->bc_y );
+      YAKL_SCOPE( bc_z , this->bc_z );
 
       int npack = num_state + num_tracers;
 
@@ -1756,6 +1867,78 @@ namespace modules {
             tracers_limits_y(v-num_state,1,k,ny,i) = edge_recv_buf_N(v,k,i);
           }
         });
+      }
+
+      /////////////////////////////////
+      // Begin boundary conditions
+      /////////////////////////////////
+      if (bc_z == BC_PERIODIC) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(ny,nx) , YAKL_LAMBDA (int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            state_limits_z(l,0,0 ,j,i) = state_limits_z(l,0,nz,j,i);
+            state_limits_z(l,1,nz,j,i) = state_limits_z(l,1,0 ,j,i);
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers_limits_z(l,0,0 ,j,i) = tracers_limits_z(l,0,nz,j,i);
+            tracers_limits_z(l,1,nz,j,i) = tracers_limits_z(l,1,0 ,j,i);
+          }
+        });
+      } else if (bc_z == BC_WALL || bc_z == BC_OPEN) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(ny,nx) , YAKL_LAMBDA (int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            if (l == idW && bc_z == BC_WALL) {
+              state_limits_z(l,0,0 ,j,i) = 0;
+              state_limits_z(l,1,0 ,j,i) = 0;
+              state_limits_z(l,0,nz,j,i) = 0;
+              state_limits_z(l,1,nz,j,i) = 0;
+            } else {
+              state_limits_z(l,0,0 ,j,i) = state_limits_z(l,1,0 ,j,i);
+              state_limits_z(l,1,nz,j,i) = state_limits_z(l,0,nz,j,i);
+            }
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers_limits_z(l,0,0 ,j,i) = tracers_limits_z(l,1,0 ,j,i);
+            tracers_limits_z(l,1,nz,j,i) = tracers_limits_z(l,0,nz,j,i);
+          }
+        });
+      }
+      if (bc_x == BC_WALL || bc_x == BC_OPEN) {
+        if (px == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,ny) , YAKL_LAMBDA (int k, int j) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idU && bc_x == BC_WALL) { state_limits_x(l,0,k,j,0) = 0; state_limits_x(l,1,k,j,0) = 0; }
+              else                             { state_limits_x(l,0,k,j,0) = state_limits_x(l,1,k,j,0); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers_limits_x(l,0,k,j,0) = tracers_limits_x(l,1,k,j,0); }
+          });
+        } else if (px == nproc_x-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,ny) , YAKL_LAMBDA (int k, int j) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idU && bc_x == BC_WALL) { state_limits_x(l,0,k,j,nx) = 0; state_limits_x(l,1,k,j,nx) = 0; }
+              else                             { state_limits_x(l,1,k,j,nx) = state_limits_x(l,0,k,j,nx); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers_limits_x(l,1,k,j,nx) = tracers_limits_x(l,0,k,j,nx); }
+          });
+        }
+      }
+      if (bc_y == BC_WALL || bc_y == BC_OPEN) {
+        if (py == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nx) , YAKL_LAMBDA (int k, int i) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idV && bc_y == BC_WALL) { state_limits_y(l,0,k,0,i) = 0; state_limits_y(l,1,k,0,i) = 0; }
+              else                             { state_limits_y(l,0,k,0,i) = state_limits_y(l,1,k,0,i); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,0,k,0,i) = tracers_limits_y(l,1,k,0,i); }
+          });
+        } else if (py == nproc_y-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nx) , YAKL_LAMBDA (int k, int i) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idV && bc_y == BC_WALL) { state_limits_y(l,0,k,ny,i) = 0; state_limits_y(l,1,k,ny,i) = 0; }
+              else                             { state_limits_y(l,1,k,ny,i) = state_limits_y(l,0,k,ny,i); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,1,k,ny,i) = tracers_limits_y(l,0,k,ny,i); }
+          });
+        }
       }
     }
 
