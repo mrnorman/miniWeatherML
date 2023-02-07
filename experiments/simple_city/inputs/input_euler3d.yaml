@@ -5,14 +5,14 @@ sim_time: 1000  # 86400
 # Number of cells to use in the CRMs
 nx_glob: 100
 ny_glob: 100
-nz     : 5
+nz     : 50
 
 # Domain size of the CRMs
 xlen: 2000
 ylen: 2000
 zlen: 1000
 
-init_data: simple_city
+init_data: building
 
 # Output filename
 out_fname: test.nc
@@ -24,6 +24,6 @@ dt_gcm: 900
 dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 5.
+out_freq: 1.
 
 

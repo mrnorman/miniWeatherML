@@ -74,7 +74,7 @@ namespace modules {
     SArray<real,1,hs+2>           weno_idl;         // Ideal weights for WENO
     real                          weno_sigma;       // WENO sigma parameter (handicap high-order TV estimate)
 
-    bool3d obstruction;
+    real3d immersed_proportion;
 
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
@@ -209,61 +209,6 @@ namespace modules {
     }
 
 
-    template <int D>
-    YAKL_INLINE static void set_state_limits( real5d const &state_limits ,
-                                              int l , int k , int j , int i ,
-                                              bool3d const &obstruction ,
-                                              SArray<real,1,2> &gll ) {
-      bool normal_vel = ( (D==DIR_X) && (l==idU) ) ||
-                        ( (D==DIR_Y) && (l==idV) ) ||
-                        ( (D==DIR_Z) && (l==idW) ); // Is this variable normal velocity?
-      { // Handle the left interface of this cell
-        int k_ind, j_ind, i_ind;
-        if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i-1; }
-        if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j-1;  i_ind = i  ; }
-        if constexpr (D == DIR_Z) { k_ind = k-1;  j_ind = j  ;  i_ind = i  ; }
-        bool obstr = obstruction(hs+k_ind,hs+j_ind,hs+i_ind);
-        if ( obstr && normal_vel ) gll(0) = 0;
-        state_limits(l,1,k,j,i) = gll(0);
-        if ( obstr ) state_limits(l,0,k,j,i) = gll(0);
-      }
-      { // Handle the right interface of this cell
-        int k_ind, j_ind, i_ind;
-        if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i+1; }
-        if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j+1;  i_ind = i  ; }
-        if constexpr (D == DIR_Z) { k_ind = k+1;  j_ind = j  ;  i_ind = i  ; }
-        bool obstr = obstruction(hs+k_ind,hs+j_ind,hs+i_ind);
-        if ( obstr && normal_vel ) gll(1) = 0;
-        state_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
-        if ( obstr ) state_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
-      }
-    }
-
-
-    template <int D>
-    YAKL_INLINE static void set_tracer_limits( real5d const &tracers_limits ,
-                                               int l , int k , int j , int i ,
-                                               bool3d const &obstruction ,
-                                               SArray<real,1,2> &gll ) {
-      { // Handle the left interface of this cell
-        int k_ind, j_ind, i_ind;
-        if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i-1; }
-        if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j-1;  i_ind = i  ; }
-        if constexpr (D == DIR_Z) { k_ind = k-1;  j_ind = j  ;  i_ind = i  ; }
-        tracers_limits(l,1,k,j,i) = gll(0);
-        if ( obstruction(hs+k_ind,hs+j_ind,hs+i_ind) ) tracers_limits(l,0,k,j,i) = gll(0);
-      }
-      { // Handle the right interface of this cell
-        int k_ind, j_ind, i_ind;
-        if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i+1; }
-        if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j+1;  i_ind = i  ; }
-        if constexpr (D == DIR_Z) { k_ind = k+1;  j_ind = j  ;  i_ind = i  ; }
-        tracers_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
-        if ( obstruction(hs+k_ind,hs+j_ind,hs+i_ind) ) tracers_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
-      }
-    }
-
-
 
     // Compute the tendencies for state and tracers for one semi-discretized step inside the RK integrator
     // Tendencies are the time rate of change for a quantity
@@ -293,26 +238,9 @@ namespace modules {
       YAKL_SCOPE( weno_sigma       , this->weno_sigma       );
       YAKL_SCOPE( C0               , this->C0               );
       YAKL_SCOPE( gamma            , this->gamma            );
-      YAKL_SCOPE( obstruction      , this->obstruction      );
 
       // Exchange halos and enforce domain boundary conditions.
       halo_exchange( coupler , state , tracers );
-
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        for (int l=0; l < num_state; l++) {
-          real tot = 0;
-          int  num = 0;
-          if (obstruction(hs+k,hs+j,hs+i)) {
-            if (! obstruction(hs+k,hs+j,hs+i+1)) { tot += state(l,hs+k,hs+j,hs+i+1); num++; }
-            if (! obstruction(hs+k,hs+j,hs+i-1)) { tot += state(l,hs+k,hs+j,hs+i-1); num++; }
-            if (! obstruction(hs+k,hs+j+1,hs+i)) { tot += state(l,hs+k,hs+j+1,hs+i); num++; }
-            if (! obstruction(hs+k,hs+j-1,hs+i)) { tot += state(l,hs+k,hs+j-1,hs+i); num++; }
-            if (! obstruction(hs+k+1,hs+j,hs+i)) { tot += state(l,hs+k+1,hs+j,hs+i); num++; }
-            if (! obstruction(hs+k-1,hs+j,hs+i)) { tot += state(l,hs+k-1,hs+j,hs+i); num++; }
-            if (num > 0) state(l,hs+k,hs+j,hs+i) tot / num;
-          }
-        }
-      });
 
       // These arrays store high-order-accurate samples of the state and tracers at cell edges after cell-centered recon
       real5d state_limits_x  ("state_limits_x"  ,num_state  ,2,nz  ,ny  ,nx+1);
@@ -325,80 +253,83 @@ namespace modules {
       // Compute samples of state and tracers at cell edges using cell-centered reconstructions at high-order with WENO
       // At the end of this, we will have two samples per cell edge in each dimension, one from each adjacent cell.
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i ) {
-        if ( ! obstruction(hs+k,hs+j,hs+i) ) { // Don't reconstruct for obstruction cells
-          ////////////////////////////////////////////////////////
-          // X-direction
-          ////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////
+        // X-direction
+        ////////////////////////////////////////////////////////
+        // State
+        for (int l=0; l < num_state; l++) {
+          SArray<real,1,ord> stencil;
+          for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s); }
+          SArray<real,1,2>   gll;
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          state_limits_x(l,1,k,j,i  ) = gll(0);
+          state_limits_x(l,0,k,j,i+1) = gll(1);
+        }
+        // Tracers
+        for (int l=0; l < num_tracers; l++) {
+          SArray<real,1,ord> stencil;
+          for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,hs+j,i+s); }
+          SArray<real,1,2>   gll;
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          tracers_limits_x(l,1,k,j,i  ) = gll(0);
+          tracers_limits_x(l,0,k,j,i+1) = gll(1);
+        }
+
+        ////////////////////////////////////////////////////////
+        // Y-direction
+        ////////////////////////////////////////////////////////
+        // If we're simulating in only 2-D, then do not compute y-direction tendencies
+        if (!sim2d) {
           // State
           for (int l=0; l < num_state; l++) {
             SArray<real,1,ord> stencil;
-            for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s); }
-            SArray<real,1,2>   gll;
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            set_state_limits<DIR_X>( state_limits_x , l , k , j , i , obstruction , gll );
-          }
-          // Tracers
-          for (int l=0; l < num_tracers; l++) {
-            SArray<real,1,ord> stencil;
-            for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,hs+j,i+s); }
-            SArray<real,1,2>   gll;
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            set_tracer_limits<DIR_X>( tracers_limits_x , l , k , j , i , obstruction , gll );
-          }
-
-          ////////////////////////////////////////////////////////
-          // Y-direction
-          ////////////////////////////////////////////////////////
-          // If we're simulating in only 2-D, then do not compute y-direction tendencies
-          if (!sim2d) {
-            // State
-            for (int l=0; l < num_state; l++) {
-              SArray<real,1,ord> stencil;
             for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
-              SArray<real,1,2>   gll;
-              for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
-              reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-              set_state_limits<DIR_Y>( state_limits_y , l , k , j , i , obstruction , gll );
-            }
-            // Tracers
-            for (int l=0; l < num_tracers; l++) {
-              SArray<real,1,ord> stencil;
-            for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,j+s,hs+i); }
-              SArray<real,1,2>   gll;
-              reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-              set_tracer_limits<DIR_Y>( tracers_limits_y , l , k , j , i , obstruction , gll );
-            }
-          } else {
-            for (int l=0; l < num_state  ; l++) { state_limits_y  (l,1,k,j,i) = 0; state_limits_y  (l,0,k,j+1,i) = 0; }
-            for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,1,k,j,i) = 0; tracers_limits_y(l,0,k,j+1,i) = 0; }
-          }
-
-          ////////////////////////////////////////////////////////
-          // Z-direction
-          ////////////////////////////////////////////////////////
-          // State
-          for (int l=0; l < num_state; l++) {
-            SArray<real,1,ord> stencil;
-            for (int s=0; s < ord; s++) { stencil(s) = state(l,k+s,hs+j,hs+i); }
             SArray<real,1,2>   gll;
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            set_state_limits<DIR_Z>( state_limits_z , l , k , j , i , obstruction , gll );
+            state_limits_y(l,1,k,j  ,i) = gll(0);
+            state_limits_y(l,0,k,j+1,i) = gll(1);
           }
           // Tracers
           for (int l=0; l < num_tracers; l++) {
             SArray<real,1,ord> stencil;
-            for (int s=0; s < ord; s++) { stencil(s) = tracers(l,k+s,hs+j,hs+i); }
+            for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,j+s,hs+i); }
             SArray<real,1,2>   gll;
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            set_tracer_limits<DIR_Z>( tracers_limits_z , l , k , j , i , obstruction , gll );
+            tracers_limits_y(l,1,k,j  ,i) = gll(0);
+            tracers_limits_y(l,0,k,j+1,i) = gll(1);
           }
+        } else {
+          for (int l=0; l < num_state  ; l++) { state_limits_y  (l,1,k,j,i) = 0; state_limits_y  (l,0,k,j+1,i) = 0; }
+          for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,1,k,j,i) = 0; tracers_limits_y(l,0,k,j+1,i) = 0; }
+        }
+
+        ////////////////////////////////////////////////////////
+        // Z-direction
+        ////////////////////////////////////////////////////////
+        // State
+        for (int l=0; l < num_state; l++) {
+          SArray<real,1,ord> stencil;
+          for (int s=0; s < ord; s++) { stencil(s) = state(l,k+s,hs+j,hs+i); }
+          SArray<real,1,2>   gll;
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          state_limits_z(l,1,k  ,j,i) = gll(0);
+          state_limits_z(l,0,k+1,j,i) = gll(1);
+        }
+        // Tracers
+        for (int l=0; l < num_tracers; l++) {
+          SArray<real,1,ord> stencil;
+          for (int s=0; s < ord; s++) { stencil(s) = tracers(l,k+s,hs+j,hs+i); }
+          SArray<real,1,2>   gll;
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          tracers_limits_z(l,1,k  ,j,i) = gll(0);
+          tracers_limits_z(l,0,k+1,j,i) = gll(1);
         }
       });
 
       // Exchange cell interface estimates between processes, and handle boundary conditions
       edge_exchange( coupler , state_limits_x , tracers_limits_x ,
                                state_limits_y , tracers_limits_y ,
-                               state_limits_z , tracers_limits_z);
+                               state_limits_z , tracers_limits_z );
 
 
       // The store a single values flux at cell edges
@@ -416,67 +347,65 @@ namespace modules {
         // X-direction
         ////////////////////////////////////////////////////////
         if (j < ny && k < nz) {
-          if ( (! obstruction(hs+k,hs+j,hs+i-1)) || (! obstruction(hs+k,hs+j,hs+i)) ) {
-            // Get left and right state
-            real r_L = state_limits_x(idR,0,k,j,i)    ;   real r_R = state_limits_x(idR,1,k,j,i)    ;
-            real u_L = state_limits_x(idU,0,k,j,i)/r_L;   real u_R = state_limits_x(idU,1,k,j,i)/r_R;
-            real v_L = state_limits_x(idV,0,k,j,i)/r_L;   real v_R = state_limits_x(idV,1,k,j,i)/r_R;
-            real w_L = state_limits_x(idW,0,k,j,i)/r_L;   real w_R = state_limits_x(idW,1,k,j,i)/r_R;
-            real t_L = state_limits_x(idT,0,k,j,i)/r_L;   real t_R = state_limits_x(idT,1,k,j,i)/r_R;
-            // Compute average state
-            real r = 0.5_fp * (r_L + r_R);
-            real u = 0.5_fp * (u_L + u_R);
-            real v = 0.5_fp * (v_L + v_R);
-            real w = 0.5_fp * (w_L + w_R);
-            real t = 0.5_fp * (t_L + t_R);
-            real p = C0 * pow(r*t,gamma);
-            real cs2 = gamma*p/r;
-            real cs  = sqrt(cs2);
+          // Get left and right state
+          real r_L = state_limits_x(idR,0,k,j,i)    ;   real r_R = state_limits_x(idR,1,k,j,i)    ;
+          real u_L = state_limits_x(idU,0,k,j,i)/r_L;   real u_R = state_limits_x(idU,1,k,j,i)/r_R;
+          real v_L = state_limits_x(idV,0,k,j,i)/r_L;   real v_R = state_limits_x(idV,1,k,j,i)/r_R;
+          real w_L = state_limits_x(idW,0,k,j,i)/r_L;   real w_R = state_limits_x(idW,1,k,j,i)/r_R;
+          real t_L = state_limits_x(idT,0,k,j,i)/r_L;   real t_R = state_limits_x(idT,1,k,j,i)/r_R;
+          // Compute average state
+          real r = 0.5_fp * (r_L + r_R);
+          real u = 0.5_fp * (u_L + u_R);
+          real v = 0.5_fp * (v_L + v_R);
+          real w = 0.5_fp * (w_L + w_R);
+          real t = 0.5_fp * (t_L + t_R);
+          real p = C0 * pow(r*t,gamma);
+          real cs2 = gamma*p/r;
+          real cs  = sqrt(cs2);
 
-            // COMPUTE UPWIND STATE FLUXES
-            // Get left and right fluxes
-            real q1_L = state_limits_x(idR,0,k,j,i);   real q1_R = state_limits_x(idR,1,k,j,i);
-            real q2_L = state_limits_x(idU,0,k,j,i);   real q2_R = state_limits_x(idU,1,k,j,i);
-            real q3_L = state_limits_x(idV,0,k,j,i);   real q3_R = state_limits_x(idV,1,k,j,i);
-            real q4_L = state_limits_x(idW,0,k,j,i);   real q4_R = state_limits_x(idW,1,k,j,i);
-            real q5_L = state_limits_x(idT,0,k,j,i);   real q5_R = state_limits_x(idT,1,k,j,i);
-            // Compute upwind characteristics
-            // Waves 1-3, velocity: u
-            real w1, w2, w3;
+          // COMPUTE UPWIND STATE FLUXES
+          // Get left and right fluxes
+          real q1_L = state_limits_x(idR,0,k,j,i);   real q1_R = state_limits_x(idR,1,k,j,i);
+          real q2_L = state_limits_x(idU,0,k,j,i);   real q2_R = state_limits_x(idU,1,k,j,i);
+          real q3_L = state_limits_x(idV,0,k,j,i);   real q3_R = state_limits_x(idV,1,k,j,i);
+          real q4_L = state_limits_x(idW,0,k,j,i);   real q4_R = state_limits_x(idW,1,k,j,i);
+          real q5_L = state_limits_x(idT,0,k,j,i);   real q5_R = state_limits_x(idT,1,k,j,i);
+          // Compute upwind characteristics
+          // Waves 1-3, velocity: u
+          real w1, w2, w3;
+          if (u > 0) {
+            w1 = q1_L - q5_L/t;
+            w2 = q3_L - v*q5_L/t;
+            w3 = q4_L - w*q5_L/t;
+          } else {
+            w1 = q1_R - q5_R/t;
+            w2 = q3_R - v*q5_R/t;
+            w3 = q4_R - w*q5_R/t;
+          }
+          // Wave 5, velocity: u-cs
+          real w5 =  u*q1_R/(2*cs) - q2_R/(2*cs) + q5_R/(2*t);
+          // Wave 6, velocity: u+cs
+          real w6 = -u*q1_L/(2*cs) + q2_L/(2*cs) + q5_L/(2*t);
+          // Use right eigenmatrix to compute upwind flux
+          real q1 = w1 + w5 + w6;
+          real q2 = u*w1 + (u-cs)*w5 + (u+cs)*w6;
+          real q3 = w2 + v*w5 + v*w6;
+          real q4 = w3 + w*w5 + w*w6;
+          real q5 =      t*w5 + t*w6;
+
+          state_flux_x(idR,k,j,i) = q2;
+          state_flux_x(idU,k,j,i) = q2*q2/q1 + C0*pow(q5,gamma);
+          state_flux_x(idV,k,j,i) = q2*q3/q1;
+          state_flux_x(idW,k,j,i) = q2*q4/q1;
+          state_flux_x(idT,k,j,i) = q2*q5/q1;
+
+          // COMPUTE UPWIND TRACER FLUXES
+          // Handle it one tracer at a time
+          for (int tr=0; tr < num_tracers; tr++) {
             if (u > 0) {
-              w1 = q1_L - q5_L/t;
-              w2 = q3_L - v*q5_L/t;
-              w3 = q4_L - w*q5_L/t;
+              tracers_flux_x(tr,k,j,i) = q2 * tracers_limits_x(tr,0,k,j,i) / r_L;
             } else {
-              w1 = q1_R - q5_R/t;
-              w2 = q3_R - v*q5_R/t;
-              w3 = q4_R - w*q5_R/t;
-            }
-            // Wave 5, velocity: u-cs
-            real w5 =  u*q1_R/(2*cs) - q2_R/(2*cs) + q5_R/(2*t);
-            // Wave 6, velocity: u+cs
-            real w6 = -u*q1_L/(2*cs) + q2_L/(2*cs) + q5_L/(2*t);
-            // Use right eigenmatrix to compute upwind flux
-            real q1 = w1 + w5 + w6;
-            real q2 = u*w1 + (u-cs)*w5 + (u+cs)*w6;
-            real q3 = w2 + v*w5 + v*w6;
-            real q4 = w3 + w*w5 + w*w6;
-            real q5 =      t*w5 + t*w6;
-
-            state_flux_x(idR,k,j,i) = q2;
-            state_flux_x(idU,k,j,i) = q2*q2/q1 + C0*pow(q5,gamma);
-            state_flux_x(idV,k,j,i) = q2*q3/q1;
-            state_flux_x(idW,k,j,i) = q2*q4/q1;
-            state_flux_x(idT,k,j,i) = q2*q5/q1;
-
-            // COMPUTE UPWIND TRACER FLUXES
-            // Handle it one tracer at a time
-            for (int tr=0; tr < num_tracers; tr++) {
-              if (u > 0) {
-                tracers_flux_x(tr,k,j,i) = q2 * tracers_limits_x(tr,0,k,j,i) / r_L;
-              } else {
-                tracers_flux_x(tr,k,j,i) = q2 * tracers_limits_x(tr,1,k,j,i) / r_R;
-              }
+              tracers_flux_x(tr,k,j,i) = q2 * tracers_limits_x(tr,1,k,j,i) / r_R;
             }
           }
         }
@@ -486,67 +415,65 @@ namespace modules {
         ////////////////////////////////////////////////////////
         // If we are simulating in 2-D, then do not do Riemann in the y-direction
         if ( (! sim2d) && i < nx && k < nz) {
-          if ( (! obstruction(hs+k,hs+j-1,hs+i)) || (! obstruction(hs+k,hs+j,hs+i)) ) {
-            // Get left and right state
-            real r_L = state_limits_y(idR,0,k,j,i)    ;   real r_R = state_limits_y(idR,1,k,j,i)    ;
-            real u_L = state_limits_y(idU,0,k,j,i)/r_L;   real u_R = state_limits_y(idU,1,k,j,i)/r_R;
-            real v_L = state_limits_y(idV,0,k,j,i)/r_L;   real v_R = state_limits_y(idV,1,k,j,i)/r_R;
-            real w_L = state_limits_y(idW,0,k,j,i)/r_L;   real w_R = state_limits_y(idW,1,k,j,i)/r_R;
-            real t_L = state_limits_y(idT,0,k,j,i)/r_L;   real t_R = state_limits_y(idT,1,k,j,i)/r_R;
-            // Compute average state
-            real r = 0.5_fp * (r_L + r_R);
-            real u = 0.5_fp * (u_L + u_R);
-            real v = 0.5_fp * (v_L + v_R);
-            real w = 0.5_fp * (w_L + w_R);
-            real t = 0.5_fp * (t_L + t_R);
-            real p = C0 * pow(r*t,gamma);
-            real cs2 = gamma*p/r;
-            real cs  = sqrt(cs2);
+          // Get left and right state
+          real r_L = state_limits_y(idR,0,k,j,i)    ;   real r_R = state_limits_y(idR,1,k,j,i)    ;
+          real u_L = state_limits_y(idU,0,k,j,i)/r_L;   real u_R = state_limits_y(idU,1,k,j,i)/r_R;
+          real v_L = state_limits_y(idV,0,k,j,i)/r_L;   real v_R = state_limits_y(idV,1,k,j,i)/r_R;
+          real w_L = state_limits_y(idW,0,k,j,i)/r_L;   real w_R = state_limits_y(idW,1,k,j,i)/r_R;
+          real t_L = state_limits_y(idT,0,k,j,i)/r_L;   real t_R = state_limits_y(idT,1,k,j,i)/r_R;
+          // Compute average state
+          real r = 0.5_fp * (r_L + r_R);
+          real u = 0.5_fp * (u_L + u_R);
+          real v = 0.5_fp * (v_L + v_R);
+          real w = 0.5_fp * (w_L + w_R);
+          real t = 0.5_fp * (t_L + t_R);
+          real p = C0 * pow(r*t,gamma);
+          real cs2 = gamma*p/r;
+          real cs  = sqrt(cs2);
 
-            // COMPUTE UPWIND STATE FLUXES
-            // Get left and right fluxes
-            real q1_L = state_limits_y(idR,0,k,j,i);   real q1_R = state_limits_y(idR,1,k,j,i);
-            real q2_L = state_limits_y(idU,0,k,j,i);   real q2_R = state_limits_y(idU,1,k,j,i);
-            real q3_L = state_limits_y(idV,0,k,j,i);   real q3_R = state_limits_y(idV,1,k,j,i);
-            real q4_L = state_limits_y(idW,0,k,j,i);   real q4_R = state_limits_y(idW,1,k,j,i);
-            real q5_L = state_limits_y(idT,0,k,j,i);   real q5_R = state_limits_y(idT,1,k,j,i);
-            // Compute upwind characteristics
-            // Waves 1-3, velocity: v
-            real w1, w2, w3;
+          // COMPUTE UPWIND STATE FLUXES
+          // Get left and right fluxes
+          real q1_L = state_limits_y(idR,0,k,j,i);   real q1_R = state_limits_y(idR,1,k,j,i);
+          real q2_L = state_limits_y(idU,0,k,j,i);   real q2_R = state_limits_y(idU,1,k,j,i);
+          real q3_L = state_limits_y(idV,0,k,j,i);   real q3_R = state_limits_y(idV,1,k,j,i);
+          real q4_L = state_limits_y(idW,0,k,j,i);   real q4_R = state_limits_y(idW,1,k,j,i);
+          real q5_L = state_limits_y(idT,0,k,j,i);   real q5_R = state_limits_y(idT,1,k,j,i);
+          // Compute upwind characteristics
+          // Waves 1-3, velocity: v
+          real w1, w2, w3;
+          if (v > 0) {
+            w1 = q1_L - q5_L/t;
+            w2 = q2_L - u*q5_L/t;
+            w3 = q4_L - w*q5_L/t;
+          } else {
+            w1 = q1_R - q5_R/t;
+            w2 = q2_R - u*q5_R/t;
+            w3 = q4_R - w*q5_R/t;
+          }
+          // Wave 5, velocity: v-cs
+          real w5 =  v*q1_R/(2*cs) - q3_R/(2*cs) + q5_R/(2*t);
+          // Wave 6, velocity: v+cs
+          real w6 = -v*q1_L/(2*cs) + q3_L/(2*cs) + q5_L/(2*t);
+          // Use right eigenmatrix to compute upwind flux
+          real q1 = w1 + w5 + w6;
+          real q2 = w2 + u*w5 + u*w6;
+          real q3 = v*w1 + (v-cs)*w5 + (v+cs)*w6;
+          real q4 = w3 + w*w5 + w*w6;
+          real q5 =      t*w5 + t*w6;
+
+          state_flux_y(idR,k,j,i) = q3;
+          state_flux_y(idU,k,j,i) = q3*q2/q1;
+          state_flux_y(idV,k,j,i) = q3*q3/q1 + C0*pow(q5,gamma);
+          state_flux_y(idW,k,j,i) = q3*q4/q1;
+          state_flux_y(idT,k,j,i) = q3*q5/q1;
+
+          // COMPUTE UPWIND TRACER FLUXES
+          // Handle it one tracer at a time
+          for (int tr=0; tr < num_tracers; tr++) {
             if (v > 0) {
-              w1 = q1_L - q5_L/t;
-              w2 = q2_L - u*q5_L/t;
-              w3 = q4_L - w*q5_L/t;
+              tracers_flux_y(tr,k,j,i) = q3 * tracers_limits_y(tr,0,k,j,i) / r_L;
             } else {
-              w1 = q1_R - q5_R/t;
-              w2 = q2_R - u*q5_R/t;
-              w3 = q4_R - w*q5_R/t;
-            }
-            // Wave 5, velocity: v-cs
-            real w5 =  v*q1_R/(2*cs) - q3_R/(2*cs) + q5_R/(2*t);
-            // Wave 6, velocity: v+cs
-            real w6 = -v*q1_L/(2*cs) + q3_L/(2*cs) + q5_L/(2*t);
-            // Use right eigenmatrix to compute upwind flux
-            real q1 = w1 + w5 + w6;
-            real q2 = w2 + u*w5 + u*w6;
-            real q3 = v*w1 + (v-cs)*w5 + (v+cs)*w6;
-            real q4 = w3 + w*w5 + w*w6;
-            real q5 =      t*w5 + t*w6;
-
-            state_flux_y(idR,k,j,i) = q3;
-            state_flux_y(idU,k,j,i) = q3*q2/q1;
-            state_flux_y(idV,k,j,i) = q3*q3/q1 + C0*pow(q5,gamma);
-            state_flux_y(idW,k,j,i) = q3*q4/q1;
-            state_flux_y(idT,k,j,i) = q3*q5/q1;
-
-            // COMPUTE UPWIND TRACER FLUXES
-            // Handle it one tracer at a time
-            for (int tr=0; tr < num_tracers; tr++) {
-              if (v > 0) {
-                tracers_flux_y(tr,k,j,i) = q3 * tracers_limits_y(tr,0,k,j,i) / r_L;
-              } else {
-                tracers_flux_y(tr,k,j,i) = q3 * tracers_limits_y(tr,1,k,j,i) / r_R;
-              }
+              tracers_flux_y(tr,k,j,i) = q3 * tracers_limits_y(tr,1,k,j,i) / r_R;
             }
           }
         } else if (i < nx && k < nz) {
@@ -562,65 +489,63 @@ namespace modules {
         // Z-direction
         ////////////////////////////////////////////////////////
         if (i < nx && j < ny) {
-          if ( (! obstruction(hs+k-1,hs+j,hs+i)) || (! obstruction(hs+k,hs+j,hs+i)) ) {
-            // Get left and right state
-            real r_L = state_limits_z(idR,0,k,j,i)    ;   real r_R = state_limits_z(idR,1,k,j,i)    ;
-            real u_L = state_limits_z(idU,0,k,j,i)/r_L;   real u_R = state_limits_z(idU,1,k,j,i)/r_R;
-            real v_L = state_limits_z(idV,0,k,j,i)/r_L;   real v_R = state_limits_z(idV,1,k,j,i)/r_R;
-            real w_L = state_limits_z(idW,0,k,j,i)/r_L;   real w_R = state_limits_z(idW,1,k,j,i)/r_R;
-            real t_L = state_limits_z(idT,0,k,j,i)/r_L;   real t_R = state_limits_z(idT,1,k,j,i)/r_R;
-            // Compute average state
-            real r = 0.5_fp * (r_L + r_R);
-            real u = 0.5_fp * (u_L + u_R);
-            real v = 0.5_fp * (v_L + v_R);
-            real w = 0.5_fp * (w_L + w_R);
-            real t = 0.5_fp * (t_L + t_R);
-            real p = C0 * pow(r*t,gamma);
-            real cs2 = gamma*p/r;
-            real cs  = sqrt(cs2);
-            // Get left and right fluxes
-            real q1_L = state_limits_z(idR,0,k,j,i);   real q1_R = state_limits_z(idR,1,k,j,i);
-            real q2_L = state_limits_z(idU,0,k,j,i);   real q2_R = state_limits_z(idU,1,k,j,i);
-            real q3_L = state_limits_z(idV,0,k,j,i);   real q3_R = state_limits_z(idV,1,k,j,i);
-            real q4_L = state_limits_z(idW,0,k,j,i);   real q4_R = state_limits_z(idW,1,k,j,i);
-            real q5_L = state_limits_z(idT,0,k,j,i);   real q5_R = state_limits_z(idT,1,k,j,i);
-            // Compute upwind characteristics
-            // Waves 1-3, velocity: w
-            real w1, w2, w3;
+          // Get left and right state
+          real r_L = state_limits_z(idR,0,k,j,i)    ;   real r_R = state_limits_z(idR,1,k,j,i)    ;
+          real u_L = state_limits_z(idU,0,k,j,i)/r_L;   real u_R = state_limits_z(idU,1,k,j,i)/r_R;
+          real v_L = state_limits_z(idV,0,k,j,i)/r_L;   real v_R = state_limits_z(idV,1,k,j,i)/r_R;
+          real w_L = state_limits_z(idW,0,k,j,i)/r_L;   real w_R = state_limits_z(idW,1,k,j,i)/r_R;
+          real t_L = state_limits_z(idT,0,k,j,i)/r_L;   real t_R = state_limits_z(idT,1,k,j,i)/r_R;
+          // Compute average state
+          real r = 0.5_fp * (r_L + r_R);
+          real u = 0.5_fp * (u_L + u_R);
+          real v = 0.5_fp * (v_L + v_R);
+          real w = 0.5_fp * (w_L + w_R);
+          real t = 0.5_fp * (t_L + t_R);
+          real p = C0 * pow(r*t,gamma);
+          real cs2 = gamma*p/r;
+          real cs  = sqrt(cs2);
+          // Get left and right fluxes
+          real q1_L = state_limits_z(idR,0,k,j,i);   real q1_R = state_limits_z(idR,1,k,j,i);
+          real q2_L = state_limits_z(idU,0,k,j,i);   real q2_R = state_limits_z(idU,1,k,j,i);
+          real q3_L = state_limits_z(idV,0,k,j,i);   real q3_R = state_limits_z(idV,1,k,j,i);
+          real q4_L = state_limits_z(idW,0,k,j,i);   real q4_R = state_limits_z(idW,1,k,j,i);
+          real q5_L = state_limits_z(idT,0,k,j,i);   real q5_R = state_limits_z(idT,1,k,j,i);
+          // Compute upwind characteristics
+          // Waves 1-3, velocity: w
+          real w1, w2, w3;
+          if (w > 0) {
+            w1 = q1_L - q5_L/t;
+            w2 = q2_L - u*q5_L/t;
+            w3 = q3_L - v*q5_L/t;
+          } else {
+            w1 = q1_R - q5_R/t;
+            w2 = q2_R - u*q5_R/t;
+            w3 = q3_R - v*q5_R/t;
+          }
+          // Wave 5, velocity: w-cs
+          real w5 =  w*q1_R/(2*cs) - q4_R/(2*cs) + q5_R/(2*t);
+          // Wave 6, velocity: w+cs
+          real w6 = -w*q1_L/(2*cs) + q4_L/(2*cs) + q5_L/(2*t);
+          // Use right eigenmatrix to compute upwind flux
+          real q1 = w1 + w5 + w6;
+          real q2 = w2 + u*w5 + u*w6;
+          real q3 = w3 + v*w5 + v*w6;
+          real q4 = w*w1 + (w-cs)*w5 + (w+cs)*w6;
+          real q5 =      t*w5 + t*w6;
+
+          state_flux_z(idR,k,j,i) = q4;
+          state_flux_z(idU,k,j,i) = q4*q2/q1;
+          state_flux_z(idV,k,j,i) = q4*q3/q1;
+          state_flux_z(idW,k,j,i) = q4*q4/q1 + C0*pow(q5,gamma);
+          state_flux_z(idT,k,j,i) = q4*q5/q1;
+
+          // COMPUTE UPWIND TRACER FLUXES
+          // Handle it one tracer at a time
+          for (int tr=0; tr < num_tracers; tr++) {
             if (w > 0) {
-              w1 = q1_L - q5_L/t;
-              w2 = q2_L - u*q5_L/t;
-              w3 = q3_L - v*q5_L/t;
+              tracers_flux_z(tr,k,j,i) = q4 * tracers_limits_z(tr,0,k,j,i) / r_L;
             } else {
-              w1 = q1_R - q5_R/t;
-              w2 = q2_R - u*q5_R/t;
-              w3 = q3_R - v*q5_R/t;
-            }
-            // Wave 5, velocity: w-cs
-            real w5 =  w*q1_R/(2*cs) - q4_R/(2*cs) + q5_R/(2*t);
-            // Wave 6, velocity: w+cs
-            real w6 = -w*q1_L/(2*cs) + q4_L/(2*cs) + q5_L/(2*t);
-            // Use right eigenmatrix to compute upwind flux
-            real q1 = w1 + w5 + w6;
-            real q2 = w2 + u*w5 + u*w6;
-            real q3 = w3 + v*w5 + v*w6;
-            real q4 = w*w1 + (w-cs)*w5 + (w+cs)*w6;
-            real q5 =      t*w5 + t*w6;
-
-            state_flux_z(idR,k,j,i) = q4;
-            state_flux_z(idU,k,j,i) = q4*q2/q1;
-            state_flux_z(idV,k,j,i) = q4*q3/q1;
-            state_flux_z(idW,k,j,i) = q4*q4/q1 + C0*pow(q5,gamma);
-            state_flux_z(idT,k,j,i) = q4*q5/q1;
-
-            // COMPUTE UPWIND TRACER FLUXES
-            // Handle it one tracer at a time
-            for (int tr=0; tr < num_tracers; tr++) {
-              if (w > 0) {
-                tracers_flux_z(tr,k,j,i) = q4 * tracers_limits_z(tr,0,k,j,i) / r_L;
-              } else {
-                tracers_flux_z(tr,k,j,i) = q4 * tracers_limits_z(tr,1,k,j,i) / r_R;
-              }
+              tracers_flux_z(tr,k,j,i) = q4 * tracers_limits_z(tr,1,k,j,i) / r_R;
             }
           }
         }
@@ -658,21 +583,16 @@ namespace modules {
 
       // Compute tendencies as the flux divergence
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        if (! obstruction(hs+k,hs+j,hs+i)) {
-          for (int l = 0; l < num_state; l++) {
-            state_tend  (l,k,j,i) = -( state_flux_x  (l,k  ,j  ,i+1) - state_flux_x  (l,k,j,i) ) / dx
-                                    -( state_flux_y  (l,k  ,j+1,i  ) - state_flux_y  (l,k,j,i) ) / dy
-                                    -( state_flux_z  (l,k+1,j  ,i  ) - state_flux_z  (l,k,j,i) ) / dz;
-            if (l == idV && sim2d) state_tend(l,k,j,i) = 0;
-          }
-          for (int l = 0; l < num_tracers; l++) {
-            tracers_tend(l,k,j,i) = -( tracers_flux_x(l,k  ,j  ,i+1) - tracers_flux_x(l,k,j,i) ) / dx
-                                    -( tracers_flux_y(l,k  ,j+1,i  ) - tracers_flux_y(l,k,j,i) ) / dy
-                                    -( tracers_flux_z(l,k+1,j  ,i  ) - tracers_flux_z(l,k,j,i) ) / dz;
-          }
-        } else {
-          for (int l = 0; l < num_state  ; l++) { state_tend  (l,k,j,i) = 0; }
-          for (int l = 0; l < num_tracers; l++) { tracers_tend(l,k,j,i) = 0; }
+        for (int l = 0; l < num_state; l++) {
+          state_tend  (l,k,j,i) = -( state_flux_x  (l,k  ,j  ,i+1) - state_flux_x  (l,k,j,i) ) / dx
+                                  -( state_flux_y  (l,k  ,j+1,i  ) - state_flux_y  (l,k,j,i) ) / dy
+                                  -( state_flux_z  (l,k+1,j  ,i  ) - state_flux_z  (l,k,j,i) ) / dz;
+          if (l == idV && sim2d) state_tend(l,k,j,i) = 0;
+        }
+        for (int l = 0; l < num_tracers; l++) {
+          tracers_tend(l,k,j,i) = -( tracers_flux_x(l,k  ,j  ,i+1) - tracers_flux_x(l,k,j,i) ) / dx
+                                  -( tracers_flux_y(l,k  ,j+1,i  ) - tracers_flux_y(l,k,j,i) ) / dy
+                                  -( tracers_flux_z(l,k+1,j  ,i  ) - tracers_flux_z(l,k,j,i) ) / dz;
         }
       });
     }
@@ -696,8 +616,8 @@ namespace modules {
       auto ylen  = coupler.get_ylen();
       auto zlen  = coupler.get_zlen();
 
-      obstruction = bool3d("obstruction",nz+2*hs,ny+2*hs,nx+2*hs);
-      obstruction = false;
+      immersed_proportion = real3d("immersed_proportion",nz,ny,nx);
+      immersed_proportion = 0;
 
       auto &dm = coupler.get_data_manager_readwrite();
 
@@ -779,7 +699,7 @@ namespace modules {
       YAKL_SCOPE( p0                  , this->p0                  );
       YAKL_SCOPE( gamma               , this->gamma               );
       YAKL_SCOPE( C0                  , this->C0                  );
-      YAKL_SCOPE( obstruction         , this->obstruction         );
+      YAKL_SCOPE( immersed_proportion , this->immersed_proportion );
 
       auto px      = coupler.get_px();
       auto py      = coupler.get_py();
@@ -791,9 +711,9 @@ namespace modules {
       auto ny_glob = coupler.get_ny_glob();
 
       if ( init_data_int == DATA_SIMPLE_CITY ) {
-        bc_x = BC_OPEN;
-        bc_y = BC_PERIODIC;
-        bc_z = BC_WALL;
+        bc_x = BC_PERIODIC; // BC_OPEN;
+        bc_y = BC_PERIODIC; // BC_PERIODIC;
+        bc_z = BC_PERIODIC; // BC_WALL;
 
         // Use quadrature to initialize state and tracer data
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
@@ -835,7 +755,7 @@ namespace modules {
           if ( (std::abs((int) (j_beg+j-y0)) < yr) &&
                (std::abs((int) (i_beg+i-x0)) < xr) &&
                k < ktop ) {
-            obstruction(hs+k,hs+j,hs+i) = true;
+            immersed_proportion(k,j,i) = 1.;
           }
         });
       }
@@ -1252,6 +1172,9 @@ namespace modules {
         });
       }
 
+      ////////////////////////////////////
+      // Begin boundary conditions
+      ////////////////////////////////////
       if (bc_z == BC_PERIODIC) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(hs,ny,nx) , YAKL_LAMBDA (int kk, int j, int i) {
           for (int l=0; l < num_state; l++) {
@@ -1462,7 +1385,10 @@ namespace modules {
           }
         });
       }
-      
+
+      /////////////////////////////////
+      // Begin boundary conditions
+      /////////////////////////////////
       if (bc_z == BC_PERIODIC) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(ny,nx) , YAKL_LAMBDA (int j, int i) {
           for (int l=0; l < num_state; l++) {
@@ -1485,6 +1411,7 @@ namespace modules {
             } else {
               state_limits_z(l,0,0 ,j,i) = state_limits_z(l,1,0 ,j,i);
               state_limits_z(l,1,nz,j,i) = state_limits_z(l,0,nz,j,i);
+            }
           }
           for (int l=0; l < num_tracers; l++) {
             tracers_limits_z(l,0,0 ,j,i) = tracers_limits_z(l,1,0 ,j,i);
@@ -1502,6 +1429,7 @@ namespace modules {
             for (int l=0; l < num_tracers; l++) { tracers_limits_x(l,0,k,j,0) = tracers_limits_x(l,1,k,j,0); }
           });
         } else if (px == nproc_x-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,ny) , YAKL_LAMBDA (int k, int j) {
             for (int l=0; l < num_state; l++) {
               if (l == idU && bc_x == BC_WALL) { state_limits_x(l,0,k,j,nx) = 0; state_limits_x(l,1,k,j,nx) = 0; }
               else                             { state_limits_x(l,1,k,j,nx) = state_limits_x(l,0,k,j,nx); }

@@ -38,6 +38,7 @@ namespace modules {
     // IDs for the test cases
     int  static constexpr DATA_THERMAL   = 0;
     int  static constexpr DATA_SUPERCELL = 1;
+    int  static constexpr DATA_BUILDING  = 2;
 
     // Hydrostatic background profiles for density and potential temperature as cell averages and cell edge values
     real1d      hy_dens_cells;
@@ -78,6 +79,10 @@ namespace modules {
     SArray<real,3,hs+1,hs+1,hs+1> weno_recon_lower; // WENO's lower-order reconstruction matrices (sten_to_coefs)
     SArray<real,1,hs+2>           weno_idl;         // Ideal weights for WENO
     real                          weno_sigma;       // WENO sigma parameter (handicap high-order TV estimate)
+
+    bool use_immersed_boundaries;
+
+    real3d immersed_proportion;
 
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
@@ -237,6 +242,8 @@ namespace modules {
       YAKL_SCOPE( C0                         , this->C0                         );
       YAKL_SCOPE( gamma                      , this->gamma                      );
       YAKL_SCOPE( grav                       , this->grav                       );
+      YAKL_SCOPE( use_immersed_boundaries    , this->use_immersed_boundaries    );
+      YAKL_SCOPE( immersed_proportion        , this->immersed_proportion        );
 
       // Since tracers are full mass, it's helpful before reconstruction to remove the background density for potentially
       // more accurate reconstructions of tracer concentrations
@@ -680,6 +687,18 @@ namespace modules {
                                   -( tracers_flux_y(l,k  ,j+1,i  ) - tracers_flux_y(l,k,j,i) ) / dy
                                   -( tracers_flux_z(l,k+1,j  ,i  ) - tracers_flux_z(l,k,j,i) ) / dz;
         }
+        if (use_immersed_boundaries) {
+          real delta = std::pow( dx*dy*dz , 1._fp/3._fp );
+          real beta  = immersed_proportion(k,j,i);
+          real C_d   = 1.e3*beta/delta;
+          real rho   = state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k);
+          real uvel  = state(idU,hs+k,hs+j,hs+i) / rho;
+          real vvel  = state(idV,hs+k,hs+j,hs+i) / rho;
+          real wvel  = state(idW,hs+k,hs+j,hs+i) / rho;
+          state_tend(idU,k,j,i) += -C_d * rho * std::abs(uvel) * uvel;
+          state_tend(idV,k,j,i) += -C_d * rho * std::abs(vvel) * vvel;
+          state_tend(idW,k,j,i) += -C_d * rho * std::abs(wvel) * wvel;
+        }
       });
     }
 
@@ -712,12 +731,12 @@ namespace modules {
 
       sim2d = (coupler.get_ny_glob() == 1);
 
-      R_d   = coupler.get_option<real>("R_d" );
-      R_v   = coupler.get_option<real>("R_v" );
-      cp_d  = coupler.get_option<real>("cp_d");
-      cp_v  = coupler.get_option<real>("cp_v");
-      p0    = coupler.get_option<real>("p0"  );
-      grav  = coupler.get_option<real>("grav");
+      R_d   = coupler.get_option<real>("R_d" ,287);
+      R_v   = coupler.get_option<real>("R_v" ,461);
+      cp_d  = coupler.get_option<real>("cp_d",1003);
+      cp_v  = coupler.get_option<real>("cp_v",1859);
+      p0    = coupler.get_option<real>("p0"  ,1.e5);
+      grav  = coupler.get_option<real>("grav",9.81);
       kappa = R_d / cp_d;
       gamma = cp_d / (cp_d - R_d);
       C0    = pow( R_d * pow( p0 , -kappa ) , gamma );
@@ -763,7 +782,10 @@ namespace modules {
       // Set an integer version of the input_data so we can test it inside GPU kernels
       if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
       else if (init_data == "supercell") { init_data_int = DATA_SUPERCELL; }
+      else if (init_data == "building" ) { init_data_int = DATA_BUILDING;  }
       else { endrun("ERROR: Invalid init_data in yaml input file"); }
+
+      immersed_proportion = real3d("immersed_proportion",nz,ny,nx);
 
       etime   = 0;
       num_out = 0;
@@ -780,10 +802,14 @@ namespace modules {
 
       if (init_data_int == DATA_SUPERCELL) {
 
+        use_immersed_boundaries = false;
+        immersed_proportion = 0;
         init_supercell( coupler , state , tracers );
 
-      } else {
+      } else if (init_data_int == DATA_THERMAL) {
 
+        use_immersed_boundaries = false;
+        immersed_proportion = 0;
         // Define quadrature weights and points for 3-point rules
         const int nqpoints = 3;
         SArray<real,1,nqpoints> qpoints;
@@ -838,9 +864,7 @@ namespace modules {
                 real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
                 real rho, u, v, w, theta, rho_v, hr, ht;
 
-                if (init_data_int == DATA_THERMAL) {
-                  thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,R_v,rho,u,v,w,theta,rho_v,hr,ht);
-                }
+                thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,R_v,rho,u,v,w,theta,rho_v,hr,ht);
 
                 if (sim2d) v = 0;
 
@@ -868,7 +892,7 @@ namespace modules {
             real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
             real hr, ht;
 
-            if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
+            hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
 
             hy_dens_cells      (k) += hr    * qweights(kk);
             hy_dens_theta_cells(k) += hr*ht * qweights(kk);
@@ -880,7 +904,134 @@ namespace modules {
           real z = k*dz;
           real hr, ht;
 
-          if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
+          hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+          hy_dens_edges      (k) = hr   ;
+          hy_dens_theta_edges(k) = hr*ht;
+        });
+
+      } else if (init_data_int == DATA_BUILDING) {
+
+        use_immersed_boundaries = true;
+        immersed_proportion = 0;
+
+        // Define quadrature weights and points for 3-point rules
+        const int nqpoints = 3;
+        SArray<real,1,nqpoints> qpoints;
+        SArray<real,1,nqpoints> qweights;
+
+        qpoints(0) = 0.112701665379258311482073460022;
+        qpoints(1) = 0.500000000000000000000000000000;
+        qpoints(2) = 0.887298334620741688517926539980;
+
+        qweights(0) = 0.277777777777777777777777777779;
+        qweights(1) = 0.444444444444444444444444444444;
+        qweights(2) = 0.277777777777777777777777777779;
+
+        YAKL_SCOPE( init_data_int       , this->init_data_int       );
+        YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
+        YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
+        YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
+        YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
+        YAKL_SCOPE( dx                  , this->dx                  );
+        YAKL_SCOPE( dy                  , this->dy                  );
+        YAKL_SCOPE( dz                  , this->dz                  );
+        YAKL_SCOPE( xlen                , this->xlen                );
+        YAKL_SCOPE( ylen                , this->ylen                );
+        YAKL_SCOPE( sim2d               , this->sim2d               );
+        YAKL_SCOPE( R_d                 , this->R_d                 );
+        YAKL_SCOPE( R_v                 , this->R_v                 );
+        YAKL_SCOPE( cp_d                , this->cp_d                );
+        YAKL_SCOPE( p0                  , this->p0                  );
+        YAKL_SCOPE( grav                , this->grav                );
+        YAKL_SCOPE( gamma               , this->gamma               );
+        YAKL_SCOPE( C0                  , this->C0                  );
+        YAKL_SCOPE( num_tracers         , this->num_tracers         );
+        YAKL_SCOPE( idWV                , this->idWV                );
+        YAKL_SCOPE( immersed_proportion , this->immersed_proportion );
+        YAKL_SCOPE( nz                  , this->nz                  );
+
+        auto i_beg   = coupler.get_i_beg();
+        auto j_beg   = coupler.get_j_beg();
+        auto nx_glob = coupler.get_nx_glob();
+        auto ny_glob = coupler.get_ny_glob();
+
+        // Use quadrature to initialize state and tracer data
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            state(l,hs+k,hs+j,hs+i) = 0.;
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers(l,hs+k,hs+j,hs+i) = 0.;
+          }
+          //Use Gauss-Legendre quadrature
+          for (int kk=0; kk<nqpoints; kk++) {
+            for (int jj=0; jj<nqpoints; jj++) {
+              for (int ii=0; ii<nqpoints; ii++) {
+                real x = (i+i_beg+0.5)*dx + (qpoints(ii)-0.5)*dx;
+                real y = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
+                real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
+                real rho, u, v, w, theta, rho_v, hr, ht;
+
+                hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+                rho   = hr;
+                u     = 20;
+                v     = 0;
+                w     = 0;
+                theta = ht;
+                rho_v = 0;
+
+                if (sim2d) v = 0;
+
+                real wt = qweights(ii)*qweights(jj)*qweights(kk);
+                state(idR,hs+k,hs+j,hs+i) += ( rho - hr )          * wt;
+                state(idU,hs+k,hs+j,hs+i) += rho*u                 * wt;
+                state(idV,hs+k,hs+j,hs+i) += rho*v                 * wt;
+                state(idW,hs+k,hs+j,hs+i) += rho*w                 * wt;
+                state(idT,hs+k,hs+j,hs+i) += ( rho*theta - hr*ht ) * wt;
+                for (int tr=0; tr < num_tracers; tr++) {
+                  if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i) += rho_v * wt; }
+                  else            { tracers(tr,hs+k,hs+j,hs+i) += 0     * wt; }
+                }
+              }
+            }
+          }
+          int x0 = 0.3 * nx_glob;
+          int y0 = 0.5 * ny_glob;
+          int xr = 0.1 * ny_glob;
+          int yr = 0.1 * ny_glob;
+          int ztop = 0.3 * nz;
+          if ( std::abs((int)(i_beg+i-x0)) < xr && std::abs((int)(j_beg+j-y0)) < yr && k < ztop ) {
+            immersed_proportion(k,j,i) = 1;
+            state(idU,hs+k,hs+j,hs+i) = 0;
+            state(idV,hs+k,hs+j,hs+i) = 0;
+            state(idW,hs+k,hs+j,hs+i) = 0;
+          }
+        });
+
+
+        // Compute hydrostatic background cell averages using quadrature
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz) , YAKL_LAMBDA (int k) {
+          hy_dens_cells      (k) = 0.;
+          hy_dens_theta_cells(k) = 0.;
+          for (int kk=0; kk<nqpoints; kk++) {
+            real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+            real hr, ht;
+
+            hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+            hy_dens_cells      (k) += hr    * qweights(kk);
+            hy_dens_theta_cells(k) += hr*ht * qweights(kk);
+          }
+        });
+
+        // Compute hydrostatic background cell edge values
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz+1) , YAKL_LAMBDA (int k) {
+          real z = k*dz;
+          real hr, ht;
+
+          hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
 
           hy_dens_edges      (k) = hr   ;
           hy_dens_theta_edges(k) = hr*ht;

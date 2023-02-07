@@ -1,6 +1,6 @@
 
 #include "coupler.h"
-#include "dynamics_euler_obstructions.h"
+#include "dynamics_euler_stratified_wenofv.h"
 #include "uvel_sponge.h"
 
 int main(int argc, char** argv) {
@@ -45,6 +45,12 @@ int main(int argc, char** argv) {
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
     modules::Dynamics_Euler_Stratified_WenoFV dycore;
 
+    coupler.add_tracer("water_vapor","water_vapor",true,true);
+    {
+      auto rho_v = coupler.get_data_manager_readwrite().get<real,3>("water_vapor");
+      rho_v = 0;
+    }
+
     // Run the initialization modules
     dycore.init                 ( coupler ); // Dycore should initialize its own state here
 
@@ -57,7 +63,7 @@ int main(int argc, char** argv) {
       // If we're about to go past the final time, then limit to time step to exactly hit the final time
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
-      custom_modules::uvel_sponge(coupler);
+      // custom_modules::uvel_sponge(coupler);
       dycore.time_step             ( coupler , dtphys );  // Move the flow forward according to the Euler equations
 
       etime += dtphys; // Advance elapsed time
