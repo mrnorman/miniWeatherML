@@ -32,10 +32,10 @@ namespace weno {
   template <int ord>
   YAKL_INLINE void wenoSetIdealSigma(SArray<real,1,(ord-1)/2+2> &idl, real &sigma) {
     if        (ord == 3) {
-      sigma = 0.0343557947899881_fp;
-      idl(0) = 1._fp;
-      idl(1) = 1._fp;
-      idl(2) = 1224.61619926508_fp;
+      sigma = 1;
+      idl(0) = 1;
+      idl(1) = 1;
+      idl(2) = 100;
     } else if (ord == 5) {
       sigma = 0.73564225445964_fp;
       idl(0) = 1._fp;

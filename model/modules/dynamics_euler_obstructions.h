@@ -38,9 +38,9 @@ namespace modules {
     // IDs for the test cases
     int  static constexpr DATA_SIMPLE_CITY = 0;
 
-    int  static constexpr MATERIAL_NONE = 0;
-    int  static constexpr MATERIAL_WALL = 1;
-    int  static constexpr MATERIAL_OPEN = 2;
+    int  static constexpr BC_PERIODIC = 0;
+    int  static constexpr BC_WALL     = 1;
+    int  static constexpr BC_OPEN     = 2;
 
     int  static constexpr DIR_X = 0;
     int  static constexpr DIR_Y = 1;
@@ -52,7 +52,7 @@ namespace modules {
     int         num_out;       // Number of outputs produced thus far
     std::string fname;         // File name for file output
     int         init_data_int; // Integer representation of the type of initial data to use (test case)
-    bool        periodic_x, periodic_y, periodic_z;
+    int         bc_x, bc_y, bc_z;
 
     // Physical constants
     real        R_d;    // Dry air ideal gas constant
@@ -74,7 +74,7 @@ namespace modules {
     SArray<real,1,hs+2>           weno_idl;         // Ideal weights for WENO
     real                          weno_sigma;       // WENO sigma parameter (handicap high-order TV estimate)
 
-    int3d material;
+    bool3d obstruction;
 
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
@@ -210,63 +210,9 @@ namespace modules {
 
 
     template <int D>
-    YAKL_INLINE static void gather_state_stencil( SArray<real,1,ord> &stencil ,
-                                                  int l , int k , int j , int i ,
-                                                  int3d const &material ,
-                                                  real4d const &state ) {
-      bool normal_vel = ( (D==DIR_X) && (l==idU) ) ||
-                        ( (D==DIR_Y) && (l==idV) ) ||
-                        ( (D==DIR_Z) && (l==idW) ); // Is this variable normal velocity?
-      stencil(hs) = state(l,hs+k,hs+j,hs+i);  // Store center stencil value
-      { // Traverse left; once you hit a material boundary, apply BC's
-        bool hit_material = false;
-        real sticky_value;
-        for (int s=hs-1; s >= 0; s--) {
-          int ind_i, ind_j, ind_k;
-          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k; }
-          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k; }
-          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ; }
-          int mat = material(ind_k,ind_j,ind_i);
-          if (mat == MATERIAL_NONE) {
-            stencil(s) = state(l,ind_k,ind_j,ind_i);
-          } else { // Must be MATERIAL_OPEN or MATERIAL_WALL
-            if (! hit_material) {
-              hit_material = true;
-              if ( (mat == MATERIAL_WALL) && normal_vel ) { sticky_value = 0; }
-              else                                        { sticky_value = stencil(s+1); }
-            }
-            stencil(s) = sticky_value;
-          }
-        }
-      }
-      { // Traverse right; once you hit a material boundary, apply BC's
-        bool hit_material = false;
-        real sticky_value;
-        for (int s=hs+1; s < ord; s++) {
-          int ind_i, ind_j, ind_k;
-          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k; }
-          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k; }
-          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ; }
-          int mat = material(ind_k,ind_j,ind_i);
-          if (mat == MATERIAL_NONE) {
-            stencil(s) = state(l,ind_k,ind_j,ind_i);
-          } else { // Must be MATERIAL_OPEN or MATERIAL_WALL
-            if (! hit_material) {
-              hit_material = true;
-              if ( (mat == MATERIAL_WALL) && normal_vel ) { sticky_value = 0; }
-              else                                        { sticky_value = stencil(s-1); }
-            }
-            stencil(s) = sticky_value;
-          }
-        }
-      }
-    }
-
-
-    template <int D>
     YAKL_INLINE static void set_state_limits( real5d const &state_limits ,
                                               int l , int k , int j , int i ,
-                                              int3d const &material ,
+                                              bool3d const &obstruction ,
                                               SArray<real,1,2> &gll ) {
       bool normal_vel = ( (D==DIR_X) && (l==idU) ) ||
                         ( (D==DIR_Y) && (l==idV) ) ||
@@ -276,69 +222,20 @@ namespace modules {
         if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i-1; }
         if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j-1;  i_ind = i  ; }
         if constexpr (D == DIR_Z) { k_ind = k-1;  j_ind = j  ;  i_ind = i  ; }
-        int mat = material(hs+k_ind,hs+j_ind,hs+i_ind);
-        if ( (mat == MATERIAL_WALL) && normal_vel ) gll(0) = 0;
+        bool obstr = obstruction(hs+k_ind,hs+j_ind,hs+i_ind);
+        if ( obstr && normal_vel ) gll(0) = 0;
         state_limits(l,1,k,j,i) = gll(0);
-        if ( mat != MATERIAL_NONE ) state_limits(l,0,k,j,i) = gll(0);
+        if ( obstr ) state_limits(l,0,k,j,i) = gll(0);
       }
       { // Handle the right interface of this cell
         int k_ind, j_ind, i_ind;
         if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i+1; }
         if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j+1;  i_ind = i  ; }
         if constexpr (D == DIR_Z) { k_ind = k+1;  j_ind = j  ;  i_ind = i  ; }
-        int mat = material(hs+k_ind,hs+j_ind,hs+i_ind);
-        if ( (mat == MATERIAL_WALL) && normal_vel ) gll(1) = 0;
+        bool obstr = obstruction(hs+k_ind,hs+j_ind,hs+i_ind);
+        if ( obstr && normal_vel ) gll(1) = 0;
         state_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
-        if ( mat != MATERIAL_NONE ) state_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
-      }
-    }
-
-
-    template <int D>
-    YAKL_INLINE static void gather_tracer_stencil( SArray<real,1,ord> &stencil ,
-                                                   int l , int k , int j , int i ,
-                                                   int3d const &material ,
-                                                   real4d const &tracers ) {
-      stencil(hs) = tracers(l,hs+k,hs+j,hs+i);  // Store center stencil value
-      { // Traverse left; once you hit a material boundary, apply BC's
-        bool hit_material = false;
-        real sticky_value;
-        for (int s=hs-1; s >= 0; s--) {
-          int ind_i, ind_j, ind_k;
-          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k; }
-          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k; }
-          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ; }
-          int mat = material(ind_k,ind_j,ind_i);
-          if (mat == MATERIAL_NONE) {
-            stencil(s) = tracers(l,ind_k,ind_j,ind_i);
-          } else { // Must be MATERIAL_OPEN or MATERIAL_WALL
-            if (! hit_material) {
-              hit_material = true;
-              sticky_value = stencil(s+1);
-            }
-            stencil(s) = sticky_value;
-          }
-        }
-      }
-      { // Traverse right; once you hit a material boundary, apply BC's
-        bool hit_material = false;
-        real sticky_value;
-        for (int s=hs+1; s < ord; s++) {
-          int ind_i, ind_j, ind_k;
-          if constexpr (D == DIR_X) { ind_i = i+s ;  ind_j = hs+j;  ind_k = hs+k; }
-          if constexpr (D == DIR_Y) { ind_i = hs+i;  ind_j = j+s ;  ind_k = hs+k; }
-          if constexpr (D == DIR_Z) { ind_i = hs+i;  ind_j = hs+j;  ind_k = k+s ; }
-          int mat = material(ind_k,ind_j,ind_i);
-          if (mat == MATERIAL_NONE) {
-            stencil(s) = tracers(l,ind_k,ind_j,ind_i);
-          } else { // Must be MATERIAL_OPEN or MATERIAL_WALL
-            if (! hit_material) {
-              hit_material = true;
-              sticky_value = stencil(s-1);
-            }
-            stencil(s) = sticky_value;
-          }
-        }
+        if ( obstr ) state_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
       }
     }
 
@@ -346,25 +243,23 @@ namespace modules {
     template <int D>
     YAKL_INLINE static void set_tracer_limits( real5d const &tracers_limits ,
                                                int l , int k , int j , int i ,
-                                               int3d const &material ,
+                                               bool3d const &obstruction ,
                                                SArray<real,1,2> &gll ) {
       { // Handle the left interface of this cell
         int k_ind, j_ind, i_ind;
         if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i-1; }
         if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j-1;  i_ind = i  ; }
         if constexpr (D == DIR_Z) { k_ind = k-1;  j_ind = j  ;  i_ind = i  ; }
-        int mat = material(hs+k_ind,hs+j_ind,hs+i_ind);
         tracers_limits(l,1,k,j,i) = gll(0);
-        if ( mat != MATERIAL_NONE ) tracers_limits(l,0,k,j,i) = gll(0);
+        if ( obstruction(hs+k_ind,hs+j_ind,hs+i_ind) ) tracers_limits(l,0,k,j,i) = gll(0);
       }
       { // Handle the right interface of this cell
         int k_ind, j_ind, i_ind;
         if constexpr (D == DIR_X) { k_ind = k  ;  j_ind = j  ;  i_ind = i+1; }
         if constexpr (D == DIR_Y) { k_ind = k  ;  j_ind = j+1;  i_ind = i  ; }
         if constexpr (D == DIR_Z) { k_ind = k+1;  j_ind = j  ;  i_ind = i  ; }
-        int mat = material(hs+k_ind,hs+j_ind,hs+i_ind);
         tracers_limits(l,0,k_ind,j_ind,i_ind) = gll(1);
-        if ( mat != MATERIAL_NONE ) tracers_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
+        if ( obstruction(hs+k_ind,hs+j_ind,hs+i_ind) ) tracers_limits(l,1,k_ind,j_ind,i_ind) = gll(1);
       }
     }
 
@@ -380,39 +275,44 @@ namespace modules {
       using std::min;
       using std::max;
 
-      auto nx = coupler.get_nx();
-      auto ny = coupler.get_ny();
-      auto nz = coupler.get_nz();
-      auto dx = coupler.get_dx();
-      auto dy = coupler.get_dy();
-      auto dz = coupler.get_dz();
-      auto sim2d = coupler.is_sim2d();
+      auto nx          = coupler.get_nx();
+      auto ny          = coupler.get_ny();
+      auto nz          = coupler.get_nz();
+      auto dx          = coupler.get_dx();
+      auto dy          = coupler.get_dy();
+      auto dz          = coupler.get_dz();
+      auto sim2d       = coupler.is_sim2d();
       auto num_tracers = coupler.get_num_tracers();
 
       // A slew of things to bring from class scope into local scope so that lambdas copy them by value to the GPU
-      YAKL_SCOPE( tracer_positive            , this->tracer_positive            );
-      YAKL_SCOPE( coefs_to_gll               , this->coefs_to_gll               );
-      YAKL_SCOPE( sten_to_coefs              , this->sten_to_coefs              );
-      YAKL_SCOPE( weno_recon_lower           , this->weno_recon_lower           );
-      YAKL_SCOPE( weno_idl                   , this->weno_idl                   );
-      YAKL_SCOPE( weno_sigma                 , this->weno_sigma                 );
-      YAKL_SCOPE( C0                         , this->C0                         );
-      YAKL_SCOPE( gamma                      , this->gamma                      );
-      YAKL_SCOPE( periodic_z                 , this->periodic_z                 );
-      YAKL_SCOPE( material                   , this->material                   );
+      YAKL_SCOPE( tracer_positive  , this->tracer_positive  );
+      YAKL_SCOPE( coefs_to_gll     , this->coefs_to_gll     );
+      YAKL_SCOPE( sten_to_coefs    , this->sten_to_coefs    );
+      YAKL_SCOPE( weno_recon_lower , this->weno_recon_lower );
+      YAKL_SCOPE( weno_idl         , this->weno_idl         );
+      YAKL_SCOPE( weno_sigma       , this->weno_sigma       );
+      YAKL_SCOPE( C0               , this->C0               );
+      YAKL_SCOPE( gamma            , this->gamma            );
+      YAKL_SCOPE( obstruction      , this->obstruction      );
 
+      // Exchange halos and enforce domain boundary conditions.
       halo_exchange( coupler , state , tracers );
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(hs,ny,nx) , YAKL_LAMBDA (int s, int j, int i ) {
+
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         for (int l=0; l < num_state; l++) {
-          state(l,      s,hs+j,hs+i) = state(l,      s+nz,hs+j,hs+i);
-          state(l,hs+nz+s,hs+j,hs+i) = state(l,hs+nz+s-nz,hs+j,hs+i);
-        }
-        for (int l=0; l < num_tracers; l++) {
-          tracers(l,      s,hs+j,hs+i) = tracers(l,      s+nz,hs+j,hs+i);
-          tracers(l,hs+nz+s,hs+j,hs+i) = tracers(l,hs+nz+s-nz,hs+j,hs+i);
+          real tot = 0;
+          int  num = 0;
+          if (obstruction(hs+k,hs+j,hs+i)) {
+            if (! obstruction(hs+k,hs+j,hs+i+1)) { tot += state(l,hs+k,hs+j,hs+i+1); num++; }
+            if (! obstruction(hs+k,hs+j,hs+i-1)) { tot += state(l,hs+k,hs+j,hs+i-1); num++; }
+            if (! obstruction(hs+k,hs+j+1,hs+i)) { tot += state(l,hs+k,hs+j+1,hs+i); num++; }
+            if (! obstruction(hs+k,hs+j-1,hs+i)) { tot += state(l,hs+k,hs+j-1,hs+i); num++; }
+            if (! obstruction(hs+k+1,hs+j,hs+i)) { tot += state(l,hs+k+1,hs+j,hs+i); num++; }
+            if (! obstruction(hs+k-1,hs+j,hs+i)) { tot += state(l,hs+k-1,hs+j,hs+i); num++; }
+            if (num > 0) state(l,hs+k,hs+j,hs+i) tot / num;
+          }
         }
       });
-
 
       // These arrays store high-order-accurate samples of the state and tracers at cell edges after cell-centered recon
       real5d state_limits_x  ("state_limits_x"  ,num_state  ,2,nz  ,ny  ,nx+1);
@@ -425,26 +325,25 @@ namespace modules {
       // Compute samples of state and tracers at cell edges using cell-centered reconstructions at high-order with WENO
       // At the end of this, we will have two samples per cell edge in each dimension, one from each adjacent cell.
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i ) {
-        if ( material(hs+k,hs+j,hs+i) == MATERIAL_NONE ) { // Don't reconstruct for material cells
+        if ( ! obstruction(hs+k,hs+j,hs+i) ) { // Don't reconstruct for obstruction cells
           ////////////////////////////////////////////////////////
           // X-direction
           ////////////////////////////////////////////////////////
           // State
           for (int l=0; l < num_state; l++) {
             SArray<real,1,ord> stencil;
-            gather_state_stencil<DIR_X>( stencil , l , k , j , i , material , state );
+            for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s); }
             SArray<real,1,2>   gll;
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            set_state_limits<DIR_X>( state_limits_x , l , k , j , i , material , gll );
+            set_state_limits<DIR_X>( state_limits_x , l , k , j , i , obstruction , gll );
           }
-
           // Tracers
           for (int l=0; l < num_tracers; l++) {
             SArray<real,1,ord> stencil;
-            gather_tracer_stencil<DIR_X>( stencil , l , k , j , i , material , tracers );
+            for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,hs+j,i+s); }
             SArray<real,1,2>   gll;
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            set_tracer_limits<DIR_X>( tracers_limits_x , l , k , j , i , material , gll );
+            set_tracer_limits<DIR_X>( tracers_limits_x , l , k , j , i , obstruction , gll );
           }
 
           ////////////////////////////////////////////////////////
@@ -455,30 +354,23 @@ namespace modules {
             // State
             for (int l=0; l < num_state; l++) {
               SArray<real,1,ord> stencil;
-              gather_state_stencil<DIR_Y>( stencil , l , k , j , i , material , state );
+            for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
               SArray<real,1,2>   gll;
               for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i); }
               reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-              set_state_limits<DIR_Y>( state_limits_y , l , k , j , i , material , gll );
+              set_state_limits<DIR_Y>( state_limits_y , l , k , j , i , obstruction , gll );
             }
-
             // Tracers
             for (int l=0; l < num_tracers; l++) {
               SArray<real,1,ord> stencil;
-              gather_tracer_stencil<DIR_Y>( stencil , l , k , j , i , material , tracers );
+            for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,j+s,hs+i); }
               SArray<real,1,2>   gll;
               reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-              set_tracer_limits<DIR_Y>( tracers_limits_y , l , k , j , i , material , gll );
+              set_tracer_limits<DIR_Y>( tracers_limits_y , l , k , j , i , obstruction , gll );
             }
           } else {
-            for (int l=0; l < num_state; l++) {
-              state_limits_y(l,1,k,j  ,i) = 0;
-              state_limits_y(l,0,k,j+1,i) = 0;
-            }
-            for (int l=0; l < num_tracers; l++) {
-              tracers_limits_y(l,1,k,j  ,i) = 0;
-              tracers_limits_y(l,0,k,j+1,i) = 0;
-            }
+            for (int l=0; l < num_state  ; l++) { state_limits_y  (l,1,k,j,i) = 0; state_limits_y  (l,0,k,j+1,i) = 0; }
+            for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,1,k,j,i) = 0; tracers_limits_y(l,0,k,j+1,i) = 0; }
           }
 
           ////////////////////////////////////////////////////////
@@ -487,36 +379,26 @@ namespace modules {
           // State
           for (int l=0; l < num_state; l++) {
             SArray<real,1,ord> stencil;
-            gather_state_stencil<DIR_Z>( stencil , l , k , j , i , material , state );
+            for (int s=0; s < ord; s++) { stencil(s) = state(l,k+s,hs+j,hs+i); }
             SArray<real,1,2>   gll;
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            set_state_limits<DIR_Z>( state_limits_z , l , k , j , i , material , gll );
+            set_state_limits<DIR_Z>( state_limits_z , l , k , j , i , obstruction , gll );
           }
-
           // Tracers
           for (int l=0; l < num_tracers; l++) {
             SArray<real,1,ord> stencil;
-            gather_tracer_stencil<DIR_Z>( stencil , l , k , j , i , material , tracers );
+            for (int s=0; s < ord; s++) { stencil(s) = tracers(l,k+s,hs+j,hs+i); }
             SArray<real,1,2>   gll;
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            set_tracer_limits<DIR_Z>( tracers_limits_z , l , k , j , i , material , gll );
+            set_tracer_limits<DIR_Z>( tracers_limits_z , l , k , j , i , obstruction , gll );
           }
         }
       });
 
-      edge_exchange( coupler , state_limits_x , tracers_limits_x , state_limits_y , tracers_limits_y );
-      if (periodic_z) {
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(ny,nx) , YAKL_LAMBDA (int j, int i ) {
-          for (int l=0; l < num_state; l++) {
-            state_limits_z(l,0,0 ,j,i) = state_limits_z(l,0,nz,j,i);
-            state_limits_z(l,1,nz,j,i) = state_limits_z(l,1,0 ,j,i);
-          }
-          for (int l=0; l < num_tracers; l++) {
-            tracers_limits_z(l,0,0 ,j,i) = tracers_limits_z(l,0,nz,j,i);
-            tracers_limits_z(l,1,nz,j,i) = tracers_limits_z(l,1,0 ,j,i);
-          }
-        });
-      }
+      // Exchange cell interface estimates between processes, and handle boundary conditions
+      edge_exchange( coupler , state_limits_x , tracers_limits_x ,
+                               state_limits_y , tracers_limits_y ,
+                               state_limits_z , tracers_limits_z);
 
 
       // The store a single values flux at cell edges
@@ -534,7 +416,7 @@ namespace modules {
         // X-direction
         ////////////////////////////////////////////////////////
         if (j < ny && k < nz) {
-          if ( (material(hs+k,hs+j,hs+i-1) == MATERIAL_NONE) || (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) ) {
+          if ( (! obstruction(hs+k,hs+j,hs+i-1)) || (! obstruction(hs+k,hs+j,hs+i)) ) {
             // Get left and right state
             real r_L = state_limits_x(idR,0,k,j,i)    ;   real r_R = state_limits_x(idR,1,k,j,i)    ;
             real u_L = state_limits_x(idU,0,k,j,i)/r_L;   real u_R = state_limits_x(idU,1,k,j,i)/r_R;
@@ -604,7 +486,7 @@ namespace modules {
         ////////////////////////////////////////////////////////
         // If we are simulating in 2-D, then do not do Riemann in the y-direction
         if ( (! sim2d) && i < nx && k < nz) {
-          if ( (material(hs+k,hs+j-1,hs+i) == MATERIAL_NONE) || (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) ) {
+          if ( (! obstruction(hs+k,hs+j-1,hs+i)) || (! obstruction(hs+k,hs+j,hs+i)) ) {
             // Get left and right state
             real r_L = state_limits_y(idR,0,k,j,i)    ;   real r_R = state_limits_y(idR,1,k,j,i)    ;
             real u_L = state_limits_y(idU,0,k,j,i)/r_L;   real u_R = state_limits_y(idU,1,k,j,i)/r_R;
@@ -680,16 +562,7 @@ namespace modules {
         // Z-direction
         ////////////////////////////////////////////////////////
         if (i < nx && j < ny) {
-          if ( (material(hs+k-1,hs+j,hs+i) == MATERIAL_NONE) || (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) ) {
-            // Boundary conditions
-            if (k == 0) {
-              for (int l = 0; l < num_state  ; l++) { state_limits_z  (l,0,0 ,j,i) = state_limits_z  (l,1,0 ,j,i); }
-              for (int l = 0; l < num_tracers; l++) { tracers_limits_z(l,0,0 ,j,i) = tracers_limits_z(l,1,0 ,j,i); }
-            }
-            if (k == nz) {
-              for (int l = 0; l < num_state  ; l++) { state_limits_z  (l,1,nz,j,i) = state_limits_z  (l,0,nz,j,i); }
-              for (int l = 0; l < num_tracers; l++) { tracers_limits_z(l,1,nz,j,i) = tracers_limits_z(l,0,nz,j,i); }
-            }
+          if ( (! obstruction(hs+k-1,hs+j,hs+i)) || (! obstruction(hs+k,hs+j,hs+i)) ) {
             // Get left and right state
             real r_L = state_limits_z(idR,0,k,j,i)    ;   real r_R = state_limits_z(idR,1,k,j,i)    ;
             real u_L = state_limits_z(idU,0,k,j,i)/r_L;   real u_R = state_limits_z(idU,1,k,j,i)/r_R;
@@ -785,7 +658,7 @@ namespace modules {
 
       // Compute tendencies as the flux divergence
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        if (material(hs+k,hs+j,hs+i) == MATERIAL_NONE) {
+        if (! obstruction(hs+k,hs+j,hs+i)) {
           for (int l = 0; l < num_state; l++) {
             state_tend  (l,k,j,i) = -( state_flux_x  (l,k  ,j  ,i+1) - state_flux_x  (l,k,j,i) ) / dx
                                     -( state_flux_y  (l,k  ,j+1,i  ) - state_flux_y  (l,k,j,i) ) / dy
@@ -823,16 +696,16 @@ namespace modules {
       auto ylen  = coupler.get_ylen();
       auto zlen  = coupler.get_zlen();
 
-      material = int3d ("material",nz+2*hs,ny+2*hs,nx+2*hs);
-      material = MATERIAL_NONE;
+      obstruction = bool3d("obstruction",nz+2*hs,ny+2*hs,nx+2*hs);
+      obstruction = false;
 
       auto &dm = coupler.get_data_manager_readwrite();
 
-      dm.register_and_allocate<real>("density_dry","",{nz,nx,ny});
-      dm.register_and_allocate<real>("uvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("vvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("wvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("temp","",{nz,nx,ny});
+      dm.register_and_allocate<real>("density_dry","",{nz,ny,nx});
+      dm.register_and_allocate<real>("uvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("vvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("wvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("temp","",{nz,ny,nx});
 
       coupler.add_tracer( "pollution" , "pollution" , true , true );
 
@@ -906,7 +779,7 @@ namespace modules {
       YAKL_SCOPE( p0                  , this->p0                  );
       YAKL_SCOPE( gamma               , this->gamma               );
       YAKL_SCOPE( C0                  , this->C0                  );
-      YAKL_SCOPE( material            , this->material            );
+      YAKL_SCOPE( obstruction         , this->obstruction         );
 
       auto px      = coupler.get_px();
       auto py      = coupler.get_py();
@@ -918,9 +791,9 @@ namespace modules {
       auto ny_glob = coupler.get_ny_glob();
 
       if ( init_data_int == DATA_SIMPLE_CITY ) {
-        periodic_x = false;
-        periodic_y = true;
-        periodic_z = false;
+        bc_x = BC_OPEN;
+        bc_y = BC_PERIODIC;
+        bc_z = BC_WALL;
 
         // Use quadrature to initialize state and tracer data
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
@@ -953,29 +826,16 @@ namespace modules {
             }
           }
         });
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int j, int ii) {
-          if (px == 0        ) material(hs+k,hs+j,      ii) = MATERIAL_OPEN;
-          if (px == nproc_x-1) material(hs+k,hs+j,hs+nx+ii) = MATERIAL_OPEN;
-        });
-        // parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,hs,nx) , YAKL_LAMBDA (int k, int jj, int i) {
-        //   if (py == 0        ) material(hs+k,      jj,hs+i) = MATERIAL_OPEN;
-        //   if (py == nproc_y-1) material(hs+k,hs+ny+jj,hs+i) = MATERIAL_OPEN;
-        // });
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(hs,ny,nx) , YAKL_LAMBDA (int kk, int j, int i) {
-          material(      kk,hs+j,hs+i) = MATERIAL_WALL;
-          material(hs+nz+kk,hs+j,hs+i) = MATERIAL_WALL;
-        });
-
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-          int x0 = 0.3*nx_glob;
+          int x0 = 0.5*nx_glob;
           int y0 = ny_glob/2;
           int xr = 0.1*ny_glob;
           int yr = 0.1*ny_glob;
-          int ktop = nz / 4;
+          int ktop = nz; //  / 4;
           if ( (std::abs((int) (j_beg+j-y0)) < yr) &&
                (std::abs((int) (i_beg+i-x0)) < xr) &&
                k < ktop ) {
-            material(hs+k,hs+j,hs+i) = MATERIAL_WALL;
+            obstruction(hs+k,hs+j,hs+i) = true;
           }
         });
       }
@@ -1131,7 +991,7 @@ namespace modules {
 
 
     // Perform file output
-    void output( core::Coupler const &coupler , real etime ) const {
+    void output( core::Coupler &coupler , real etime ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
       yakl::timer_start("output");
@@ -1171,6 +1031,11 @@ namespace modules {
         nc.create_var<real>( "vvel"        , {"t","z","y","x"} );
         nc.create_var<real>( "wvel"        , {"t","z","y","x"} );
         nc.create_var<real>( "temperature" , {"t","z","y","x"} );
+        nc.create_var<real>( "ke"          , {"t","z","y","x"} );
+        nc.create_var<real>( "rho*ke"      , {"t","z","y","x"} );
+        nc.create_var<real>( "ie"          , {"t","z","y","x"} );
+        nc.create_var<real>( "rho*ie"      , {"t","z","y","x"} );
+        nc.create_var<real>( "pressure"    , {"t","z","y","x"} );
         auto tracer_names = coupler.get_tracer_names();
         for (int tr = 0; tr < num_tracers; tr++) {
           nc.create_var<real>( tracer_names[tr] , {"t","z","y","x"} );
@@ -1218,6 +1083,26 @@ namespace modules {
       nc.write1_all(dm.get<real const,3>("vvel"       ).createHostCopy(),"vvel"       ,ulIndex,{0,j_beg,i_beg},"t");
       nc.write1_all(dm.get<real const,3>("wvel"       ).createHostCopy(),"wvel"       ,ulIndex,{0,j_beg,i_beg},"t");
       nc.write1_all(dm.get<real const,3>("temp"       ).createHostCopy(),"temperature",ulIndex,{0,j_beg,i_beg},"t");
+      {
+        auto rho = dm.get<real const,3>("density_dry");
+        auto u = dm.get<real const,3>("uvel");
+        auto v = dm.get<real const,3>("vvel");
+        auto w = dm.get<real const,3>("wvel");
+        auto T = dm.get<real const,3>("temp");
+        using yakl::componentwise::operator*;
+        using yakl::componentwise::operator/;
+        using yakl::componentwise::operator+;
+        auto ke = (u*u+v*v+w*w)/2;
+        auto rho_ke = rho*ke;
+        auto ie = (cp_d-R_d)*T;
+        auto rho_ie = rho*ie;
+        auto p = rho * R_d * T;
+        nc.write1_all(ke.createHostCopy(),"ke",ulIndex,{0,j_beg,i_beg},"t");
+        nc.write1_all(rho_ke.createHostCopy(),"rho*ke",ulIndex,{0,j_beg,i_beg},"t");
+        nc.write1_all(ie.createHostCopy(),"ie",ulIndex,{0,j_beg,i_beg},"t");
+        nc.write1_all(rho_ie.createHostCopy(),"rho*ie",ulIndex,{0,j_beg,i_beg},"t");
+        nc.write1_all(p.createHostCopy(),"pressure",ulIndex,{0,j_beg,i_beg},"t");
+      }
       // Write the tracers to file
       auto tracer_names = coupler.get_tracer_names();
       for (int tr = 0; tr < num_tracers; tr++) {
@@ -1233,11 +1118,19 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      auto nx = coupler.get_nx();
-      auto ny = coupler.get_ny();
-      auto nz = coupler.get_nz();
+      auto nx          = coupler.get_nx();
+      auto ny          = coupler.get_ny();
+      auto nz          = coupler.get_nz();
       auto num_tracers = coupler.get_num_tracers();
-      auto sim2d = coupler.is_sim2d();
+      auto sim2d       = coupler.is_sim2d();
+      auto px          = coupler.get_px();
+      auto py          = coupler.get_py();
+      auto nproc_x     = coupler.get_nproc_x();
+      auto nproc_y     = coupler.get_nproc_y();
+
+      YAKL_SCOPE( bc_x , this->bc_x );
+      YAKL_SCOPE( bc_y , this->bc_y );
+      YAKL_SCOPE( bc_z , this->bc_z );
 
       int npack = num_state + num_tracers;
 
@@ -1358,11 +1251,81 @@ namespace modules {
           }
         });
       }
+
+      if (bc_z == BC_PERIODIC) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(hs,ny,nx) , YAKL_LAMBDA (int kk, int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            state(l,      kk,hs+j,hs+i) = state(l,      kk+nz,hs+j,hs+i);
+            state(l,hs+nz+kk,hs+j,hs+i) = state(l,hs+nz+kk-nz,hs+j,hs+i);
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers(l,      kk,hs+j,hs+i) = tracers(l,      kk+nz,hs+j,hs+i);
+            tracers(l,hs+nz+kk,hs+j,hs+i) = tracers(l,hs+nz+kk-nz,hs+j,hs+i);
+          }
+        });
+      } else if (bc_z == BC_WALL) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(hs,ny,nx) , YAKL_LAMBDA (int kk, int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            if (l == idW) {
+              state(l,      kk,hs+j,hs+i) = 0;
+              state(l,hs+nz+kk,hs+j,hs+i) = 0;
+            } else {
+              state(l,      kk,hs+j,hs+i) = state(l,hs+0   ,hs+j,hs+i);
+              state(l,hs+nz+kk,hs+j,hs+i) = state(l,hs+nz-1,hs+j,hs+i);
+            }
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers(l,      kk,hs+j,hs+i) = tracers(l,hs+0   ,hs+j,hs+i);
+            tracers(l,hs+nz+kk,hs+j,hs+i) = tracers(l,hs+nz-1,hs+j,hs+i);
+          }
+        });
+      }
+      if (bc_x == BC_WALL || bc_x == BC_OPEN) {
+        if (px == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int j, int ii) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idU && bc_x == BC_WALL) { state(l,hs+k,hs+j,ii) = 0; }
+              else                             { state(l,hs+k,hs+j,ii) = state(l,hs+k,hs+j,hs+0); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+j,ii) = tracers(l,hs+k,hs+j,hs+0); }
+          });
+        }
+        if (px == nproc_x-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int j, int ii) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idU && bc_x == BC_WALL) { state(l,hs+k,hs+j,hs+nx+ii) = 0; }
+              else                             { state(l,hs+k,hs+j,hs+nx+ii) = state(l,hs+k,hs+j,hs+nx-1); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+j,hs+nx+ii) = tracers(l,hs+k,hs+j,hs+nx-1); }
+          });
+        }
+      }
+      if (bc_y == BC_WALL || bc_y == BC_OPEN) {
+        if (py == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int jj, int i) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idV && bc_y == BC_WALL) { state(l,hs+k,jj,hs+i) = 0; }
+              else                             { state(l,hs+k,jj,hs+i) = state(l,hs+k,hs+0,hs+i); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,jj,hs+i) = tracers(l,hs+k,hs+0,hs+i); }
+          });
+        }
+        if (py == nproc_y-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int jj, int i) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idV && bc_y == BC_WALL) { state(l,hs+k,hs+ny+jj,hs+i) = 0; }
+              else                             { state(l,hs+k,hs+ny+jj,hs+i) = state(l,hs+k,hs+ny-1,hs+i); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+ny+jj,hs+i) = tracers(l,hs+k,hs+ny-1,hs+i); }
+          });
+        }
+      }
     }
 
 
     void edge_exchange(core::Coupler const &coupler , real5d const &state_limits_x , real5d const &tracers_limits_x ,
-                                                      real5d const &state_limits_y , real5d const &tracers_limits_y ) const {
+                                                      real5d const &state_limits_y , real5d const &tracers_limits_y ,
+                                                      real5d const &state_limits_z , real5d const &tracers_limits_z ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -1371,6 +1334,14 @@ namespace modules {
       auto nz = coupler.get_nz();
       auto num_tracers = coupler.get_num_tracers();
       auto sim2d = coupler.is_sim2d();
+      auto px          = coupler.get_px();
+      auto py          = coupler.get_py();
+      auto nproc_x     = coupler.get_nproc_x();
+      auto nproc_y     = coupler.get_nproc_y();
+
+      YAKL_SCOPE( bc_x , this->bc_x );
+      YAKL_SCOPE( bc_y , this->bc_y );
+      YAKL_SCOPE( bc_z , this->bc_z );
 
       int npack = num_state + num_tracers;
 
@@ -1470,33 +1441,93 @@ namespace modules {
         edge_recv_buf_N_host.deep_copy_to(edge_recv_buf_N);
       }
 
-      auto px   = coupler.get_px();
-      auto py   = coupler.get_py();
-      auto nproc_x = coupler.get_nproc_x();
-      auto nproc_y = coupler.get_nproc_y();
-      YAKL_SCOPE( periodic_x , this->periodic_x );
-      YAKL_SCOPE( periodic_y , this->periodic_y );
-
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(npack,nz,ny) , YAKL_LAMBDA (int v, int k, int j) {
         if (v < num_state) {
-          if ( periodic_x || (px > 0        ) ) state_limits_x  (v          ,0,k,j,0 ) = edge_recv_buf_W(v,k,j);
-          if ( periodic_x || (px < nproc_x-1) ) state_limits_x  (v          ,1,k,j,nx) = edge_recv_buf_E(v,k,j);
+          state_limits_x  (v          ,0,k,j,0 ) = edge_recv_buf_W(v,k,j);
+          state_limits_x  (v          ,1,k,j,nx) = edge_recv_buf_E(v,k,j);
         } else {
-          if ( periodic_x || (px > 0        ) ) tracers_limits_x(v-num_state,0,k,j,0 ) = edge_recv_buf_W(v,k,j);
-          if ( periodic_x || (px < nproc_x-1) ) tracers_limits_x(v-num_state,1,k,j,nx) = edge_recv_buf_E(v,k,j);
+          tracers_limits_x(v-num_state,0,k,j,0 ) = edge_recv_buf_W(v,k,j);
+          tracers_limits_x(v-num_state,1,k,j,nx) = edge_recv_buf_E(v,k,j);
         }
       });
 
       if (!sim2d) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(npack,nz,nx) , YAKL_LAMBDA (int v, int k, int i) {
           if (v < num_state) {
-            if ( periodic_y || (py > 0        ) ) state_limits_y  (v          ,0,k,0 ,i) = edge_recv_buf_S(v,k,i);
-            if ( periodic_y || (py < nproc_y-1) ) state_limits_y  (v          ,1,k,ny,i) = edge_recv_buf_N(v,k,i);
+            state_limits_y  (v          ,0,k,0 ,i) = edge_recv_buf_S(v,k,i);
+            state_limits_y  (v          ,1,k,ny,i) = edge_recv_buf_N(v,k,i);
           } else {
-            if ( periodic_y || (py > 0        ) ) tracers_limits_y(v-num_state,0,k,0 ,i) = edge_recv_buf_S(v,k,i);
-            if ( periodic_y || (py < nproc_y-1) ) tracers_limits_y(v-num_state,1,k,ny,i) = edge_recv_buf_N(v,k,i);
+            tracers_limits_y(v-num_state,0,k,0 ,i) = edge_recv_buf_S(v,k,i);
+            tracers_limits_y(v-num_state,1,k,ny,i) = edge_recv_buf_N(v,k,i);
           }
         });
+      }
+      
+      if (bc_z == BC_PERIODIC) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(ny,nx) , YAKL_LAMBDA (int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            state_limits_z(l,0,0 ,j,i) = state_limits_z(l,0,nz,j,i);
+            state_limits_z(l,1,nz,j,i) = state_limits_z(l,1,0 ,j,i);
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers_limits_z(l,0,0 ,j,i) = tracers_limits_z(l,0,nz,j,i);
+            tracers_limits_z(l,1,nz,j,i) = tracers_limits_z(l,1,0 ,j,i);
+          }
+        });
+      } else if (bc_z == BC_WALL || bc_z == BC_OPEN) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(ny,nx) , YAKL_LAMBDA (int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            if (l == idW && bc_z == BC_WALL) {
+              state_limits_z(l,0,0 ,j,i) = 0;
+              state_limits_z(l,1,0 ,j,i) = 0;
+              state_limits_z(l,0,nz,j,i) = 0;
+              state_limits_z(l,1,nz,j,i) = 0;
+            } else {
+              state_limits_z(l,0,0 ,j,i) = state_limits_z(l,1,0 ,j,i);
+              state_limits_z(l,1,nz,j,i) = state_limits_z(l,0,nz,j,i);
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers_limits_z(l,0,0 ,j,i) = tracers_limits_z(l,1,0 ,j,i);
+            tracers_limits_z(l,1,nz,j,i) = tracers_limits_z(l,0,nz,j,i);
+          }
+        });
+      }
+      if (bc_x == BC_WALL || bc_x == BC_OPEN) {
+        if (px == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,ny) , YAKL_LAMBDA (int k, int j) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idU && bc_x == BC_WALL) { state_limits_x(l,0,k,j,0) = 0; state_limits_x(l,1,k,j,0) = 0; }
+              else                             { state_limits_x(l,0,k,j,0) = state_limits_x(l,1,k,j,0); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers_limits_x(l,0,k,j,0) = tracers_limits_x(l,1,k,j,0); }
+          });
+        } else if (px == nproc_x-1) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idU && bc_x == BC_WALL) { state_limits_x(l,0,k,j,nx) = 0; state_limits_x(l,1,k,j,nx) = 0; }
+              else                             { state_limits_x(l,1,k,j,nx) = state_limits_x(l,0,k,j,nx); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers_limits_x(l,1,k,j,nx) = tracers_limits_x(l,0,k,j,nx); }
+          });
+        }
+      }
+      if (bc_y == BC_WALL || bc_y == BC_OPEN) {
+        if (py == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nx) , YAKL_LAMBDA (int k, int i) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idV && bc_y == BC_WALL) { state_limits_y(l,0,k,0,i) = 0; state_limits_y(l,1,k,0,i) = 0; }
+              else                             { state_limits_y(l,0,k,0,i) = state_limits_y(l,1,k,0,i); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,0,k,0,i) = tracers_limits_y(l,1,k,0,i); }
+          });
+        } else if (py == nproc_y-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nx) , YAKL_LAMBDA (int k, int i) {
+            for (int l=0; l < num_state; l++) {
+              if (l == idV && bc_y == BC_WALL) { state_limits_y(l,0,k,ny,i) = 0; state_limits_y(l,1,k,ny,i) = 0; }
+              else                             { state_limits_y(l,1,k,ny,i) = state_limits_y(l,0,k,ny,i); }
+            }
+            for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,1,k,ny,i) = tracers_limits_y(l,0,k,ny,i); }
+          });
+        }
       }
     }
 
