@@ -15,7 +15,7 @@ namespace modules {
     real zlen = coupler.get_zlen();
     real dz   = coupler.get_dz  ();
 
-    int num_layers = 10;  // Number of model top vertical layers that participate in the sponge relaxation
+    int num_layers = 5;  // Number of model top vertical layers that participate in the sponge relaxation
 
     int WFLD = 3; // fourth entry into "fields" is the "w velocity" field. Set the havg to zero for WFLD
 

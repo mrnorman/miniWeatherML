@@ -931,7 +931,7 @@ namespace modules {
       } else if (init_data_int == DATA_BUILDING) {
 
         bc_x = BC_OPEN;
-        bc_y = BC_PERIODIC;
+        bc_y = BC_OPEN;
         bc_z = BC_WALL;
         use_immersed_boundaries = true;
         immersed_proportion = 0;

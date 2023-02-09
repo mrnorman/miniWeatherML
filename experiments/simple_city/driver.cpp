@@ -2,6 +2,7 @@
 #include "coupler.h"
 #include "dynamics_euler_stratified_wenofv.h"
 #include "uvel_sponge.h"
+#include "time_averager.h"
 #include "sponge_layer.h"
 
 int main(int argc, char** argv) {
@@ -46,6 +47,7 @@ int main(int argc, char** argv) {
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
     modules::Dynamics_Euler_Stratified_WenoFV  dycore;
     custom_modules::Uvel_Sponge                uvel_sponge;
+    custom_modules::Time_Averager              time_averager;
 
     coupler.add_tracer("water_vapor","water_vapor",true,true);
     {
@@ -54,8 +56,9 @@ int main(int argc, char** argv) {
     }
 
     // Run the initialization modules
-    dycore     .init( coupler ); // Dycore should initialize its own state here
-    uvel_sponge.init( coupler );
+    dycore       .init( coupler ); // Dycore should initialize its own state here
+    uvel_sponge  .init( coupler );
+    time_averager.init( coupler );
 
     real etime = 0;   // Elapsed time
 
@@ -66,14 +69,15 @@ int main(int argc, char** argv) {
       // If we're about to go past the final time, then limit to time step to exactly hit the final time
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
-      uvel_sponge.apply( coupler );
-      dycore.time_step ( coupler , dtphys );  // Move the flow forward according to the Euler equations
-      modules::sponge_layer( coupler , dtphys );
+      uvel_sponge.apply       ( coupler );
+      dycore.time_step        ( coupler , dtphys );  // Move the flow forward according to the Euler equations
+      modules::sponge_layer   ( coupler , dtphys );
+      time_averager.accumulate( coupler , dtphys );
 
       etime += dtphys; // Advance elapsed time
     }
 
-    // TODO: Add finalize( coupler ) modules here
+    time_averager.finalize( coupler );
 
     yakl::timer_stop("main");
   }
