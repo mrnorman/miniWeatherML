@@ -1708,7 +1708,7 @@ namespace modules {
       }
       if (bc_y == BC_WALL || bc_y == BC_OPEN) {
         if (py == 0) {
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int jj, int i) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,hs,nx) , YAKL_LAMBDA (int k, int jj, int i) {
             for (int l=0; l < num_state; l++) {
               if (l == idV && bc_y == BC_WALL) { state(l,hs+k,jj,hs+i) = 0; }
               else                             { state(l,hs+k,jj,hs+i) = state(l,hs+k,hs+0,hs+i); }
@@ -1717,7 +1717,7 @@ namespace modules {
           });
         }
         if (py == nproc_y-1) {
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,hs) , YAKL_LAMBDA (int k, int jj, int i) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,hs,nx) , YAKL_LAMBDA (int k, int jj, int i) {
             for (int l=0; l < num_state; l++) {
               if (l == idV && bc_y == BC_WALL) { state(l,hs+k,hs+ny+jj,hs+i) = 0; }
               else                             { state(l,hs+k,hs+ny+jj,hs+i) = state(l,hs+k,hs+ny-1,hs+i); }

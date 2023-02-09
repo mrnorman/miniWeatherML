@@ -8,7 +8,7 @@ namespace custom_modules {
   struct Uvel_Sponge {
     real1d col_rho_d, col_uvel, col_vvel, col_wvel, col_temp, col_rho_v;
 
-    int sponge_cells = 5;
+    int sponge_cells = 10;
 
     inline void init( core::Coupler &coupler ) {
       using yakl::c::parallel_for;
@@ -83,7 +83,7 @@ namespace custom_modules {
       YAKL_SCOPE( col_temp     , this->col_temp     );
       YAKL_SCOPE( col_rho_v    , this->col_rho_v    );
 
-      real constexpr time_scale = 60;  // strength of each application is dt / time_scale  (same as SAM's tau_min)
+      real constexpr time_scale = 1;  // strength of each application is dt / time_scale  (same as SAM's tau_min)
       real time_factor = dt / time_scale;
 
       if (coupler.get_px() == 0) {

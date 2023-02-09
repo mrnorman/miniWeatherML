@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
       // If we're about to go past the final time, then limit to time step to exactly hit the final time
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
-      uvel_sponge.apply       ( coupler );
+      uvel_sponge.apply       ( coupler , dtphys );
       dycore.time_step        ( coupler , dtphys );  // Move the flow forward according to the Euler equations
       modules::sponge_layer   ( coupler , dtphys );
       time_averager.accumulate( coupler , dtphys );
