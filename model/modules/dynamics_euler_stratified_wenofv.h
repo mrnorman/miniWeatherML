@@ -5,6 +5,7 @@
 #include "MultipleFields.h"
 #include "TransformMatrices.h"
 #include "WenoLimiter.h"
+#include <random>
 
 namespace modules {
 
@@ -936,6 +937,36 @@ namespace modules {
         use_immersed_boundaries = true;
         immersed_proportion = 0;
 
+        real height_mean = 30;
+        real height_std  = 5;
+
+        int pad_x1 = 3;
+        int pad_x2 = 4;
+        int pad_y1 = 1;
+        int pad_y2 = 1;
+
+        int nblocks_x = floor(xlen/90 -pad_x1-pad_x2);
+        int nblocks_y = floor(ylen/270-pad_y1-pad_y2);
+
+        int nbuildings_x = nblocks_x * 2;
+        int nbuildings_y = nblocks_y * 8;
+
+        int cells_per_building_x = floor(30/dx);
+        int cells_per_building_y = floor(30/dy);
+
+        realHost2d building_heights_host("building_heights",nbuildings_y,nbuildings_x);
+        {
+          std::random_device rd{};
+          std::mt19937 gen{rd()};
+          std::normal_distribution<> d{height_mean, height_std};
+          for (int j=0; j < nbuildings_y; j++) {
+            for (int i=0; i < nbuildings_x; i++) {
+              building_heights_host(j,i) = d(gen);
+            }
+          }
+        }
+        auto building_heights = building_heights_host.createDeviceCopy();
+
         // Define quadrature weights and points for 3-point rules
         const int nqpoints = 9;
         SArray<real,1,nqpoints> qpoints;
@@ -1013,16 +1044,18 @@ namespace modules {
               }
             }
           }
-          int x0 = 0.25 * nx_glob;
-          int y0 = 0.50 * ny_glob;
-          int xr = 0.10 * ny_glob;
-          int yr = 0.10 * ny_glob;
-          int ztop = 0.2 * nz;
-          if ( std::abs((int)(i_beg+i-x0)) < xr && std::abs((int)(j_beg+j-y0)) < yr && k < ztop ) {
-            immersed_proportion(k,j,i) = 1;
-            state(idU,hs+k,hs+j,hs+i) = 0;
-            state(idV,hs+k,hs+j,hs+i) = 0;
-            state(idW,hs+k,hs+j,hs+i) = 0;
+          int inorm = (i_beg+i-cells_per_building_x*3*pad_x1)/cells_per_building_x;
+          int jnorm = (j_beg+j-cells_per_building_y*9*pad_y1)/cells_per_building_y;
+          int iblock = inorm / 3;
+          int jblock = jnorm / 9;
+          if ( ( inorm >= 0 && inorm < nblocks_x*3 && inorm%3 < 2 ) &&
+               ( jnorm >= 0 && jnorm < nblocks_y*9 && jnorm%9 < 8 ) ) {
+            if ( k <= building_heights(jblock*8+jnorm%8,iblock*2+inorm%2) / dz ) {
+              immersed_proportion(k,j,i) = 1;
+              state(idU,hs+k,hs+j,hs+i) = 0;
+              state(idV,hs+k,hs+j,hs+i) = 0;
+              state(idW,hs+k,hs+j,hs+i) = 0;
+            }
           }
         });
 
