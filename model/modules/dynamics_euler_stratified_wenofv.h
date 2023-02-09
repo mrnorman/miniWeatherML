@@ -38,7 +38,7 @@ namespace modules {
     // IDs for the test cases
     int  static constexpr DATA_THERMAL   = 0;
     int  static constexpr DATA_SUPERCELL = 1;
-    int  static constexpr DATA_BUILDING  = 2;
+    int  static constexpr DATA_CITY      = 2;
 
     int  static constexpr BC_PERIODIC = 0;
     int  static constexpr BC_OPEN     = 1;
@@ -801,7 +801,7 @@ namespace modules {
       // Set an integer version of the input_data so we can test it inside GPU kernels
       if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
       else if (init_data == "supercell") { init_data_int = DATA_SUPERCELL; }
-      else if (init_data == "building" ) { init_data_int = DATA_BUILDING;  }
+      else if (init_data == "city"     ) { init_data_int = DATA_CITY;      }
       else { endrun("ERROR: Invalid init_data in yaml input file"); }
 
       use_immersed_boundaries = false;
@@ -928,7 +928,7 @@ namespace modules {
           hy_dens_theta_edges(k) = hr*ht;
         });
 
-      } else if (init_data_int == DATA_BUILDING) {
+      } else if (init_data_int == DATA_CITY) {
 
         bc_x = BC_OPEN;
         bc_y = BC_OPEN;

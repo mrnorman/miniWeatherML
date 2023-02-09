@@ -1,6 +1,6 @@
 ---
 # Simulation time in seconds
-sim_time: 1000.  # 86400
+sim_time: 200.
 
 # Number of cells to use in the CRMs
 nx_glob: 400
@@ -12,7 +12,7 @@ xlen: 2000
 ylen: 2000
 zlen: 500
 
-init_data: building
+init_data: city
 
 # Output filename
 out_fname: test.nc

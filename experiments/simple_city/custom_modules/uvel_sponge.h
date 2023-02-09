@@ -49,7 +49,7 @@ namespace custom_modules {
     }
 
 
-    inline void apply( core::Coupler &coupler ) {
+    inline void apply( core::Coupler &coupler , real dt ) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -58,7 +58,6 @@ namespace custom_modules {
       auto nx = coupler.get_nx();
       auto ny = coupler.get_ny();
       auto nz = coupler.get_nz();
-      auto i_beg   = coupler.get_i_beg();
 
       real R_d   = coupler.get_option<real>("R_d" ,287     );
       real cp_d  = coupler.get_option<real>("cp_d",1004    );
@@ -84,11 +83,14 @@ namespace custom_modules {
       YAKL_SCOPE( col_temp     , this->col_temp     );
       YAKL_SCOPE( col_rho_v    , this->col_rho_v    );
 
+      real constexpr time_scale = 60;  // strength of each application is dt / time_scale  (same as SAM's tau_min)
+      real time_factor = dt / time_scale;
+
       if (coupler.get_px() == 0) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real xloc   = i / (sponge_cells-1._fp);
           real weight = i < sponge_cells ? (cos(M_PI*xloc)+1)/2 : 0;
-          weight *= strength;
+          weight *= strength*time_factor;
           rho_d(k,j,i) = weight*col_rho_d(k) + (1-weight)*rho_d(k,j,i);
           uvel (k,j,i) = weight*col_uvel (k) + (1-weight)*uvel (k,j,i);
           vvel (k,j,i) = weight*col_vvel (k) + (1-weight)*vvel (k,j,i);
@@ -101,7 +103,33 @@ namespace custom_modules {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real xloc   = (nx-1-i) / (sponge_cells-1._fp);
           real weight = nx-1-i < sponge_cells ? (cos(M_PI*xloc)+1)/2 : 0;
-          weight *= strength;
+          weight *= strength*time_factor;
+          rho_d(k,j,i) = weight*col_rho_d(k) + (1-weight)*rho_d(k,j,i);
+          uvel (k,j,i) = weight*col_uvel (k) + (1-weight)*uvel (k,j,i);
+          vvel (k,j,i) = weight*col_vvel (k) + (1-weight)*vvel (k,j,i);
+          wvel (k,j,i) = weight*col_wvel (k) + (1-weight)*wvel (k,j,i);
+          temp (k,j,i) = weight*col_temp (k) + (1-weight)*temp (k,j,i);
+          rho_v(k,j,i) = weight*col_rho_v(k) + (1-weight)*rho_v(k,j,i);
+        });
+      }
+      if (coupler.get_py() == 0) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+          real yloc   = j / (sponge_cells-1._fp);
+          real weight = j < sponge_cells ? (cos(M_PI*yloc)+1)/2 : 0;
+          weight *= strength*time_factor;
+          rho_d(k,j,i) = weight*col_rho_d(k) + (1-weight)*rho_d(k,j,i);
+          uvel (k,j,i) = weight*col_uvel (k) + (1-weight)*uvel (k,j,i);
+          vvel (k,j,i) = weight*col_vvel (k) + (1-weight)*vvel (k,j,i);
+          wvel (k,j,i) = weight*col_wvel (k) + (1-weight)*wvel (k,j,i);
+          temp (k,j,i) = weight*col_temp (k) + (1-weight)*temp (k,j,i);
+          rho_v(k,j,i) = weight*col_rho_v(k) + (1-weight)*rho_v(k,j,i);
+        });
+      }
+      if (coupler.get_py() == coupler.get_nproc_y()-1) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+          real yloc   = (ny-1-j) / (sponge_cells-1._fp);
+          real weight = ny-1-j < sponge_cells ? (cos(M_PI*yloc)+1)/2 : 0;
+          weight *= strength*time_factor;
           rho_d(k,j,i) = weight*col_rho_d(k) + (1-weight)*rho_d(k,j,i);
           uvel (k,j,i) = weight*col_uvel (k) + (1-weight)*uvel (k,j,i);
           vvel (k,j,i) = weight*col_vvel (k) + (1-weight)*vvel (k,j,i);
