@@ -571,15 +571,6 @@ namespace modules {
         // Z-direction
         ////////////////////////////////////////////////////////
         if (i < nx && j < ny) {
-          // Boundary conditions
-          if (k == 0) {
-            for (int l = 0; l < num_state  ; l++) { state_limits_z  (l,0,0 ,j,i) = state_limits_z  (l,1,0 ,j,i); }
-            for (int l = 0; l < num_tracers; l++) { tracers_limits_z(l,0,0 ,j,i) = tracers_limits_z(l,1,0 ,j,i); }
-          }
-          if (k == nz) {
-            for (int l = 0; l < num_state  ; l++) { state_limits_z  (l,1,nz,j,i) = state_limits_z  (l,0,nz,j,i); }
-            for (int l = 0; l < num_tracers; l++) { tracers_limits_z(l,1,nz,j,i) = tracers_limits_z(l,0,nz,j,i); }
-          }
           // Get left and right state
           real r_L = state_limits_z(idR,0,k,j,i)    ;   real r_R = state_limits_z(idR,1,k,j,i)    ;
           real u_L = state_limits_z(idU,0,k,j,i)/r_L;   real u_R = state_limits_z(idU,1,k,j,i)/r_R;
@@ -1050,12 +1041,18 @@ namespace modules {
           int jblock = jnorm / 9;
           if ( ( inorm >= 0 && inorm < nblocks_x*3 && inorm%3 < 2 ) &&
                ( jnorm >= 0 && jnorm < nblocks_y*9 && jnorm%9 < 8 ) ) {
-            if ( k <= building_heights(jblock*8+jnorm%8,iblock*2+inorm%2) / dz ) {
+            if ( k <= std::ceil( building_heights(jblock*8+jnorm%8,iblock*2+inorm%2) / dz ) ) {
               immersed_proportion(k,j,i) = 1;
               state(idU,hs+k,hs+j,hs+i) = 0;
               state(idV,hs+k,hs+j,hs+i) = 0;
               state(idW,hs+k,hs+j,hs+i) = 0;
             }
+          }
+          if ( k == 0 ) {
+            immersed_proportion(k,j,i) = 1;
+            state(idU,hs+k,hs+j,hs+i) = 0;
+            state(idV,hs+k,hs+j,hs+i) = 0;
+            state(idW,hs+k,hs+j,hs+i) = 0;
           }
         });
 

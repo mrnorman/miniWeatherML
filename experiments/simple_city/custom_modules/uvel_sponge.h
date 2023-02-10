@@ -38,22 +38,52 @@ namespace custom_modules {
       col_temp  = real1d("col_temp ",nz);
       col_rho_v = real1d("col_rho_v",nz);
 
-      parallel_for( YAKL_AUTO_LABEL() , nz , YAKL_LAMBDA (int k) {
-        col_rho_d(k) = rho_d(k,0,0);
-        col_uvel (k) = uvel (k,0,0);
-        col_vvel (k) = vvel (k,0,0);
-        col_wvel (k) = wvel (k,0,0);
-        col_temp (k) = temp (k,0,0);
-        col_rho_v(k) = rho_v(k,0,0);
-      });
+      auto col_rho_d_host = col_rho_d.createHostObject();
+      auto col_uvel_host  = col_uvel .createHostObject();
+      auto col_vvel_host  = col_vvel .createHostObject();
+      auto col_wvel_host  = col_wvel .createHostObject();
+      auto col_temp_host  = col_temp .createHostObject();
+      auto col_rho_v_host = col_rho_v.createHostObject();
+
+      if (coupler.is_mainproc()) {
+        parallel_for( YAKL_AUTO_LABEL() , nz , YAKL_LAMBDA (int k) {
+          col_rho_d(k) = rho_d(k,0,0);
+          col_uvel (k) = uvel (k,0,0);
+          col_vvel (k) = vvel (k,0,0);
+          col_wvel (k) = wvel (k,0,0);
+          col_temp (k) = temp (k,0,0);
+          col_rho_v(k) = rho_v(k,0,0);
+        });
+        col_rho_d.deep_copy_to(col_rho_d_host);
+        col_uvel .deep_copy_to(col_uvel_host );
+        col_vvel .deep_copy_to(col_vvel_host );
+        col_wvel .deep_copy_to(col_wvel_host );
+        col_temp .deep_copy_to(col_temp_host );
+        col_rho_v.deep_copy_to(col_rho_v_host);
+        yakl::fence();
+      }
+
+      MPI_Bcast( col_rho_d_host.data(), nz , coupler.get_mpi_data_type() , 0 , MPI_COMM_WORLD );
+      MPI_Bcast( col_uvel_host .data(), nz , coupler.get_mpi_data_type() , 0 , MPI_COMM_WORLD );
+      MPI_Bcast( col_vvel_host .data(), nz , coupler.get_mpi_data_type() , 0 , MPI_COMM_WORLD );
+      MPI_Bcast( col_wvel_host .data(), nz , coupler.get_mpi_data_type() , 0 , MPI_COMM_WORLD );
+      MPI_Bcast( col_temp_host .data(), nz , coupler.get_mpi_data_type() , 0 , MPI_COMM_WORLD );
+      MPI_Bcast( col_rho_v_host.data(), nz , coupler.get_mpi_data_type() , 0 , MPI_COMM_WORLD );
+
+      if (! coupler.is_mainproc()) {
+        col_rho_d_host.deep_copy_to(col_rho_d);
+        col_uvel_host .deep_copy_to(col_uvel );
+        col_vvel_host .deep_copy_to(col_vvel );
+        col_wvel_host .deep_copy_to(col_wvel );
+        col_temp_host .deep_copy_to(col_temp );
+        col_rho_v_host.deep_copy_to(col_rho_v);
+      }
     }
 
 
     inline void apply( core::Coupler &coupler , real dt ) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
-
-      real strength = 1.0;
 
       auto nx = coupler.get_nx();
       auto ny = coupler.get_ny();
@@ -83,14 +113,14 @@ namespace custom_modules {
       YAKL_SCOPE( col_temp     , this->col_temp     );
       YAKL_SCOPE( col_rho_v    , this->col_rho_v    );
 
-      real constexpr time_scale = 1;  // strength of each application is dt / time_scale  (same as SAM's tau_min)
+      real time_scale = 1;  // strength of each application is dt / time_scale  (same as SAM's tau_min)
       real time_factor = dt / time_scale;
 
       if (coupler.get_px() == 0) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real xloc   = i / (sponge_cells-1._fp);
           real weight = i < sponge_cells ? (cos(M_PI*xloc)+1)/2 : 0;
-          weight *= strength*time_factor;
+          weight *= time_factor;
           rho_d(k,j,i) = weight*col_rho_d(k) + (1-weight)*rho_d(k,j,i);
           uvel (k,j,i) = weight*col_uvel (k) + (1-weight)*uvel (k,j,i);
           vvel (k,j,i) = weight*col_vvel (k) + (1-weight)*vvel (k,j,i);
@@ -103,7 +133,7 @@ namespace custom_modules {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real xloc   = (nx-1-i) / (sponge_cells-1._fp);
           real weight = nx-1-i < sponge_cells ? (cos(M_PI*xloc)+1)/2 : 0;
-          weight *= strength*time_factor;
+          weight *= time_factor;
           rho_d(k,j,i) = weight*col_rho_d(k) + (1-weight)*rho_d(k,j,i);
           uvel (k,j,i) = weight*col_uvel (k) + (1-weight)*uvel (k,j,i);
           vvel (k,j,i) = weight*col_vvel (k) + (1-weight)*vvel (k,j,i);
@@ -116,7 +146,7 @@ namespace custom_modules {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real yloc   = j / (sponge_cells-1._fp);
           real weight = j < sponge_cells ? (cos(M_PI*yloc)+1)/2 : 0;
-          weight *= strength*time_factor;
+          weight *= time_factor;
           rho_d(k,j,i) = weight*col_rho_d(k) + (1-weight)*rho_d(k,j,i);
           uvel (k,j,i) = weight*col_uvel (k) + (1-weight)*uvel (k,j,i);
           vvel (k,j,i) = weight*col_vvel (k) + (1-weight)*vvel (k,j,i);
@@ -129,7 +159,7 @@ namespace custom_modules {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real yloc   = (ny-1-j) / (sponge_cells-1._fp);
           real weight = ny-1-j < sponge_cells ? (cos(M_PI*yloc)+1)/2 : 0;
-          weight *= strength*time_factor;
+          weight *= time_factor;
           rho_d(k,j,i) = weight*col_rho_d(k) + (1-weight)*rho_d(k,j,i);
           uvel (k,j,i) = weight*col_uvel (k) + (1-weight)*uvel (k,j,i);
           vvel (k,j,i) = weight*col_vvel (k) + (1-weight)*vvel (k,j,i);
