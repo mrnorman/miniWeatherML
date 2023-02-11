@@ -5,12 +5,17 @@
 
 namespace custom_modules {
   
-  struct Uvel_Sponge {
-    real1d col_rho_d, col_uvel, col_vvel, col_wvel, col_temp, col_rho_v;
+  struct Horizontal_Sponge {
+    real1d col_rho_d;
+    real1d col_uvel;
+    real1d col_vvel;
+    real1d col_wvel;
+    real1d col_temp;
+    real1d col_rho_v;
+    int    sponge_cells;
+    real   time_scale;
 
-    int sponge_cells = 10;
-
-    inline void init( core::Coupler &coupler ) {
+    inline void init( core::Coupler &coupler , int sponge_cells = 10 , real time_scale = 1 ) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -78,10 +83,21 @@ namespace custom_modules {
         col_temp_host .deep_copy_to(col_temp );
         col_rho_v_host.deep_copy_to(col_rho_v);
       }
+      this->sponge_cells = sponge_cells;
+      this->time_scale   = time_scale;
     }
 
 
-    inline void apply( core::Coupler &coupler , real dt ) {
+    void override_rho_d(real val) { col_rho_d = val; }
+    void override_uvel (real val) { col_uvel  = val; }
+    void override_vvel (real val) { col_vvel  = val; }
+    void override_wvel (real val) { col_wvel  = val; }
+    void override_temp (real val) { col_temp  = val; }
+    void override_rho_v(real val) { col_rho_v = val; }
+
+
+    inline void apply( core::Coupler &coupler , real dt ,
+                       bool x1=true , bool x2=true , bool y1=true , bool y2=true ) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -106,6 +122,7 @@ namespace custom_modules {
       auto rho_v = dm.get<real,3>("water_vapor");
 
       YAKL_SCOPE( sponge_cells , this->sponge_cells );
+      YAKL_SCOPE( time_scale   , this->time_scale   );
       YAKL_SCOPE( col_rho_d    , this->col_rho_d    );
       YAKL_SCOPE( col_uvel     , this->col_uvel     );
       YAKL_SCOPE( col_vvel     , this->col_vvel     );
@@ -113,10 +130,9 @@ namespace custom_modules {
       YAKL_SCOPE( col_temp     , this->col_temp     );
       YAKL_SCOPE( col_rho_v    , this->col_rho_v    );
 
-      real time_scale = 1;  // strength of each application is dt / time_scale  (same as SAM's tau_min)
       real time_factor = dt / time_scale;
 
-      if (coupler.get_px() == 0) {
+      if (coupler.get_px() == 0 && x1) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real xloc   = i / (sponge_cells-1._fp);
           real weight = i < sponge_cells ? (cos(M_PI*xloc)+1)/2 : 0;
@@ -129,7 +145,7 @@ namespace custom_modules {
           rho_v(k,j,i) = weight*col_rho_v(k) + (1-weight)*rho_v(k,j,i);
         });
       }
-      if (coupler.get_px() == coupler.get_nproc_x()-1) {
+      if (coupler.get_px() == coupler.get_nproc_x()-1 && x2) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real xloc   = (nx-1-i) / (sponge_cells-1._fp);
           real weight = nx-1-i < sponge_cells ? (cos(M_PI*xloc)+1)/2 : 0;
@@ -142,7 +158,7 @@ namespace custom_modules {
           rho_v(k,j,i) = weight*col_rho_v(k) + (1-weight)*rho_v(k,j,i);
         });
       }
-      if (coupler.get_py() == 0) {
+      if (coupler.get_py() == 0 && y1) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real yloc   = j / (sponge_cells-1._fp);
           real weight = j < sponge_cells ? (cos(M_PI*yloc)+1)/2 : 0;
@@ -155,7 +171,7 @@ namespace custom_modules {
           rho_v(k,j,i) = weight*col_rho_v(k) + (1-weight)*rho_v(k,j,i);
         });
       }
-      if (coupler.get_py() == coupler.get_nproc_y()-1) {
+      if (coupler.get_py() == coupler.get_nproc_y()-1 && y2) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
           real yloc   = (ny-1-j) / (sponge_cells-1._fp);
           real weight = ny-1-j < sponge_cells ? (cos(M_PI*yloc)+1)/2 : 0;

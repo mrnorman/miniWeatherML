@@ -1054,6 +1054,19 @@ namespace modules {
             state(idV,hs+k,hs+j,hs+i) = 0;
             state(idW,hs+k,hs+j,hs+i) = 0;
           }
+          // To generate turbulence
+          int i1 = 10;
+          int i2 = 10;
+          int scale = 4;
+          real strength = 0.2;
+          if (i_beg+i >= i1 && i_beg+i <= i2) {
+            if ( ((j_beg+j)/scale)%2 == 0 && (k/scale)%2 == 1 ) {
+            immersed_proportion(k,j,i) = strength;
+            state(idU,hs+k,hs+j,hs+i) = 0;
+            state(idV,hs+k,hs+j,hs+i) = 0;
+            state(idW,hs+k,hs+j,hs+i) = 0;
+            }
+          }
         });
 
 
