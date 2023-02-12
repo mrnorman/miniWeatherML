@@ -1,16 +1,16 @@
 ---
 # Simulation time in seconds
-sim_time: 200.
+sim_time: 1000.
 
 # Number of cells to use in the CRMs
-nx_glob: 216
-ny_glob: 270
-nz     : 60
+nx_glob: 414
+ny_glob: 378
+nz     : 40
 
 # Domain size of the CRMs
-xlen: 1080
-ylen: 1350
-zlen: 300
+xlen: 2070
+ylen: 1890
+zlen: 200
 
 init_data: city
 

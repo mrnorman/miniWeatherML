@@ -687,28 +687,22 @@ namespace modules {
                                   -( tracers_flux_z(l,k+1,j  ,i  ) - tracers_flux_z(l,k,j,i) ) / dz;
         }
         if (use_immersed_boundaries) {
-          real delta     = std::pow( dx*dy*dz , 1._fp/3._fp );
-          real beta      = immersed_proportion(k,j,i);
-          real C_d       = 1.e3*beta/delta;
-          real C_t       = 1.e1*beta/delta;
-          real rho       = state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k);
-          real uvel      = state(idU,hs+k,hs+j,hs+i) / rho;
-          real vvel      = state(idV,hs+k,hs+j,hs+i) / rho;
-          real wvel      = state(idW,hs+k,hs+j,hs+i) / rho;
-          real rho_theta = state(idT,hs+k,hs+j,hs+i) + hy_dens_theta_cells(k);
-          real wind_mag  = sqrt(uvel*uvel+vvel*vvel+wvel*wvel);
-          state_tend(idR,k,j,i) += -C_t * (rho-hy_dens_cells(k)) * wind_mag;
-          state_tend(idU,k,j,i) += -C_d * rho * std::abs(uvel) * uvel;
-          state_tend(idV,k,j,i) += -C_d * rho * std::abs(vvel) * vvel;
-          state_tend(idW,k,j,i) += -C_d * rho * std::abs(wvel) * wvel;
-          state_tend(idT,k,j,i) += -C_t * (rho_theta-hy_dens_theta_cells(k)) * wind_mag;
-          // if (immersed_proportion(k,j,i) == 1) {
-          //   state_tend(idR,k,j,i) = -state(idR,hs+k,hs+j,hs+i)/dt;
-          //   state_tend(idU,k,j,i) = -state(idU,hs+k,hs+j,hs+i)/dt;
-          //   state_tend(idV,k,j,i) = -state(idV,hs+k,hs+j,hs+i)/dt;
-          //   state_tend(idW,k,j,i) = -state(idW,hs+k,hs+j,hs+i)/dt;
-          //   state_tend(idT,k,j,i) = -state(idT,hs+k,hs+j,hs+i)/dt;
-          // }
+          // Determine the time scale of damping
+          real delta        = std::pow( dx*dy*dz , 1._fp/3._fp );
+          real tau          = dt;
+          // Compute immersed material tendencies (zero velocity, reference density & temperature)
+          real imm_tend_idR = -std::min(1._fp,dt/tau)*state(idR,hs+k,hs+j,hs+i)/dt;
+          real imm_tend_idU = -std::min(1._fp,dt/tau)*state(idU,hs+k,hs+j,hs+i)/dt;
+          real imm_tend_idV = -std::min(1._fp,dt/tau)*state(idV,hs+k,hs+j,hs+i)/dt;
+          real imm_tend_idW = -std::min(1._fp,dt/tau)*state(idW,hs+k,hs+j,hs+i)/dt;
+          real imm_tend_idT = -std::min(1._fp,dt/tau)*state(idT,hs+k,hs+j,hs+i)/dt;
+          // immersed proportion has immersed tendnecies. Other proportion has free tendencies
+          real prop         = immersed_proportion(k,j,i);
+          state_tend(idR,k,j,i) = prop*imm_tend_idR + (1-prop)*state_tend(idR,k,j,i);
+          state_tend(idU,k,j,i) = prop*imm_tend_idU + (1-prop)*state_tend(idU,k,j,i);
+          state_tend(idV,k,j,i) = prop*imm_tend_idV + (1-prop)*state_tend(idV,k,j,i);
+          state_tend(idW,k,j,i) = prop*imm_tend_idW + (1-prop)*state_tend(idW,k,j,i);
+          state_tend(idT,k,j,i) = prop*imm_tend_idT + (1-prop)*state_tend(idT,k,j,i);
         }
       });
     }
@@ -923,16 +917,16 @@ namespace modules {
       } else if (init_data_int == DATA_CITY) {
 
         bc_x = BC_OPEN;
-        bc_y = BC_OPEN;
+        bc_y = BC_PERIODIC;
         bc_z = BC_WALL;
         use_immersed_boundaries = true;
         immersed_proportion = 0;
 
-        real height_mean = 30;
-        real height_std  = 5;
+        real height_mean = 60;
+        real height_std  = 0;
 
         int pad_x1 = 3;
-        int pad_x2 = 4;
+        int pad_x2 = 10;
         int pad_y1 = 1;
         int pad_y2 = 1;
 
@@ -1048,25 +1042,19 @@ namespace modules {
               state(idW,hs+k,hs+j,hs+i) = 0;
             }
           }
-          if ( k == 0 ) {
-            immersed_proportion(k,j,i) = 1;
-            state(idU,hs+k,hs+j,hs+i) = 0;
-            state(idV,hs+k,hs+j,hs+i) = 0;
-            state(idW,hs+k,hs+j,hs+i) = 0;
-          }
+          // if ( k == 0 ) {
+          //   immersed_proportion(k,j,i) = 1;
+          //   state(idU,hs+k,hs+j,hs+i) = 0;
+          //   state(idV,hs+k,hs+j,hs+i) = 0;
+          //   state(idW,hs+k,hs+j,hs+i) = 0;
+          // }
           // To generate turbulence
-          int i1 = 10;
-          int i2 = 10;
-          int scale = 4;
-          real strength = 0.2;
-          if (i_beg+i >= i1 && i_beg+i <= i2) {
-            if ( ((j_beg+j)/scale)%2 == 0 && (k/scale)%2 == 1 ) {
-            immersed_proportion(k,j,i) = strength;
-            state(idU,hs+k,hs+j,hs+i) = 0;
-            state(idV,hs+k,hs+j,hs+i) = 0;
-            state(idW,hs+k,hs+j,hs+i) = 0;
-            }
-          }
+          // int i1 = 10;
+          // int i2 = 10;
+          // real strength = 1;
+          // if (i_beg+i >= i1 && i_beg+i <= i2 && k >= 0 && k <= 3 ) {
+          //   if ((j_beg+j)%8 < 4) { immersed_proportion(k,j,i) = strength; }
+          // }
         });
 
 

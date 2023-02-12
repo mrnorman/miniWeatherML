@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
 
     // Run the initialization modules
     dycore       .init( coupler ); // Dycore should initialize its own state here
-    horiz_sponge .init( coupler );
+    horiz_sponge .init( coupler , 10 , 1. );
     time_averager.init( coupler );
 
     real etime = 0;   // Elapsed time
@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
       // If we're about to go past the final time, then limit to time step to exactly hit the final time
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
-      horiz_sponge.apply      ( coupler , dtphys );
+      horiz_sponge.apply      ( coupler , dtphys , true , true , false , false );
       dycore.time_step        ( coupler , dtphys );  // Move the flow forward according to the Euler equations
       modules::sponge_layer   ( coupler , dtphys );
       time_averager.accumulate( coupler , dtphys );
