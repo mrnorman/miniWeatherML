@@ -1,8 +1,9 @@
 ---
 # Simulation time in seconds
-sim_time: 100.
+sim_time: 10.
 
 # Number of cells to use in the CRMs
+nens   : 3
 nx_glob: 50
 ny_glob: 50
 nz     : 50
