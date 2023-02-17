@@ -704,11 +704,11 @@ namespace modules {
 
       auto &dm = coupler.get_data_manager_readwrite();
 
-      dm.register_and_allocate<real>("density_dry","",{nz,nx,ny});
-      dm.register_and_allocate<real>("uvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("vvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("wvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("temp","",{nz,nx,ny});
+      dm.register_and_allocate<real>("density_dry","",{nz,ny,nx});
+      dm.register_and_allocate<real>("uvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("vvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("wvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("temp","",{nz,ny,nx});
 
       sim2d = (coupler.get_ny_glob() == 1);
 
