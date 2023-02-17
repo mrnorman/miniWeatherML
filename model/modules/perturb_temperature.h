@@ -5,7 +5,7 @@
 
 namespace modules {
 
-  inline void perturb_temperature( core::Coupler &coupler ) {
+  inline void perturb_temperature( core::Coupler &coupler , bool thermal = true , bool random = false ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
@@ -13,7 +13,7 @@ namespace modules {
     int ny = coupler.get_ny();
     int nx = coupler.get_nx();
 
-    {
+    if (random) {
       int  num_levels = nz / 4;
       real magnitude  = 3.;
 
@@ -32,7 +32,7 @@ namespace modules {
       });
     }
 
-    {
+    if (thermal) {
       auto &dm = coupler.get_data_manager_readwrite();
       auto temp = dm.get<real,3>("temp");
 
