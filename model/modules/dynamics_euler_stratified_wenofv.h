@@ -219,6 +219,9 @@ namespace modules {
       using std::min;
       using std::max;
 
+      auto earthrot = coupler.get_option<real>("earthrot");
+      auto fcor = 2*earthrot*sin(coupler.get_option<real>("latitude"));
+
       // A slew of things to bring from class scope into local scope so that lambdas copy them by value to the GPU
       YAKL_SCOPE( hy_dens_cells              , this->hy_dens_cells              );
       YAKL_SCOPE( hy_dens_theta_cells        , this->hy_dens_theta_cells        );
@@ -656,6 +659,8 @@ namespace modules {
                                   -( state_flux_y  (l,k  ,j+1,i  ) - state_flux_y  (l,k,j,i) ) / dy
                                   -( state_flux_z  (l,k+1,j  ,i  ) - state_flux_z  (l,k,j,i) ) / dz;
           if (l == idW) state_tend(l,k,j,i) += -grav * ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          if (l == idU) state_tend(l,k,j,i) += fcor*state(idV,hs+k,hs+j,hs+i);
+          if (l == idV) state_tend(l,k,j,i) -= fcor*state(idU,hs+k,hs+j,hs+i);
           if (l == idV && sim2d) state_tend(l,k,j,i) = 0;
         }
         for (int l = 0; l < num_tracers; l++) {
@@ -685,6 +690,31 @@ namespace modules {
       ylen  = coupler.get_ylen();
       zlen  = coupler.get_zlen();
 
+      {
+        if (! coupler.option_exists("R_d"     )) coupler.set_option<real>("R_d"     ,287.       );
+        if (! coupler.option_exists("cp_d"    )) coupler.set_option<real>("cp_d"    ,1003.      );
+        if (! coupler.option_exists("R_v"     )) coupler.set_option<real>("R_v"     ,461.       );
+        if (! coupler.option_exists("cp_v"    )) coupler.set_option<real>("cp_v"    ,1859       );
+        if (! coupler.option_exists("p0"      )) coupler.set_option<real>("p0"      ,1.e5       );
+        if (! coupler.option_exists("grav"    )) coupler.set_option<real>("grav"    ,9.81       );
+        if (! coupler.option_exists("earthrot")) coupler.set_option<real>("earthrot",7.292115e-5);
+        auto R_d  = coupler.get_option<real>("R_d" );
+        auto cp_d = coupler.get_option<real>("cp_d");
+        auto R_v  = coupler.get_option<real>("R_v" );
+        auto cp_v = coupler.get_option<real>("cp_v");
+        auto p0   = coupler.get_option<real>("p0"  );
+        auto grav = coupler.get_option<real>("grav");
+        if (! coupler.option_exists("cv_d"   )) coupler.set_option<real>("cv_d"   ,cp_d - R_d );
+        auto cv_d = coupler.get_option<real>("cv_d");
+        if (! coupler.option_exists("gamma_d")) coupler.set_option<real>("gamma_d",cp_d / cv_d);
+        if (! coupler.option_exists("kappa_d")) coupler.set_option<real>("kappa_d",R_d  / cp_d);
+        if (! coupler.option_exists("cv_v"   )) coupler.set_option<real>("cv_v"   ,R_v - cp_v );
+        auto gamma = coupler.get_option<real>("gamma_d");
+        auto kappa = coupler.get_option<real>("kappa_d");
+        if (! coupler.option_exists("C0")) coupler.set_option<real>("C0" , pow( R_d * pow( p0 , -kappa ) , gamma ));
+      }
+
+
       auto &dm = coupler.get_data_manager_readwrite();
 
       dm.register_and_allocate<real>("density_dry","",{nz,ny,nx});
@@ -695,15 +725,15 @@ namespace modules {
 
       sim2d = (coupler.get_ny_glob() == 1);
 
-      R_d   = coupler.get_option<real>("R_d" );
-      R_v   = coupler.get_option<real>("R_v" );
-      cp_d  = coupler.get_option<real>("cp_d");
-      cp_v  = coupler.get_option<real>("cp_v");
-      p0    = coupler.get_option<real>("p0"  );
-      grav  = coupler.get_option<real>("grav");
-      kappa = R_d / cp_d;
-      gamma = cp_d / (cp_d - R_d);
-      C0    = pow( R_d * pow( p0 , -kappa ) , gamma );
+      R_d   = coupler.get_option<real>("R_d"    );
+      R_v   = coupler.get_option<real>("R_v"    );
+      cp_d  = coupler.get_option<real>("cp_d"   );
+      cp_v  = coupler.get_option<real>("cp_v"   );
+      p0    = coupler.get_option<real>("p0"     );
+      grav  = coupler.get_option<real>("grav"   );
+      kappa = coupler.get_option<real>("kappa_d");
+      gamma = coupler.get_option<real>("gamma_d");
+      C0    = coupler.get_option<real>("C0"     );
 
       // Use TransformMatrices class to create matrices & GLL points to convert degrees of freedom as needed
       TransformMatrices::get_gll_points          (gll_pts         );
@@ -764,8 +794,9 @@ namespace modules {
       if (init_data_int == DATA_SUPERCELL) {
 
         coupler.add_option<int>("bc_x",BC_PERIODIC);
-        coupler.add_option<int>("bc_y",BC_PERIODIC);
-        coupler.add_option<int>("bc_z",BC_WALL    );
+        coupler.add_option<int>("bc_y",BC_OPEN);
+        coupler.add_option<int>("bc_z",BC_WALL);
+        coupler.add_option<real>("latitude",0);
         init_supercell( coupler , state , tracers );
 
       } else {
@@ -773,6 +804,7 @@ namespace modules {
         coupler.add_option<int>("bc_x",BC_PERIODIC);
         coupler.add_option<int>("bc_y",BC_PERIODIC);
         coupler.add_option<int>("bc_z",BC_WALL    );
+        coupler.add_option<real>("latitude",0);
         // Define quadrature weights and points for 3-point rules
         const int nqpoints = 3;
         SArray<real,1,nqpoints> qpoints;
