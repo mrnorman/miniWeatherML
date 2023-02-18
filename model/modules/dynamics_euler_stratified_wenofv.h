@@ -5,6 +5,7 @@
 #include "MultipleFields.h"
 #include "TransformMatrices.h"
 #include "WenoLimiter.h"
+#include <random>
 
 namespace modules {
 
@@ -38,6 +39,8 @@ namespace modules {
     // IDs for the test cases
     int  static constexpr DATA_THERMAL   = 0;
     int  static constexpr DATA_SUPERCELL = 1;
+    int  static constexpr DATA_CITY      = 2;
+    int  static constexpr DATA_BUILDING  = 3;
 
     int  static constexpr BC_PERIODIC = 0;
     int  static constexpr BC_OPEN     = 1;
@@ -219,8 +222,19 @@ namespace modules {
       using std::min;
       using std::max;
 
+      auto use_immersed_boundaries = coupler.get_option<bool>("use_immersed_boundaries");
       auto earthrot = coupler.get_option<real>("earthrot");
       auto fcor = 2*earthrot*sin(coupler.get_option<real>("latitude"));
+
+      // The store a single values flux at cell edges
+      auto &dm = coupler.get_data_manager_readwrite();
+      auto state_flux_x        = dm.get<real,4>("state_flux_x"  );
+      auto state_flux_y        = dm.get<real,4>("state_flux_y"  );
+      auto state_flux_z        = dm.get<real,4>("state_flux_z"  );
+      auto tracers_flux_x      = dm.get<real,4>("tracers_flux_x");
+      auto tracers_flux_y      = dm.get<real,4>("tracers_flux_y");
+      auto tracers_flux_z      = dm.get<real,4>("tracers_flux_z");
+      auto immersed_proportion = dm.get<real,3>("immersed_proportion");
 
       // A slew of things to bring from class scope into local scope so that lambdas copy them by value to the GPU
       YAKL_SCOPE( hy_dens_cells              , this->hy_dens_cells              );
@@ -393,15 +407,6 @@ namespace modules {
       edge_exchange( coupler , state_limits_x , tracers_limits_x ,
                                state_limits_y , tracers_limits_y ,
                                state_limits_z , tracers_limits_z );
-
-      // The store a single values flux at cell edges
-      auto &dm = coupler.get_data_manager_readwrite();
-      auto state_flux_x   = dm.get<real,4>("state_flux_x"  );
-      auto state_flux_y   = dm.get<real,4>("state_flux_y"  );
-      auto state_flux_z   = dm.get<real,4>("state_flux_z"  );
-      auto tracers_flux_x = dm.get<real,4>("tracers_flux_x");
-      auto tracers_flux_y = dm.get<real,4>("tracers_flux_y");
-      auto tracers_flux_z = dm.get<real,4>("tracers_flux_z");
 
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz+1,ny+1,nx+1) , YAKL_LAMBDA (int k, int j, int i ) {
@@ -668,6 +673,24 @@ namespace modules {
                                   -( tracers_flux_y(l,k  ,j+1,i  ) - tracers_flux_y(l,k,j,i) ) / dy
                                   -( tracers_flux_z(l,k+1,j  ,i  ) - tracers_flux_z(l,k,j,i) ) / dz;
         }
+        if (use_immersed_boundaries) {
+          // Determine the time scale of damping
+          real delta        = std::pow( dx*dy*dz , 1._fp/3._fp );
+          real tau          = dt;
+          // Compute immersed material tendencies (zero velocity, reference density & temperature)
+          real imm_tend_idR = -std::min(1._fp,dt/tau)*state(idR,hs+k,hs+j,hs+i)/dt;
+          real imm_tend_idU = -std::min(1._fp,dt/tau)*state(idU,hs+k,hs+j,hs+i)/dt;
+          real imm_tend_idV = -std::min(1._fp,dt/tau)*state(idV,hs+k,hs+j,hs+i)/dt;
+          real imm_tend_idW = -std::min(1._fp,dt/tau)*state(idW,hs+k,hs+j,hs+i)/dt;
+          real imm_tend_idT = -std::min(1._fp,dt/tau)*state(idT,hs+k,hs+j,hs+i)/dt;
+          // immersed proportion has immersed tendnecies. Other proportion has free tendencies
+          real prop         = immersed_proportion(k,j,i);
+          state_tend(idR,k,j,i) = prop*imm_tend_idR + (1-prop)*state_tend(idR,k,j,i);
+          state_tend(idU,k,j,i) = prop*imm_tend_idU + (1-prop)*state_tend(idU,k,j,i);
+          state_tend(idV,k,j,i) = prop*imm_tend_idV + (1-prop)*state_tend(idV,k,j,i);
+          state_tend(idW,k,j,i) = prop*imm_tend_idW + (1-prop)*state_tend(idW,k,j,i);
+          state_tend(idT,k,j,i) = prop*imm_tend_idT + (1-prop)*state_tend(idT,k,j,i);
+        }
       });
     }
 
@@ -689,6 +712,11 @@ namespace modules {
       xlen  = coupler.get_xlen();
       ylen  = coupler.get_ylen();
       zlen  = coupler.get_zlen();
+
+      auto i_beg = coupler.get_i_beg();
+      auto j_beg = coupler.get_j_beg();
+      auto nx_glob = coupler.get_nx_glob();
+      auto ny_glob = coupler.get_ny_glob();
 
       {
         if (! coupler.option_exists("R_d"     )) coupler.set_option<real>("R_d"     ,287.       );
@@ -712,6 +740,7 @@ namespace modules {
         auto gamma = coupler.get_option<real>("gamma_d");
         auto kappa = coupler.get_option<real>("kappa_d");
         if (! coupler.option_exists("C0")) coupler.set_option<real>("C0" , pow( R_d * pow( p0 , -kappa ) , gamma ));
+        coupler.set_option<real>("latitude",0);
       }
 
 
@@ -776,7 +805,14 @@ namespace modules {
       // Set an integer version of the input_data so we can test it inside GPU kernels
       if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
       else if (init_data == "supercell") { init_data_int = DATA_SUPERCELL; }
+      else if (init_data == "city"     ) { init_data_int = DATA_CITY;      }
+      else if (init_data == "building" ) { init_data_int = DATA_BUILDING;  }
       else { endrun("ERROR: Invalid init_data in yaml input file"); }
+
+      coupler.set_option<bool>("use_immersed_boundaries",false);
+      dm.register_and_allocate<real>("immersed_proportion","",{nz,ny,nx});
+      auto immersed_proportion = dm.get<real,3>("immersed_proportion");
+      immersed_proportion = 0;
 
       etime   = 0;
       num_out = 0;
@@ -799,7 +835,7 @@ namespace modules {
         coupler.add_option<real>("latitude",0);
         init_supercell( coupler , state , tracers );
 
-      } else {
+      } else if (init_data_int == DATA_THERMAL) {
 
         coupler.add_option<int>("bc_x",BC_PERIODIC);
         coupler.add_option<int>("bc_y",BC_PERIODIC);
@@ -902,6 +938,243 @@ namespace modules {
           real hr, ht;
 
           if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
+
+          hy_dens_edges      (k) = hr   ;
+          hy_dens_theta_edges(k) = hr*ht;
+        });
+
+      } else if (init_data_int == DATA_CITY) {
+
+        coupler.add_option<int>("bc_x",BC_OPEN    );
+        coupler.add_option<int>("bc_y",BC_PERIODIC);
+        coupler.add_option<int>("bc_z",BC_WALL    );
+        coupler.set_option<bool>("use_immersed_boundaries",true);
+        immersed_proportion = 0;
+
+        real height_mean = 60;
+        real height_std  = 0;
+
+        int pad_x1 = 3;
+        int pad_x2 = 10;
+        int pad_y1 = 1;
+        int pad_y2 = 1;
+
+        int nblocks_x = floor(xlen/90 -pad_x1-pad_x2);
+        int nblocks_y = floor(ylen/270-pad_y1-pad_y2);
+
+        int nbuildings_x = nblocks_x * 2;
+        int nbuildings_y = nblocks_y * 8;
+
+        int cells_per_building_x = floor(30/dx);
+        int cells_per_building_y = floor(30/dy);
+
+        realHost2d building_heights_host("building_heights",nbuildings_y,nbuildings_x);
+        {
+          std::random_device rd{};
+          std::mt19937 gen{rd()};
+          std::normal_distribution<> d{height_mean, height_std};
+          for (int j=0; j < nbuildings_y; j++) {
+            for (int i=0; i < nbuildings_x; i++) {
+              building_heights_host(j,i) = d(gen);
+            }
+          }
+        }
+        auto building_heights = building_heights_host.createDeviceCopy();
+
+        // Define quadrature weights and points for 3-point rules
+        const int nqpoints = 9;
+        SArray<real,1,nqpoints> qpoints;
+        SArray<real,1,nqpoints> qweights;
+
+        TransformMatrices::get_gll_points (qpoints );
+        TransformMatrices::get_gll_weights(qweights);
+
+        YAKL_SCOPE( init_data_int       , this->init_data_int       );
+        YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
+        YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
+        YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
+        YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
+        YAKL_SCOPE( idWV                , this->idWV                );
+
+        // Use quadrature to initialize state and tracer data
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            state(l,hs+k,hs+j,hs+i) = 0.;
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers(l,hs+k,hs+j,hs+i) = 0.;
+          }
+          //Use Gauss-Legendre quadrature
+          for (int kk=0; kk<nqpoints; kk++) {
+            for (int jj=0; jj<nqpoints; jj++) {
+              for (int ii=0; ii<nqpoints; ii++) {
+                real x = (i+i_beg+0.5)*dx + (qpoints(ii)-0.5)*dx;
+                real y = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
+                real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
+                real rho, u, v, w, theta, rho_v, hr, ht;
+
+                hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+                rho   = hr;
+                u     = 20;
+                v     = 0;
+                w     = 0;
+                theta = ht;
+                rho_v = 0;
+
+                if (sim2d) v = 0;
+
+                real wt = qweights(ii)*qweights(jj)*qweights(kk);
+                state(idR,hs+k,hs+j,hs+i) += ( rho - hr )          * wt;
+                state(idU,hs+k,hs+j,hs+i) += rho*u                 * wt;
+                state(idV,hs+k,hs+j,hs+i) += rho*v                 * wt;
+                state(idW,hs+k,hs+j,hs+i) += rho*w                 * wt;
+                state(idT,hs+k,hs+j,hs+i) += ( rho*theta - hr*ht ) * wt;
+                for (int tr=0; tr < num_tracers; tr++) {
+                  if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i) += rho_v * wt; }
+                  else            { tracers(tr,hs+k,hs+j,hs+i) += 0     * wt; }
+                }
+              }
+            }
+          }
+          int inorm = (i_beg+i-cells_per_building_x*3*pad_x1)/cells_per_building_x;
+          int jnorm = (j_beg+j-cells_per_building_y*9*pad_y1)/cells_per_building_y;
+          int iblock = inorm / 3;
+          int jblock = jnorm / 9;
+          if ( ( inorm >= 0 && inorm < nblocks_x*3 && inorm%3 < 2 ) &&
+               ( jnorm >= 0 && jnorm < nblocks_y*9 && jnorm%9 < 8 ) ) {
+            if ( k <= std::ceil( building_heights(jblock*8+jnorm%8,iblock*2+inorm%2) / dz ) ) {
+              immersed_proportion(k,j,i) = 1;
+              state(idU,hs+k,hs+j,hs+i) = 0;
+              state(idV,hs+k,hs+j,hs+i) = 0;
+              state(idW,hs+k,hs+j,hs+i) = 0;
+            }
+          }
+        });
+
+        // Compute hydrostatic background cell averages using quadrature
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz) , YAKL_LAMBDA (int k) {
+          hy_dens_cells      (k) = 0.;
+          hy_dens_theta_cells(k) = 0.;
+          for (int kk=0; kk<nqpoints; kk++) {
+            real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+            real hr, ht;
+
+            hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+            hy_dens_cells      (k) += hr    * qweights(kk);
+            hy_dens_theta_cells(k) += hr*ht * qweights(kk);
+          }
+        });
+
+        // Compute hydrostatic background cell edge values
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz+1) , YAKL_LAMBDA (int k) {
+          real z = k*dz;
+          real hr, ht;
+
+          hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+          hy_dens_edges      (k) = hr   ;
+          hy_dens_theta_edges(k) = hr*ht;
+        });
+
+      } else if (init_data_int == DATA_BUILDING) {
+
+        coupler.add_option<int>("bc_x",BC_OPEN    );
+        coupler.add_option<int>("bc_y",BC_PERIODIC);
+        coupler.add_option<int>("bc_z",BC_WALL    );
+        coupler.set_option<bool>("use_immersed_boundaries",true);
+        immersed_proportion = 0;
+
+        // Define quadrature weights and points for 3-point rules
+        const int nqpoints = 9;
+        SArray<real,1,nqpoints> qpoints;
+        SArray<real,1,nqpoints> qweights;
+
+        TransformMatrices::get_gll_points (qpoints );
+        TransformMatrices::get_gll_weights(qweights);
+
+        YAKL_SCOPE( init_data_int       , this->init_data_int       );
+        YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
+        YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
+        YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
+        YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
+        YAKL_SCOPE( idWV                , this->idWV                );
+
+        // Use quadrature to initialize state and tracer data
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
+          for (int l=0; l < num_state; l++) {
+            state(l,hs+k,hs+j,hs+i) = 0.;
+          }
+          for (int l=0; l < num_tracers; l++) {
+            tracers(l,hs+k,hs+j,hs+i) = 0.;
+          }
+          //Use Gauss-Legendre quadrature
+          for (int kk=0; kk<nqpoints; kk++) {
+            for (int jj=0; jj<nqpoints; jj++) {
+              for (int ii=0; ii<nqpoints; ii++) {
+                real x = (i+i_beg+0.5)*dx + (qpoints(ii)-0.5)*dx;
+                real y = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
+                real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
+                real rho, u, v, w, theta, rho_v, hr, ht;
+
+                hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+                rho   = hr;
+                u     = 20;
+                v     = 0;
+                w     = 0;
+                theta = ht;
+                rho_v = 0;
+
+                if (sim2d) v = 0;
+
+                real wt = qweights(ii)*qweights(jj)*qweights(kk);
+                state(idR,hs+k,hs+j,hs+i) += ( rho - hr )          * wt;
+                state(idU,hs+k,hs+j,hs+i) += rho*u                 * wt;
+                state(idV,hs+k,hs+j,hs+i) += rho*v                 * wt;
+                state(idW,hs+k,hs+j,hs+i) += rho*w                 * wt;
+                state(idT,hs+k,hs+j,hs+i) += ( rho*theta - hr*ht ) * wt;
+                for (int tr=0; tr < num_tracers; tr++) {
+                  if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i) += rho_v * wt; }
+                  else            { tracers(tr,hs+k,hs+j,hs+i) += 0     * wt; }
+                }
+              }
+            }
+          }
+          real x0 = 0.3*nx_glob;
+          real y0 = 0.5*ny_glob;
+          real xr = 0.05*ny_glob;
+          real yr = 0.05*ny_glob;
+          if ( std::abs(i_beg+i-x0) <= xr && std::abs(j_beg+j-y0) <= yr && k <= 0.2*nz ) {
+            immersed_proportion(k,j,i) = 1;
+            state(idU,hs+k,hs+j,hs+i) = 0;
+            state(idV,hs+k,hs+j,hs+i) = 0;
+            state(idW,hs+k,hs+j,hs+i) = 0;
+          }
+        });
+
+        // Compute hydrostatic background cell averages using quadrature
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz) , YAKL_LAMBDA (int k) {
+          hy_dens_cells      (k) = 0.;
+          hy_dens_theta_cells(k) = 0.;
+          for (int kk=0; kk<nqpoints; kk++) {
+            real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+            real hr, ht;
+
+            hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+            hy_dens_cells      (k) += hr    * qweights(kk);
+            hy_dens_theta_cells(k) += hr*ht * qweights(kk);
+          }
+        });
+
+        // Compute hydrostatic background cell edge values
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz+1) , YAKL_LAMBDA (int k) {
+          real z = k*dz;
+          real hr, ht;
+
+          hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
 
           hy_dens_edges      (k) = hr   ;
           hy_dens_theta_edges(k) = hr*ht;

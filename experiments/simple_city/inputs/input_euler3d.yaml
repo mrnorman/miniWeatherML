@@ -1,18 +1,18 @@
 ---
 # Simulation time in seconds
-sim_time: 7200.  # 86400
+sim_time: 200.  # 86400
 
 # Number of cells to use in the CRMs
-nx_glob: 200
-ny_glob: 200
-nz     : 40
+nx_glob: 400
+ny_glob: 400
+nz     : 60
 
 # Domain size of the CRMs
-xlen: 100000
-ylen: 100000
-zlen: 20000
+xlen: 2000
+ylen: 2000
+zlen: 300
 
-init_data: supercell
+init_data: city
 
 # Output filename
 out_fname: test.nc

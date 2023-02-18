@@ -5,7 +5,7 @@
 
 namespace modules {
 
-  inline void sponge_layer( core::Coupler &coupler , real dt ) {
+  inline void sponge_layer( core::Coupler &coupler , real dt , real time_scale = 60 ) {
     using yakl::c::parallel_for;
     using yakl::c::Bounds;
 
@@ -56,7 +56,6 @@ namespace modules {
     int num_tasks;
     MPI_Comm_size( MPI_COMM_WORLD , &num_tasks );
 
-    real constexpr time_scale = 60;  // strength of each application is dt / time_scale  (same as SAM's tau_min)
     real time_factor = dt / time_scale;
 
     // use a cosine relaxation in space:  ((cos(pi*rel_dist)+1)/2)^2

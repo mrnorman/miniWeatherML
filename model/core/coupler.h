@@ -290,6 +290,13 @@ namespace core {
     }
 
 
+    template <class T>
+    T get_option( std::string key , T val ) const {
+      if (option_exists(key)) return options.get_option<T>(key);
+      return val;
+    }
+
+
     bool option_exists( std::string key ) const {
       return options.option_exists(key);
     }
