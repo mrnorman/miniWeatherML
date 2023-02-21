@@ -98,9 +98,10 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      int nx = coupler.get_nx();
-      int ny = coupler.get_ny();
-      int nz = coupler.get_nz();
+      int nens = coupler.get_nens();
+      int nx   = coupler.get_nx();
+      int ny   = coupler.get_ny();
+      int nz   = coupler.get_nz();
 
       // Register tracers in the coupler
       //                 name                description            positive   adds mass
@@ -116,35 +117,20 @@ namespace modules {
 
       auto &dm = coupler.get_data_manager_readwrite();
 
-      dm.register_and_allocate<real>("qv_prev","qv from prev step"         ,{nz,ny,nx},{"z","y","x"});
-      dm.register_and_allocate<real>("t_prev" ,"Temperature from prev step",{nz,ny,nx},{"z","y","x"});
+      dm.register_and_allocate<real>("qv_prev","qv from prev step"         ,{nz,ny,nx,nens},{"z","y","x","nens"});
+      dm.register_and_allocate<real>("t_prev" ,"Temperature from prev step",{nz,ny,nx,nens},{"z","y","x","nens"});
 
-      auto cloud_water     = dm.get<real,3>( "cloud_water"     );
-      auto cloud_water_num = dm.get<real,3>( "cloud_water_num" );
-      auto rain            = dm.get<real,3>( "rain"            );
-      auto rain_num        = dm.get<real,3>( "rain_num"        );
-      auto ice             = dm.get<real,3>( "ice"             );
-      auto ice_num         = dm.get<real,3>( "ice_num"         );
-      auto ice_rime        = dm.get<real,3>( "ice_rime"        );
-      auto ice_rime_vol    = dm.get<real,3>( "ice_rime_vol"    );
-      auto water_vapor     = dm.get<real,3>( "water_vapor"     );
-      auto qv_prev         = dm.get<real,3>( "qv_prev"         );
-      auto t_prev          = dm.get<real,3>( "t_prev"          );
-
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) ,
-                    YAKL_LAMBDA (int k, int j, int i) {
-        cloud_water    (k,j,i) = 0;
-        cloud_water_num(k,j,i) = 0;
-        rain           (k,j,i) = 0;
-        rain_num       (k,j,i) = 0;
-        ice            (k,j,i) = 0;
-        ice_num        (k,j,i) = 0;
-        ice_rime       (k,j,i) = 0;
-        ice_rime_vol   (k,j,i) = 0;
-        water_vapor    (k,j,i) = 0;
-        qv_prev        (k,j,i) = 0;
-        t_prev         (k,j,i) = 0;
-      });
+      dm.get<real,4>( "cloud_water"     ) = 0;
+      dm.get<real,4>( "cloud_water_num" ) = 0;
+      dm.get<real,4>( "rain"            ) = 0;
+      dm.get<real,4>( "rain_num"        ) = 0;
+      dm.get<real,4>( "ice"             ) = 0;
+      dm.get<real,4>( "ice_num"         ) = 0;
+      dm.get<real,4>( "ice_rime"        ) = 0;
+      dm.get<real,4>( "ice_rime_vol"    ) = 0;
+      dm.get<real,4>( "water_vapor"     ) = 0;
+      dm.get<real,4>( "qv_prev"         ) = 0;
+      dm.get<real,4>( "t_prev"          ) = 0;
 
       real rhoh2o = 1000.;
       real mwdry  = 28.966;
@@ -188,14 +174,15 @@ namespace modules {
       int nz   = coupler.get_nz();
       int ny   = coupler.get_ny();
       int nx   = coupler.get_nx();
-      int ncol = ny*nx;
+      int nens = coupler.get_nens();
+      int ncol = ny*nx*nens;
 
       real crm_dx = coupler.get_dx();
       real crm_dy = coupler.get_ny_glob() == 1 ? crm_dx : coupler.get_dy();
 
       auto &dm = coupler.get_data_manager_readwrite();
 
-      // Get tracers dimensioned as (nz,ny*nx)
+      // Get tracers dimensioned as (nz,ny*nx*nens)
       auto rho_c  = dm.get_lev_col<real>("cloud_water"    );
       auto rho_nc = dm.get_lev_col<real>("cloud_water_num");
       auto rho_r  = dm.get_lev_col<real>("rain"           );
