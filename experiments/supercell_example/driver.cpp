@@ -22,14 +22,15 @@ int main(int argc, char** argv) {
     std::string inFile(argv[1]);
     YAML::Node config = YAML::LoadFile(inFile);
     if ( !config            ) { endrun("ERROR: Invalid YAML input file"); }
-    real   sim_time  = config["sim_time"].as<real>();
-    size_t nx_glob   = config["nx_glob" ].as<size_t>();
-    size_t ny_glob   = config["ny_glob" ].as<size_t>();
-    int    nz        = config["nz"      ].as<int>();
-    real   xlen      = config["xlen"    ].as<real>();
-    real   ylen      = config["ylen"    ].as<real>();
-    real   zlen      = config["zlen"    ].as<real>();
-    real   dtphys_in = config["dt_phys" ].as<real>();
+    auto sim_time  = config["sim_time"].as<real>();
+    auto nens      = config["nens"    ].as<int>();
+    auto nx_glob   = config["nx_glob" ].as<size_t>();
+    auto ny_glob   = config["ny_glob" ].as<size_t>();
+    auto nz        = config["nz"      ].as<int>();
+    auto xlen      = config["xlen"    ].as<real>();
+    auto ylen      = config["ylen"    ].as<real>();
+    auto zlen      = config["zlen"    ].as<real>();
+    auto dtphys_in = config["dt_phys" ].as<real>();
 
     coupler.set_option<std::string>( "out_fname" , config["out_fname"].as<std::string>() );
     coupler.set_option<std::string>( "init_data" , config["init_data"].as<std::string>() );
@@ -37,7 +38,7 @@ int main(int argc, char** argv) {
 
     // Coupler state is: (1) dry density;  (2) u-velocity;  (3) v-velocity;  (4) w-velocity;  (5) temperature
     //                   (6+) tracer masses (*not* mixing ratios!)
-    coupler.distribute_mpi_and_allocate_coupled_state(nz, ny_glob, nx_glob);
+    coupler.distribute_mpi_and_allocate_coupled_state(nz, ny_glob, nx_glob, nens);
 
     // Just tells the coupler how big the domain is in each dimensions
     coupler.set_grid( xlen , ylen , zlen );
@@ -56,7 +57,7 @@ int main(int argc, char** argv) {
     // Run the initialization modules
     micro .init                 ( coupler ); // Allocate micro state and register its tracers in the coupler
     dycore.init                 ( coupler ); // Dycore should initialize its own state here
-    column_nudger.set_column    ( coupler ); // Set the column before perturbing
+    // column_nudger.set_column    ( coupler ); // Set the column before perturbing
     modules::perturb_temperature( coupler ); // Randomly perturb bottom layers of temperature to initiate convection
 
     real etime = 0;   // Elapsed time
@@ -71,8 +72,8 @@ int main(int argc, char** argv) {
       // Run the runtime modules
       dycore.time_step             ( coupler , dtphys );  // Move the flow forward according to the Euler equations
       micro .time_step             ( coupler , dtphys );  // Perform phase changes for water + precipitation / falling
-      modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
-      column_nudger.nudge_to_column( coupler , dtphys );  // Nudge slightly back toward unstable profile
+      // modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
+      // column_nudger.nudge_to_column( coupler , dtphys );  // Nudge slightly back toward unstable profile
                                                           // so that supercell persists for all time
 
       etime += dtphys; // Advance elapsed time

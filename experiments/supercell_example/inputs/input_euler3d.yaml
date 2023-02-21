@@ -3,6 +3,7 @@
 sim_time: 7200.  # 86400
 
 # Number of cells to use in the CRMs
+nens   : 1
 nx_glob: 200
 ny_glob: 200
 nz     : 40
