@@ -89,7 +89,10 @@ namespace core {
     T get_option( std::string key ) const {
       validate_type<T>();
       int id = find_option_or_die( key );
-      if (get_type_hash<T>() != options[id].type_hash) endrun("ERROR: Requesting option using the wrong type");
+      if (get_type_hash<T>() != options[id].type_hash) {
+        std::cerr << "ERROR: Requesting option using the wrong type for key [" << key << "]" << std::endl;
+        endrun("");
+      }
       return *( (T *) options[id].data);
     }
 
@@ -105,7 +108,8 @@ namespace core {
     int find_option_or_die( std::string key ) const {
       int id = find_option(key);
       if (id >= 0) return id;
-      endrun("ERROR: option not found");
+      std::cerr << "ERROR: Option not found for key [" << key << "]" << std::endl;
+      endrun("");
       return -1;
     }
 

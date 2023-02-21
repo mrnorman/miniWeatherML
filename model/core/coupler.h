@@ -269,6 +269,7 @@ namespace core {
       if      constexpr (std::is_same<real,float >()) { return MPI_FLOAT; }
       else if constexpr (std::is_same<real,double>()) { return MPI_DOUBLE; }
       else { endrun("ERROR: Invalid type for 'real'"); }
+      return MPI_FLOAT;
     }
 
 
