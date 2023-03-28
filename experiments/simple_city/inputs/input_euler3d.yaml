@@ -3,8 +3,9 @@
 sim_time: 200.  # 86400
 
 # Number of cells to use in the CRMs
-nx_glob: 200
-ny_glob: 200
+nens   : 2
+nx_glob: 400
+ny_glob: 400
 nz     : 60
 
 # Domain size of the CRMs

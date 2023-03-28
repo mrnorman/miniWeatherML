@@ -52,9 +52,10 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      int nx = coupler.get_nx();
-      int ny = coupler.get_ny();
-      int nz = coupler.get_nz();
+      int nens = coupler.get_nens();
+      int nx   = coupler.get_nx();
+      int ny   = coupler.get_ny();
+      int nz   = coupler.get_nz();
 
       // Register tracers in the coupler
       //                 name              description       positive   adds mass
@@ -65,19 +66,19 @@ namespace modules {
       auto &dm = coupler.get_data_manager_readwrite();
 
       // Register and allocation non-tracer quantities used by the microphysics
-      dm.register_and_allocate<real>( "precl" , "precipitation rate" , {ny,nx} , {"y","x"} );
+      dm.register_and_allocate<real>( "precl" , "precipitation rate" , {ny,nx,nens} , {"y","x","nens"} );
 
       // Initialize all micro data to zero
-      auto rho_v = dm.get<real,3>("water_vapor"  );
-      auto rho_c = dm.get<real,3>("cloud_liquid" );
-      auto rho_p = dm.get<real,3>("precip_liquid");
-      auto precl = dm.get<real,2>("precl"        );
+      auto rho_v = dm.get<real,4>("water_vapor"  );
+      auto rho_c = dm.get<real,4>("cloud_liquid" );
+      auto rho_p = dm.get<real,4>("precip_liquid");
+      auto precl = dm.get<real,3>("precl"        );
 
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        rho_v(k,j,i) = 0;
-        rho_c(k,j,i) = 0;
-        rho_p(k,j,i) = 0;
-        if (k == 0) precl(j,i) = 0;
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        rho_v(k,j,i,iens) = 0;
+        rho_c(k,j,i,iens) = 0;
+        rho_p(k,j,i,iens) = 0;
+        if (k == 0) precl(j,i,iens) = 0;
       });
 
       coupler.set_option<std::string>("micro","kessler");
@@ -113,7 +114,8 @@ namespace modules {
       int  nz   = coupler.get_nz();
       int  ny   = coupler.get_ny();
       int  nx   = coupler.get_nx();
-      int  ncol = ny*nx;
+      int  nens = coupler.get_nens();
+      int  ncol = ny*nx*nens;
 
       // These are inputs to kessler(...)
       real2d qv      ("qv"      ,nz,ncol);

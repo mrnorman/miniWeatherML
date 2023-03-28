@@ -26,6 +26,7 @@ namespace core {
     // MPI parallelization information
     int    nranks;           // Total number of MPI ranks / processes
     int    myrank;           // My rank # in [0,nranks-1]
+    int    nens;             // Number of ensembles
     size_t nx_glob;          // Total global number of cells in the x-direction (summing all MPI Processes)
     size_t ny_glob;          // Total global number of cells in the y-direction (summing all MPI Processes)
     int    nproc_x;          // Number of parallel processes distributed over the x-dimension
@@ -89,6 +90,7 @@ namespace core {
       coupler.tracers  = this->tracers ;
       coupler.nranks   = this->nranks  ;
       coupler.myrank   = this->myrank  ;
+      coupler.nens     = this->nens    ;
       coupler.nx_glob  = this->nx_glob ;
       coupler.ny_glob  = this->ny_glob ;
       coupler.nproc_x  = this->nproc_x ;
@@ -105,7 +107,7 @@ namespace core {
     }
 
 
-    void distribute_mpi_and_allocate_coupled_state(int nz, size_t ny_glob, size_t nx_glob,
+    void distribute_mpi_and_allocate_coupled_state(int nz, size_t ny_glob, size_t nx_glob, int nens,
                                                    int nproc_x_in = -1 , int nproc_y_in = -1 ,
                                                    int px_in      = -1 , int py_in      = -1 ,
                                                    int i_beg_in   = -1 , int i_end_in   = -1 ,
@@ -113,6 +115,7 @@ namespace core {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
+      this->nens    = nens   ;
       this->nx_glob = nx_glob;
       this->ny_glob = ny_glob;
 
@@ -204,9 +207,10 @@ namespace core {
         MPI_Barrier(MPI_COMM_WORLD);
       #endif
 
-      dm.add_dimension( "x" , nx );
-      dm.add_dimension( "y" , ny );
-      dm.add_dimension( "z" , nz );
+      dm.add_dimension( "nens" , nens );
+      dm.add_dimension( "x"    , nx   );
+      dm.add_dimension( "y"    , ny   );
+      dm.add_dimension( "z"    , nz   );
     }
 
 
@@ -218,6 +222,7 @@ namespace core {
     real                      get_dt_gcm                () const { return this->dt_gcm      ; }
     int                       get_nranks                () const { return this->nranks      ; }
     int                       get_myrank                () const { return this->myrank      ; }
+    int                       get_nens                  () const { return this->nens        ; }
     size_t                    get_nx_glob               () const { return this->nx_glob     ; }
     size_t                    get_ny_glob               () const { return this->ny_glob     ; }
     int                       get_nproc_x               () const { return this->nproc_x     ; }
@@ -316,10 +321,11 @@ namespace core {
 
     
     void add_tracer( std::string tracer_name , std::string tracer_desc , bool positive , bool adds_mass ) {
-      int nz = get_nz();
-      int ny = get_ny();
-      int nx = get_nx();
-      dm.register_and_allocate<real>( tracer_name , tracer_desc , {nz,ny,nx} , {"z","y","x"} );
+      int nz   = get_nz();
+      int ny   = get_ny();
+      int nx   = get_nx();
+      int nens = get_nens();
+      dm.register_and_allocate<real>( tracer_name , tracer_desc , {nz,ny,nx,nens} , {"z","y","x","nens"} );
       tracers.push_back( { tracer_name , tracer_desc , positive , adds_mass } );
     }
 
@@ -356,26 +362,27 @@ namespace core {
 
 
     template <class T>
-    MultiField<typename std::remove_cv<T>::type,3> create_halos( MultiField<T,3> const &fields_in , int hs ) const {
+    MultiField<typename std::remove_cv<T>::type,4> create_halos( MultiField<T,4> const &fields_in , int hs ) const {
       using yakl::c::parallel_for;
       using yakl::c::SimpleBounds;
 
       int num_fields = fields_in.get_num_fields();
-      int nx = fields_in.get_field(0).extent(2);
-      int ny = fields_in.get_field(0).extent(1);
-      int nz = fields_in.get_field(0).extent(0);
+      int nens = fields_in.get_field(0).extent(3);
+      int nx   = fields_in.get_field(0).extent(2);
+      int ny   = fields_in.get_field(0).extent(1);
+      int nz   = fields_in.get_field(0).extent(0);
 
       int hs_y = ny > 1 ? hs : 0;
 
-      MultiField<real,3> fields_out;
+      MultiField<real,4> fields_out;
 
       for (int ifield = 0; ifield < num_fields; ifield++) {
         // Allocate
-        fields_out.add_field( real3d(fields_in.get_field(ifield).label(),nz+2*hs,ny+2*hs_y,nx+2*hs) );
+        fields_out.add_field( real4d(fields_in.get_field(ifield).label(),nz+2*hs,ny+2*hs_y,nx+2*hs,nens) );
         fields_out.get_field(ifield) = 0;
         // Fill internal domain
-        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-          fields_out(ifield,hs+k,hs_y+j,hs+i) = fields_in(ifield,k,j,i);
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+          fields_out(ifield,hs+k,hs_y+j,hs+i,iens) = fields_in(ifield,k,j,i,iens);
         });
       }
 
@@ -383,7 +390,7 @@ namespace core {
     }
 
 
-    void fill_horizontal_halos_periodic( MultiField<real,3> const &fields , int hs ) const {
+    void fill_horizontal_halos_periodic( MultiField<real,4> const &fields , int hs ) const {
       using yakl::c::parallel_for;
       using yakl::c::SimpleBounds;
       int tag0 = 10;
@@ -391,34 +398,36 @@ namespace core {
       int hs_y = fields.get_field(0).extent(1) > 1 ? hs : 0;
 
       int num_fields = fields.get_num_fields();
-      int nx = fields.get_field(0).extent(2) - 2*hs;
-      int ny = fields.get_field(0).extent(1) - 2*hs_y;
-      int nz = fields.get_field(0).extent(0) - 2*hs;
+      int nens = fields.get_field(0).extent(3);
+      int nx   = fields.get_field(0).extent(2) - 2*hs;
+      int ny   = fields.get_field(0).extent(1) - 2*hs_y;
+      int nz   = fields.get_field(0).extent(0) - 2*hs;
 
       { // x-direction (east-west)
 
         // Allocate send buffers and then pack send buffers
-        real4d halo_send_buf_W("coupler_halo_send_buf_W",num_fields,nz+2*hs,ny+2*hs_y,hs);
-        real4d halo_send_buf_E("coupler_halo_send_buf_E",num_fields,nz+2*hs,ny+2*hs_y,hs);
-        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(num_fields,nz+2*hs,ny+2*hs_y,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
-          halo_send_buf_W(v,k,j,ii) = fields(v,k,j,hs+ii);
-          halo_send_buf_E(v,k,j,ii) = fields(v,k,j,nx+ii);
+        real5d halo_send_buf_W("coupler_halo_send_buf_W",num_fields,nz+2*hs,ny+2*hs_y,hs,nens);
+        real5d halo_send_buf_E("coupler_halo_send_buf_E",num_fields,nz+2*hs,ny+2*hs_y,hs,nens);
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<5>(num_fields,nz+2*hs,ny+2*hs_y,hs,nens) ,
+                                          YAKL_LAMBDA (int v, int k, int j, int ii, int iens) {
+          halo_send_buf_W(v,k,j,ii,iens) = fields(v,k,j,hs+ii,iens);
+          halo_send_buf_E(v,k,j,ii,iens) = fields(v,k,j,nx+ii,iens);
         });
 
         // Allocate host receive buffers and receive the receive buffers
-        realHost4d halo_recv_buf_W_host("coupler_halo_recv_buf_W_host",num_fields,nz+2*hs,ny+2*hs_y,hs);
-        realHost4d halo_recv_buf_E_host("coupler_halo_recv_buf_E_host",num_fields,nz+2*hs,ny+2*hs_y,hs);
+        realHost5d halo_recv_buf_W_host("coupler_halo_recv_buf_W_host",num_fields,nz+2*hs,ny+2*hs_y,hs,nens);
+        realHost5d halo_recv_buf_E_host("coupler_halo_recv_buf_E_host",num_fields,nz+2*hs,ny+2*hs_y,hs,nens);
         auto data_type = get_mpi_data_type();
         MPI_Request rReq[2];
-        MPI_Irecv( halo_recv_buf_W_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , data_type , neigh(1,0) , tag0+0 , MPI_COMM_WORLD , &rReq[0] );
-        MPI_Irecv( halo_recv_buf_E_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , data_type , neigh(1,2) , tag0+1 , MPI_COMM_WORLD , &rReq[1] );
+        MPI_Irecv( halo_recv_buf_W_host.data() , halo_recv_buf_W_host.size() , data_type , neigh(1,0) , tag0+0 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_E_host.data() , halo_recv_buf_E_host.size() , data_type , neigh(1,2) , tag0+1 , MPI_COMM_WORLD , &rReq[1] );
 
         // Copy send buffers to host and send the send buffers
         auto halo_send_buf_W_host = halo_send_buf_W.createHostCopy();
         auto halo_send_buf_E_host = halo_send_buf_E.createHostCopy();
         MPI_Request sReq[2];
-        MPI_Isend( halo_send_buf_W_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , data_type , neigh(1,0) , tag0+1 , MPI_COMM_WORLD , &sReq[0] );
-        MPI_Isend( halo_send_buf_E_host.data() , num_fields*(nz+2*hs)*(ny+2*hs_y)*hs , data_type , neigh(1,2) , tag0+0 , MPI_COMM_WORLD , &sReq[1] );
+        MPI_Isend( halo_send_buf_W_host.data() , halo_send_buf_W_host.size() , data_type , neigh(1,0) , tag0+1 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_E_host.data() , halo_send_buf_E_host.size() , data_type , neigh(1,2) , tag0+0 , MPI_COMM_WORLD , &sReq[1] );
 
         // Wait for sends and receives to complete
         MPI_Status sStat[2];
@@ -429,36 +438,38 @@ namespace core {
         // Copy receive buffers to device and then copy into halos
         auto halo_recv_buf_W = halo_recv_buf_W_host.createDeviceCopy();
         auto halo_recv_buf_E = halo_recv_buf_E_host.createDeviceCopy();
-        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(num_fields,nz+2*hs,ny+2*hs_y,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
-          fields(v,k,j,      ii) = halo_recv_buf_W(v,k,j,ii);
-          fields(v,k,j,nx+hs+ii) = halo_recv_buf_E(v,k,j,ii);
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<5>(num_fields,nz+2*hs,ny+2*hs_y,hs,nens) ,
+                                          YAKL_LAMBDA (int v, int k, int j, int ii, int iens) {
+          fields(v,k,j,      ii,iens) = halo_recv_buf_W(v,k,j,ii,iens);
+          fields(v,k,j,nx+hs+ii,iens) = halo_recv_buf_E(v,k,j,ii,iens);
         });
 
       } // x-direction (east-west)
 
       if (ny > 1) { // y-direction (north-south)
         // Allocate send buffers and then pack send buffers
-        real4d halo_send_buf_S("coupler_halo_send_buf_S",num_fields,nz+2*hs,hs,nx+2*hs);
-        real4d halo_send_buf_N("coupler_halo_send_buf_N",num_fields,nz+2*hs,hs,nx+2*hs);
-        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(num_fields,nz+2*hs,hs,nx+2*hs) , YAKL_LAMBDA (int v, int k, int jj, int i) {
-          halo_send_buf_S(v,k,jj,i) = fields(v,k,hs+jj,i);
-          halo_send_buf_N(v,k,jj,i) = fields(v,k,ny+jj,i);
+        real5d halo_send_buf_S("coupler_halo_send_buf_S",num_fields,nz+2*hs,hs,nx+2*hs,nens);
+        real5d halo_send_buf_N("coupler_halo_send_buf_N",num_fields,nz+2*hs,hs,nx+2*hs,nens);
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<5>(num_fields,nz+2*hs,hs,nx+2*hs,nens) ,
+                                          YAKL_LAMBDA (int v, int k, int jj, int i, int iens) {
+          halo_send_buf_S(v,k,jj,i,iens) = fields(v,k,hs+jj,i,iens);
+          halo_send_buf_N(v,k,jj,i,iens) = fields(v,k,ny+jj,i,iens);
         });
 
         // Allocate host receive buffers and receive the receive buffers
-        realHost4d halo_recv_buf_S_host("coupler_halo_recv_buf_S_host",num_fields,nz+2*hs,hs,nx+2*hs);
-        realHost4d halo_recv_buf_N_host("coupler_halo_recv_buf_N_host",num_fields,nz+2*hs,hs,nx+2*hs);
+        realHost5d halo_recv_buf_S_host("coupler_halo_recv_buf_S_host",num_fields,nz+2*hs,hs,nx+2*hs,nens);
+        realHost5d halo_recv_buf_N_host("coupler_halo_recv_buf_N_host",num_fields,nz+2*hs,hs,nx+2*hs,nens);
         auto data_type = get_mpi_data_type();
         MPI_Request rReq[2];
-        MPI_Irecv( halo_recv_buf_S_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , data_type , neigh(0,1) , tag0+2 , MPI_COMM_WORLD , &rReq[0] );
-        MPI_Irecv( halo_recv_buf_N_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , data_type , neigh(2,1) , tag0+3 , MPI_COMM_WORLD , &rReq[1] );
+        MPI_Irecv( halo_recv_buf_S_host.data() , halo_recv_buf_S_host.size() , data_type , neigh(0,1) , tag0+2 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_N_host.data() , halo_recv_buf_N_host.size() , data_type , neigh(2,1) , tag0+3 , MPI_COMM_WORLD , &rReq[1] );
 
         // Copy send buffers to host and send the send buffers
         auto halo_send_buf_S_host = halo_send_buf_S.createHostCopy();
         auto halo_send_buf_N_host = halo_send_buf_N.createHostCopy();
         MPI_Request sReq[2];
-        MPI_Isend( halo_send_buf_S_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , data_type , neigh(0,1) , tag0+3 , MPI_COMM_WORLD , &sReq[0] );
-        MPI_Isend( halo_send_buf_N_host.data() , num_fields*(nz+2*hs)*hs*(nx+2*hs) , data_type , neigh(2,1) , tag0+2 , MPI_COMM_WORLD , &sReq[1] );
+        MPI_Isend( halo_send_buf_S_host.data() , halo_send_buf_S_host.size() , data_type , neigh(0,1) , tag0+3 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_N_host.data() , halo_send_buf_N_host.size() , data_type , neigh(2,1) , tag0+2 , MPI_COMM_WORLD , &sReq[1] );
 
         // Wait for sends and receives to complete
         MPI_Status sStat[2];
@@ -469,9 +480,10 @@ namespace core {
         // Copy receive buffers to device and then copy into halos
         auto halo_recv_buf_S = halo_recv_buf_S_host.createDeviceCopy();
         auto halo_recv_buf_N = halo_recv_buf_N_host.createDeviceCopy();
-        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(num_fields,nz+2*hs,hs,nx+2*hs) , YAKL_LAMBDA (int v, int k, int jj, int i) {
-          fields(v,k,      jj,i) = halo_recv_buf_S(v,k,jj,i);
-          fields(v,k,ny+hs+jj,i) = halo_recv_buf_N(v,k,jj,i);
+        parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<5>(num_fields,nz+2*hs,hs,nx+2*hs,nens) ,
+                                          YAKL_LAMBDA (int v, int k, int jj, int i, int iens) {
+          fields(v,k,      jj,i,iens) = halo_recv_buf_S(v,k,jj,i,iens);
+          fields(v,k,ny+hs+jj,i,iens) = halo_recv_buf_N(v,k,jj,i,iens);
         });
 
       } // y-direction (north-south)

@@ -107,7 +107,9 @@ namespace core {
       int dimid = find_dimension( name );
       if (dimid > 0) {
         if ( dimensions[dimid].len != len ) {
-          endrun("ERROR: Adding a dimension that already exists with a different size than the existing dimension");
+          std::cerr << "ERROR: Attempting to add a dimension of name [" << name << "]. " <<
+                       "However, it already exists with length [" << dimensions[dimid].len << "].";
+          endrun("");
         }
         return;  // Avoid adding a duplicate entry
       }
@@ -132,12 +134,14 @@ namespace core {
       }
       // Make sure we don't have a duplicate entry
       if ( find_entry(name) != -1) {
-        endrun("ERROR: Duplicate entry name");
+        std::cerr << "ERROR: Trying to register and allocate name [" << name << "], which already exists";
+        endrun("");
       }
 
       if (dim_names.size() > 0) {
         if (dims.size() != dim_names.size()) {
-          endrun("ERROR: Must have the same number of dims and dim_names");
+          std::cerr << "ERROR: Trying to register and allocate name [" << name << "]. ";
+          endrun("Must have the same number of dims and dim_names");
         }
         // Make sure the dimensions are the same size as existing ones of the same name
         for (int i=0; i < dim_names.size(); i++) {
@@ -149,7 +153,11 @@ namespace core {
             dimensions.push_back(loc);
           } else {
             if (dimensions[dimid].len != dims[i]) {
-              endrun("ERROR: Dimension already exists but has a different length");
+              std::cerr << "ERROR: Trying to register and allocate name [" << name << "]. " <<
+                           "Dimension of name [" << dim_names[i] << "] already exists with a different " <<
+                           "length of [" << dimensions[dimid].len << "]. The length you provided for " << 
+                           "that dimension name in this call is [" << dims[i] << "]. ";
+              endrun("");
             }
           }
         }
@@ -244,8 +252,12 @@ namespace core {
       // Make sure we have this name as an entry
       int id = find_entry_or_error( name );
       // Make sure it's the right type and dimensionality
-      validate_type<T>(id);
-      validate_dims<N>(id);
+      if (!validate_type<T>(id)) {
+        std::cerr << "ERROR: Calling get() with name [" << name << "] with the wrong type"; endrun("");
+      }
+      if (!validate_dims<N>(id)) {
+        std::cerr << "ERROR: Calling get() with name [" << name << "] with the wrong number of dimensions"; endrun("");
+      }
       Array<T,N,memSpace,styleC> ret( name.c_str() , (T *) entries[id].ptr , entries[id].dims );
       return ret;
     }
@@ -261,8 +273,12 @@ namespace core {
       int id = find_entry_or_error( name );
       entries[id].dirty = true;
       // Make sure it's the right type and dimensionality
-      validate_type<T>(id);
-      validate_dims<N>(id);
+      if (!validate_type<T>(id)) {
+        std::cerr << "ERROR: Calling get() with name [" << name << "] with the wrong type"; endrun("");
+      }
+      if (!validate_dims<N>(id)) {
+        std::cerr << "ERROR: Calling get() with name [" << name << "] with the wrong number of dimensions"; endrun("");
+      }
       Array<T,N,memSpace,styleC> ret( name.c_str() , (T *) entries[id].ptr , entries[id].dims );
       return ret;
     }
@@ -279,8 +295,14 @@ namespace core {
       // Make sure we have this name as an entry
       int id = find_entry_or_error( name );
       // Make sure it's the right type
-      validate_type<T>(id);
-      validate_dims_lev_col(id);
+      if (!validate_type<T>(id)) {
+        std::cerr << "ERROR: Calling get_lev_col() with name [" << name << "] with the wrong type"; endrun("");
+      }
+      if (!validate_dims_lev_col(id)) {
+        std::cerr << "ERROR: Calling get_lev_col() with name [" << name << "], but the variable's number of " <<
+                     "dimensions is not compatible. You need two or more dimensions in the variable to call this.";
+        endrun("");
+      }
       int nlev = entries[id].dims[0];
       int ncol = 1;
       for (int i=1; i < entries[id].dims.size(); i++) {
@@ -482,7 +504,8 @@ namespace core {
     int find_entry_or_error( std::string name ) const {
       int id = find_entry( name );
       if (id >= 0) return id;
-      endrun("ERROR: Could not find entry in coupler data");
+      std::cerr << "ERROR: Attempting to retrieve variable name [" << name << "], but it doesn't exist. ";
+      endrun("");
       return -1;
     }
 
@@ -498,7 +521,10 @@ namespace core {
     // INTERNAL USE: Return the size of the named dimension or kill the run if it isn't found
     int get_dimension_size( std::string name ) const {
       int id = find_dimension( name );
-      if (id == -1) { endrun("ERROR: Could not find dimension."); }
+      if (id == -1) {
+        std::cerr << "ERROR: Attempting to get size of dimension name [" << name << "], but it doesn't exist. ";
+        endrun("ERROR: Could not find dimension.");
+      }
       return dimensions[id].len;
     }
 
@@ -517,28 +543,25 @@ namespace core {
 
     // INTERNAL USE: End the run if the templated type is not the same as the entry id's type
     template <class T>
-    void validate_type(int id) const {
-      if ( entries[id].type_hash != get_type_hash<T>() ) {
-        endrun("ERROR: Requested Array type does not match entry type");
-      }
+    bool validate_type(int id) const {
+      if ( entries[id].type_hash != get_type_hash<T>() ) return false;
+      return true;
     }
 
 
     // INTERNAL USE: End the run if the templated number of dimensions is not the same as the entry id's
     //     number of dimensions
     template <int N>
-    void validate_dims(int id) const {
-      if ( N != entries[id].dims.size() ) {
-        endrun("ERROR: Requested dimensions is different from the entry dimensions");
-      }
+    bool validate_dims(int id) const {
+      if ( N != entries[id].dims.size() ) return false;
+      return true;
     }
 
 
     // INTERNAL USE: End the run if the entry id's of dimensions < 2
-    void validate_dims_lev_col(int id) const {
-      if ( entries[id].dims.size() < 2 ) {
-        endrun("ERROR: Requested data is only one-dimensional");
-      }
+    bool validate_dims_lev_col(int id) const {
+      if ( entries[id].dims.size() < 2 ) return false;
+      return true;
     }
 
 
