@@ -25,26 +25,26 @@ namespace custom_modules {
       auto &dm_in  = input .get_data_manager_readonly();
       auto &dm_out = output.get_data_manager_readonly();
 
-      auto temp_in   = dm_in .get<real const,3>("temp"         );
-      auto temp_out  = dm_out.get<real const,3>("temp"         );
-      auto rho_v_in  = dm_in .get<real const,3>("water_vapor"  );
-      auto rho_v_out = dm_out.get<real const,3>("water_vapor"  );
-      auto rho_c_in  = dm_in .get<real const,3>("cloud_liquid" );
-      auto rho_c_out = dm_out.get<real const,3>("cloud_liquid" );
-      auto rho_p_in  = dm_in .get<real const,3>("precip_liquid");
-      auto rho_p_out = dm_out.get<real const,3>("precip_liquid");
+      auto temp_in   = dm_in .get<real const,4>("temp"         );
+      auto temp_out  = dm_out.get<real const,4>("temp"         );
+      auto rho_v_in  = dm_in .get<real const,4>("water_vapor"  );
+      auto rho_v_out = dm_out.get<real const,4>("water_vapor"  );
+      auto rho_c_in  = dm_in .get<real const,4>("cloud_liquid" );
+      auto rho_c_out = dm_out.get<real const,4>("cloud_liquid" );
+      auto rho_p_in  = dm_in .get<real const,4>("precip_liquid");
+      auto rho_p_out = dm_out.get<real const,4>("precip_liquid");
 
-      int nx = input.get_nx();
-      int ny = input.get_ny();
-      int nz = input.get_nz();
+      int nx   = input.get_nx();
+      int ny   = input.get_ny();
+      int nz   = input.get_nz();
 
       int3d active("active",nz,ny,nx);
 
       parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        if ( is_active( temp_in (k,j,i) , temp_out (k,j,i) ,
-                        rho_v_in(k,j,i) , rho_v_out(k,j,i) , 
-                        rho_c_in(k,j,i) , rho_c_out(k,j,i) , 
-                        rho_p_in(k,j,i) , rho_p_out(k,j,i) ) ) {
+        if ( is_active( temp_in (k,j,i,0) , temp_out (k,j,i,0) ,
+                        rho_v_in(k,j,i,0) , rho_v_out(k,j,i,0) , 
+                        rho_c_in(k,j,i,0) , rho_c_out(k,j,i,0) , 
+                        rho_p_in(k,j,i,0) , rho_p_out(k,j,i,0) ) ) {
           active(k,j,i) = 1;
         } else {
           active(k,j,i) = 0;
@@ -54,7 +54,7 @@ namespace custom_modules {
       if (etime > (num_out+1)*200) { print(input.is_mainproc(), input.get_mpi_data_type()); num_out++; }
 
       numer += yakl::intrinsics::sum( active );
-      denom += nx*ny*nz;
+      denom += active.size();
     }
 
 

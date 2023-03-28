@@ -66,9 +66,10 @@ namespace custom_modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      int nx = coupler.get_nx();
-      int ny = coupler.get_ny();
-      int nz = coupler.get_nz();
+      int nens = coupler.get_nens();
+      int nx   = coupler.get_nx();
+      int ny   = coupler.get_ny();
+      int nz   = coupler.get_nz();
 
       // Register tracers in the coupler
       //                 name              description       positive   adds mass
@@ -79,20 +80,13 @@ namespace custom_modules {
       auto &dm = coupler.get_data_manager_readwrite();
 
       // Register and allocation non-tracer quantities used by the microphysics
-      dm.register_and_allocate<real>( "precl" , "precipitation rate" , {ny,nx} , {"y","x"} );
+      dm.register_and_allocate<real>( "precl" , "precipitation rate" , {ny,nx,nens} , {"y","x","nens"} );
 
       // Initialize all micro data to zero
-      auto rho_v = dm.get<real,3>("water_vapor"  );
-      auto rho_c = dm.get<real,3>("cloud_liquid" );
-      auto rho_p = dm.get<real,3>("precip_liquid");
-      auto precl = dm.get<real,2>("precl"        );
-
-      parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
-        rho_v(k,j,i) = 0;
-        rho_c(k,j,i) = 0;
-        rho_p(k,j,i) = 0;
-        if (k == 0) precl(j,i) = 0;
-      });
+      dm.get<real,4>("water_vapor"  ) = 0;
+      dm.get<real,4>("cloud_liquid" ) = 0;
+      dm.get<real,4>("precip_liquid") = 0;
+      dm.get<real,3>("precl"        ) = 0;
 
       coupler.set_option<std::string>("micro","kessler");
 
@@ -167,7 +161,8 @@ namespace custom_modules {
       int  nz   = coupler.get_nz();
       int  ny   = coupler.get_ny();
       int  nx   = coupler.get_nx();
-      int  ncol = ny*nx;
+      int  nens = coupler.get_nens();
+      int  ncol = ny*nx*nens;
 
       YAKL_SCOPE( scl_out , this->scl_out );
       YAKL_SCOPE( scl_in  , this->scl_in  );
@@ -265,10 +260,10 @@ namespace custom_modules {
         temp_diff (k,i) = temp_tmp (k,i) - temp (k,i);
       });
 
-      std::cout << "Relative diff rho_v: " << yakl::intrinsics::sum( rho_v_diff ) / ny / nx / nz << "\n";
-      std::cout << "Relative diff rho_c: " << yakl::intrinsics::sum( rho_c_diff ) / ny / nx / nz << "\n";
-      std::cout << "Relative diff rho_r: " << yakl::intrinsics::sum( rho_r_diff ) / ny / nx / nz << "\n";
-      std::cout << "Relative diff temp : " << yakl::intrinsics::sum( temp_diff  ) / ny / nx / nz << "\n";
+      std::cout << "Relative diff rho_v: " << yakl::intrinsics::sum( rho_v_diff ) / rho_v_diff.size() << "\n";
+      std::cout << "Relative diff rho_c: " << yakl::intrinsics::sum( rho_c_diff ) / rho_c_diff.size() << "\n";
+      std::cout << "Relative diff rho_r: " << yakl::intrinsics::sum( rho_r_diff ) / rho_r_diff.size() << "\n";
+      std::cout << "Relative diff temp : " << yakl::intrinsics::sum( temp_diff  ) / temp_diff .size() << "\n";
 
       // Uncomment these to overwrite the original Kessler with the ML inference
       // I.e., uncommenting these lines runs the ML inferencing online

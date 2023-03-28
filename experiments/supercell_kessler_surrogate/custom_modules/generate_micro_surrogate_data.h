@@ -64,16 +64,16 @@ namespace custom_modules {
       auto &dm_in  = input .get_data_manager_readonly();
       auto &dm_out = output.get_data_manager_readonly();
 
-      auto rho_d     = dm_in .get<real const,3>("density_dry"  );
+      auto rho_d     = dm_in .get<real const,4>("density_dry"  );
 
-      auto temp_in   = dm_in .get<real const,3>("temp"         );
-      auto temp_out  = dm_out.get<real const,3>("temp"         );
-      auto rho_v_in  = dm_in .get<real const,3>("water_vapor"  );
-      auto rho_v_out = dm_out.get<real const,3>("water_vapor"  );
-      auto rho_c_in  = dm_in .get<real const,3>("cloud_liquid" );
-      auto rho_c_out = dm_out.get<real const,3>("cloud_liquid" );
-      auto rho_p_in  = dm_in .get<real const,3>("precip_liquid");
-      auto rho_p_out = dm_out.get<real const,3>("precip_liquid");
+      auto temp_in   = dm_in .get<real const,4>("temp"         );
+      auto temp_out  = dm_out.get<real const,4>("temp"         );
+      auto rho_v_in  = dm_in .get<real const,4>("water_vapor"  );
+      auto rho_v_out = dm_out.get<real const,4>("water_vapor"  );
+      auto rho_c_in  = dm_in .get<real const,4>("cloud_liquid" );
+      auto rho_c_out = dm_out.get<real const,4>("cloud_liquid" );
+      auto rho_p_in  = dm_in .get<real const,4>("precip_liquid");
+      auto rho_p_out = dm_out.get<real const,4>("precip_liquid");
 
       bool3d do_sample("do_sample",nz,ny,nx);
 
@@ -83,10 +83,10 @@ namespace custom_modules {
 
       parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) {
         double thresh;
-        if ( StatisticsGatherer::is_active( temp_in (k,j,i) , temp_out (k,j,i) ,
-                                            rho_v_in(k,j,i) , rho_v_out(k,j,i) ,
-                                            rho_c_in(k,j,i) , rho_c_out(k,j,i) ,
-                                            rho_p_in(k,j,i) , rho_p_out(k,j,i) ) ) {
+        if ( StatisticsGatherer::is_active( temp_in (k,j,i,0) , temp_out (k,j,i,0) ,
+                                            rho_v_in(k,j,i,0) , rho_v_out(k,j,i,0) ,
+                                            rho_c_in(k,j,i,0) , rho_c_out(k,j,i,0) ,
+                                            rho_p_in(k,j,i,0) , rho_p_out(k,j,i,0) ) ) {
           thresh = active_threshold;
         } else {
           thresh = inactive_threshold;
@@ -129,19 +129,19 @@ namespace custom_modules {
         for (int j=0; j < ny; j++) {
           for (int i=0; i < nx; i++) {
             if (host_do_sample(k,j,i)) {
-              gen_input (0,0) = host_temp_in (k,j,i);
-              gen_input (1,0) = host_rho_d   (k,j,i);
-              gen_input (2,0) = host_rho_v_in(k,j,i);
-              gen_input (3,0) = host_rho_c_in(k,j,i);
-              gen_input (4,0) = host_rho_p_in(k,j,i);
-              gen_input (0,1) = host_temp_in (std::min(nz-1,k+1),j,i);
-              gen_input (1,1) = host_rho_v_in(std::min(nz-1,k+1),j,i);
-              gen_input (2,1) = host_rho_c_in(std::min(nz-1,k+1),j,i);
-              gen_input (3,1) = host_rho_p_in(std::min(nz-1,k+1),j,i);
-              gen_output(0) = host_temp_out (k,j,i);
-              gen_output(1) = host_rho_v_out(k,j,i);
-              gen_output(2) = host_rho_c_out(k,j,i);
-              gen_output(3) = host_rho_p_out(k,j,i);
+              gen_input (0,0) = host_temp_in (k,j,i,0);
+              gen_input (1,0) = host_rho_d   (k,j,i,0);
+              gen_input (2,0) = host_rho_v_in(k,j,i,0);
+              gen_input (3,0) = host_rho_c_in(k,j,i,0);
+              gen_input (4,0) = host_rho_p_in(k,j,i,0);
+              gen_input (0,1) = host_temp_in (std::min(nz-1,k+1),j,i,0);
+              gen_input (1,1) = host_rho_v_in(std::min(nz-1,k+1),j,i,0);
+              gen_input (2,1) = host_rho_c_in(std::min(nz-1,k+1),j,i,0);
+              gen_input (3,1) = host_rho_p_in(std::min(nz-1,k+1),j,i,0);
+              gen_output(0) = host_temp_out (k,j,i,0);
+              gen_output(1) = host_rho_v_out(k,j,i,0);
+              gen_output(2) = host_rho_c_out(k,j,i,0);
+              gen_output(3) = host_rho_p_out(k,j,i,0);
               nc.write1( gen_input  , "inputs"  , {"num_vars_in" ,"sten_size"} , ulindex , "nsamples" );
               nc.write1( gen_output , "outputs" , {"num_vars_out"            } , ulindex , "nsamples" );
               ulindex++;
