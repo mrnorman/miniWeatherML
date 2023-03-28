@@ -3,8 +3,8 @@
 sim_time: 200.  # 86400
 
 # Number of cells to use in the CRMs
-nx_glob: 400
-ny_glob: 400
+nx_glob: 200
+ny_glob: 200
 nz     : 60
 
 # Domain size of the CRMs
@@ -25,5 +25,7 @@ dt_phys: 0.
 
 # Output frequency in seconds
 out_freq: 10.
+
+enable_gravity: false
 
 

@@ -224,6 +224,7 @@ namespace modules {
       auto C0    = coupler.get_option<real>("C0"     );
       auto gamma = coupler.get_option<real>("gamma_d");
       auto grav  = coupler.get_option<real>("grav"   );
+      auto enable_gravity = coupler.get_option<bool>("enable_gravity",true);
       auto num_tracers = coupler.get_num_tracers();
 
       // The store a single values flux at cell edges
@@ -652,7 +653,7 @@ namespace modules {
           state_tend  (l,k,j,i) = -( state_flux_x  (l,k  ,j  ,i+1) - state_flux_x  (l,k,j,i) ) / dx
                                   -( state_flux_y  (l,k  ,j+1,i  ) - state_flux_y  (l,k,j,i) ) / dy
                                   -( state_flux_z  (l,k+1,j  ,i  ) - state_flux_z  (l,k,j,i) ) / dz;
-          if (l == idW) state_tend(l,k,j,i) += -grav * ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
+          if (l == idW && enable_gravity) state_tend(l,k,j,i) += -grav * ( state(idR,hs+k,hs+j,hs+i) + hy_dens_cells(k) );
           if (l == idU) state_tend(l,k,j,i) += fcor*state(idV,hs+k,hs+j,hs+i);
           if (l == idV) state_tend(l,k,j,i) -= fcor*state(idU,hs+k,hs+j,hs+i);
           if (l == idV && sim2d) state_tend(l,k,j,i) = 0;
@@ -712,6 +713,7 @@ namespace modules {
       auto ny_glob     = coupler.get_ny_glob();
       auto sim2d       = coupler.is_sim2d();
       auto num_tracers = coupler.get_num_tracers();
+      auto enable_gravity = coupler.get_option<bool>("enable_gravity",true);
 
       if (! coupler.option_exists("R_d"     )) coupler.set_option<real>("R_d"     ,287.       );
       if (! coupler.option_exists("cp_d"    )) coupler.set_option<real>("cp_d"    ,1003.      );
@@ -935,24 +937,24 @@ namespace modules {
         int nblocks_x = floor(xlen/90 -pad_x1-pad_x2);
         int nblocks_y = floor(ylen/270-pad_y1-pad_y2);
 
-        int nbuildings_x = nblocks_x * 2;
-        int nbuildings_y = nblocks_y * 8;
+        // int nbuildings_x = nblocks_x * 2;
+        // int nbuildings_y = nblocks_y * 8;
 
         int cells_per_building_x = floor(30/dx);
         int cells_per_building_y = floor(30/dy);
 
-        realHost2d building_heights_host("building_heights",nbuildings_y,nbuildings_x);
-        {
-          std::random_device rd{};
-          std::mt19937 gen{rd()};
-          std::normal_distribution<> d{height_mean, height_std};
-          for (int j=0; j < nbuildings_y; j++) {
-            for (int i=0; i < nbuildings_x; i++) {
-              building_heights_host(j,i) = d(gen);
-            }
-          }
-        }
-        auto building_heights = building_heights_host.createDeviceCopy();
+        // realHost2d building_heights_host("building_heights",nbuildings_y,nbuildings_x);
+        // {
+        //   std::random_device rd{};
+        //   std::mt19937 gen{rd()};
+        //   std::normal_distribution<> d{height_mean, height_std};
+        //   for (int j=0; j < nbuildings_y; j++) {
+        //     for (int i=0; i < nbuildings_x; i++) {
+        //       building_heights_host(j,i) = d(gen);
+        //     }
+        //   }
+        // }
+        // auto building_heights = building_heights_host.createDeviceCopy();
 
         // Define quadrature weights and points for 3-point rules
         const int nqpoints = 9;
@@ -979,7 +981,12 @@ namespace modules {
                 real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
                 real rho, u, v, w, theta, rho_v, hr, ht;
 
-                hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+                if (enable_gravity) {
+                  hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+                } else {
+                  hr = 1.15;
+                  ht = 300;
+                }
 
                 rho   = hr;
                 u     = 20;
@@ -1009,7 +1016,8 @@ namespace modules {
           int jblock = jnorm / 9;
           if ( ( inorm >= 0 && inorm < nblocks_x*3 && inorm%3 < 2 ) &&
                ( jnorm >= 0 && jnorm < nblocks_y*9 && jnorm%9 < 8 ) ) {
-            if ( k <= std::ceil( building_heights(jblock*8+jnorm%8,iblock*2+inorm%2) / dz ) ) {
+            // if ( k <= std::ceil( building_heights(jblock*8+jnorm%8,iblock*2+inorm%2) / dz ) ) {
+            if ( k <= std::ceil( 60 / dz ) ) {
               immersed_proportion(k,j,i) = 1;
               state(idU,hs+k,hs+j,hs+i) = 0;
               state(idV,hs+k,hs+j,hs+i) = 0;
@@ -1017,32 +1025,38 @@ namespace modules {
             }
           }
         });
+        if (enable_gravity) {
+          // Compute hydrostatic background cell averages using quadrature
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz) , YAKL_LAMBDA (int k) {
+            hy_dens_cells      (k) = 0.;
+            hy_dens_theta_cells(k) = 0.;
+            for (int kk=0; kk<nqpoints; kk++) {
+              real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+              real hr, ht;
 
-        // Compute hydrostatic background cell averages using quadrature
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz) , YAKL_LAMBDA (int k) {
-          hy_dens_cells      (k) = 0.;
-          hy_dens_theta_cells(k) = 0.;
-          for (int kk=0; kk<nqpoints; kk++) {
-            real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+              hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+              hy_dens_cells      (k) += hr    * qweights(kk);
+              hy_dens_theta_cells(k) += hr*ht * qweights(kk);
+            }
+          });
+
+          // Compute hydrostatic background cell edge values
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz+1) , YAKL_LAMBDA (int k) {
+            real z = k*dz;
             real hr, ht;
 
             hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
 
-            hy_dens_cells      (k) += hr    * qweights(kk);
-            hy_dens_theta_cells(k) += hr*ht * qweights(kk);
-          }
-        });
-
-        // Compute hydrostatic background cell edge values
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<1>(nz+1) , YAKL_LAMBDA (int k) {
-          real z = k*dz;
-          real hr, ht;
-
-          hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
-
-          hy_dens_edges      (k) = hr   ;
-          hy_dens_theta_edges(k) = hr*ht;
-        });
+            hy_dens_edges      (k) = hr   ;
+            hy_dens_theta_edges(k) = hr*ht;
+          });
+        } else {
+          hy_dens_cells = 1.15;
+          hy_dens_edges = 1.15;
+          hy_dens_theta_cells = 1.15*300;
+          hy_dens_theta_edges = 1.15*300;
+        }
 
       } else if (init_data_int == DATA_BUILDING) {
 
