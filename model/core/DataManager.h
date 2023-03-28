@@ -129,6 +129,7 @@ namespace core {
                                 std::vector<int> dims ,
                                 std::vector<std::string> dim_names = std::vector<std::string>() ,
                                 bool positive = false ) {
+      static std::mutex data_manager_mutex;
       if (name == "") {
         endrun("ERROR: You cannot register_and_allocate with an empty string");
       }
