@@ -829,7 +829,7 @@ namespace modules {
       if (init_data_int == DATA_SUPERCELL) {
 
         coupler.add_option<int>("bc_x",BC_PERIODIC);
-        coupler.add_option<int>("bc_y",BC_OPEN);
+        coupler.add_option<int>("bc_y",BC_PERIODIC);
         coupler.add_option<int>("bc_z",BC_WALL);
         coupler.add_option<real>("latitude",0);
         init_supercell( coupler , state , tracers );
