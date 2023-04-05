@@ -268,97 +268,92 @@ namespace modules {
       real6d state_limits_y("state_limits_y",num_state,2,nz  ,ny+1,nx  ,nens);
       real6d state_limits_z("state_limits_z",num_state,2,nz+1,ny  ,nx  ,nens);
 
-      // Compute samples of state and tracers at cell edges using cell-centered reconstructions at high-order with WENO
-      // At the end of this, we will have two samples per cell edge in each dimension, one from each adjacent cell.
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-        ////////////////////////////////////////////////////////
-        // X-direction
-        ////////////////////////////////////////////////////////
-        // State
-        for (int l=0; l < num_state; l++) {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+1+s,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-          state_limits_x(l,1,k,j,i  ,iens) = gll(0);
-          state_limits_x(l,0,k,j,i+1,iens) = gll(1);
-        }
-        // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-        state_limits_x(idR,1,k,j,i  ,iens) += hy_dens_cells(k,iens);
-        state_limits_x(idR,0,k,j,i+1,iens) += hy_dens_cells(k,iens);
-        state_limits_x(idU,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
-        state_limits_x(idU,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
-        state_limits_x(idV,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
-        state_limits_x(idV,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
-        state_limits_x(idW,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
-        state_limits_x(idW,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
-        state_limits_x(idT,1,k,j,i  ,iens) += hy_dens_theta_cells(k,iens);
-        state_limits_x(idT,0,k,j,i+1,iens) += hy_dens_theta_cells(k,iens);
-
-        ////////////////////////////////////////////////////////
-        // Y-direction
-        ////////////////////////////////////////////////////////
-        // If we're simulating in only 2-D, then do not compute y-direction tendencies
-        if (!sim2d) {
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        if (i < nx && j < ny && k < nz) {
+          ////////////////////////////////////////////////////////
+          // X-direction
+          ////////////////////////////////////////////////////////
           // State
           for (int l=0; l < num_state; l++) {
             // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
             SArray<real,1,ord> stencil;
             SArray<real,1,2>   gll;
-            for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+1+s,hs+i,iens); }
+            for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+1+s,iens); }
             reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-            state_limits_y(l,1,k,j  ,i,iens) = gll(0);
-            state_limits_y(l,0,k,j+1,i,iens) = gll(1);
+            state_limits_x(l,1,k,j,i  ,iens) = gll(0);
+            state_limits_x(l,0,k,j,i+1,iens) = gll(1);
           }
           // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-          state_limits_y(idR,1,k,j  ,i,iens) += hy_dens_cells(k,iens);
-          state_limits_y(idR,0,k,j+1,i,iens) += hy_dens_cells(k,iens);
-          state_limits_y(idU,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
-          state_limits_y(idU,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
-          state_limits_y(idV,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
-          state_limits_y(idV,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
-          state_limits_y(idW,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
-          state_limits_y(idW,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
-          state_limits_y(idT,1,k,j  ,i,iens) += hy_dens_theta_cells(k,iens);
-          state_limits_y(idT,0,k,j+1,i,iens) += hy_dens_theta_cells(k,iens);
-        } else {
-          for (int l=0; l < num_state; l++) {
-            state_limits_y(l,1,k,j  ,i,iens) = 0;
-            state_limits_y(l,0,k,j+1,i,iens) = 0;
+          state_limits_x(idR,1,k,j,i  ,iens) += hy_dens_cells(k,iens);
+          state_limits_x(idR,0,k,j,i+1,iens) += hy_dens_cells(k,iens);
+          state_limits_x(idU,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
+          state_limits_x(idU,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
+          state_limits_x(idV,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
+          state_limits_x(idV,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
+          state_limits_x(idW,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
+          state_limits_x(idW,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
+          state_limits_x(idT,1,k,j,i  ,iens) += hy_dens_theta_cells(k,iens);
+          state_limits_x(idT,0,k,j,i+1,iens) += hy_dens_theta_cells(k,iens);
+
+          ////////////////////////////////////////////////////////
+          // Y-direction
+          ////////////////////////////////////////////////////////
+          // If we're simulating in only 2-D, then do not compute y-direction tendencies
+          if (!sim2d) {
+            // State
+            for (int l=0; l < num_state; l++) {
+              // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
+              SArray<real,1,ord> stencil;
+              SArray<real,1,2>   gll;
+              for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+1+s,hs+i,iens); }
+              reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+              state_limits_y(l,1,k,j  ,i,iens) = gll(0);
+              state_limits_y(l,0,k,j+1,i,iens) = gll(1);
+            }
+            // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
+            state_limits_y(idR,1,k,j  ,i,iens) += hy_dens_cells(k,iens);
+            state_limits_y(idR,0,k,j+1,i,iens) += hy_dens_cells(k,iens);
+            state_limits_y(idU,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
+            state_limits_y(idU,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
+            state_limits_y(idV,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
+            state_limits_y(idV,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
+            state_limits_y(idW,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
+            state_limits_y(idW,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
+            state_limits_y(idT,1,k,j  ,i,iens) += hy_dens_theta_cells(k,iens);
+            state_limits_y(idT,0,k,j+1,i,iens) += hy_dens_theta_cells(k,iens);
+          } else {
+            for (int l=0; l < num_state; l++) {
+              state_limits_y(l,1,k,j  ,i,iens) = 0;
+              state_limits_y(l,0,k,j+1,i,iens) = 0;
+            }
           }
+
+          ////////////////////////////////////////////////////////
+          // Z-direction
+          ////////////////////////////////////////////////////////
+          // State
+          for (int l=0; l < num_state; l++) {
+            // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
+            SArray<real,1,ord> stencil;
+            SArray<real,1,2>   gll;
+            for (int s=0; s < ord; s++) { stencil(s) = state(l,k+1+s,hs+j,hs+i,iens); }
+            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+            state_limits_z(l,1,k  ,j,i,iens) = gll(0);
+            state_limits_z(l,0,k+1,j,i,iens) = gll(1);
+          }
+          // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
+          state_limits_z(idR,1,k  ,j,i,iens) += hy_dens_edges(k  ,iens);
+          state_limits_z(idR,0,k+1,j,i,iens) += hy_dens_edges(k+1,iens);
+          state_limits_z(idU,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
+          state_limits_z(idU,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
+          state_limits_z(idV,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
+          state_limits_z(idV,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
+          state_limits_z(idW,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
+          state_limits_z(idW,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
+          state_limits_z(idT,1,k  ,j,i,iens) += hy_dens_theta_edges(k  ,iens);
+          state_limits_z(idT,0,k+1,j,i,iens) += hy_dens_theta_edges(k+1,iens);
         }
 
-        ////////////////////////////////////////////////////////
-        // Z-direction
-        ////////////////////////////////////////////////////////
-        // State
-        for (int l=0; l < num_state; l++) {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) { stencil(s) = state(l,k+1+s,hs+j,hs+i,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
-          state_limits_z(l,1,k  ,j,i,iens) = gll(0);
-          state_limits_z(l,0,k+1,j,i,iens) = gll(1);
-        }
-        // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-        state_limits_z(idR,1,k  ,j,i,iens) += hy_dens_edges(k  ,iens);
-        state_limits_z(idR,0,k+1,j,i,iens) += hy_dens_edges(k+1,iens);
-        state_limits_z(idU,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
-        state_limits_z(idU,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
-        state_limits_z(idV,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
-        state_limits_z(idV,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
-        state_limits_z(idW,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
-        state_limits_z(idW,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
-        state_limits_z(idT,1,k  ,j,i,iens) += hy_dens_theta_edges(k  ,iens);
-        state_limits_z(idT,0,k+1,j,i,iens) += hy_dens_theta_edges(k+1,iens);
-      });
-
-      edge_exchange( coupler , state_limits_x , state_limits_y , state_limits_z );
-
-
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
         if (j < ny && k < nz) {
           real u2 = state(idU,hs+k,hs+j,hs+i-1,iens) + state(idU,hs+k,hs+j,hs+i,iens);
           int  ind = u2 > 0 ? 0 : 1;
@@ -422,6 +417,8 @@ namespace modules {
           }
         }
       });
+
+      edge_exchange( coupler , state_limits_x , state_limits_y , state_limits_z );
 
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
