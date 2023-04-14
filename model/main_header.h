@@ -4,6 +4,7 @@
 #include "mpi.h"
 #include "YAKL.h"
 #include "yaml-cpp/yaml.h"
+#include <stdexcept>
 
 
 using yakl::memHost;
@@ -65,7 +66,7 @@ YAKL_INLINE real constexpr operator"" _fp( long double x ) {
 YAKL_INLINE void endrun(char const * msg) {
   #if YAKL_CURRENTLY_ON_HOST()
     std::cerr << msg << std::endl << std::endl;
-    throw msg;
+    throw std::runtime_error(msg);
   #else
     yakl::yakl_throw("ERROR: An error has been encountered on the device.");
   #endif
