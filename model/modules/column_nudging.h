@@ -86,12 +86,17 @@ namespace modules {
         yakl::atomicAdd( column_loc(l,k,iens) , state(l,k,j,i,iens) );
       });
 
-      auto column_total_host = column_loc.createHostObject();
-      auto mpi_data_type = coupler.get_mpi_data_type();
-      MPI_Allreduce( column_loc.createHostCopy().data() , column_total_host.data() , column_total_host.size() ,
-                     mpi_data_type , MPI_SUM , MPI_COMM_WORLD );
-      
-      auto column_total = column_total_host.createDeviceCopy();
+      #ifdef MW_GPU_AWARE_MPI
+        auto column_total = column_loc.createDeviceObject();
+        MPI_Allreduce( column_loc.data() , column_total.data() , column_total.size() ,
+                       coupler.get_mpi_data_type() , MPI_SUM , MPI_COMM_WORLD );
+      #else
+        auto column_total_host = column_loc.createHostObject();
+        MPI_Allreduce( column_loc.createHostCopy().data() , column_total_host.data() , column_total_host.size() ,
+                       coupler.get_mpi_data_type() , MPI_SUM , MPI_COMM_WORLD );
+        auto column_total = column_total_host.createDeviceCopy();
+      #endif
+
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(num_fields,nz,nens) , YAKL_LAMBDA (int l, int k, int iens) {
         column_loc(l,k,iens) = column_total(l,k,iens) / (nx_glob*ny_glob);
       });

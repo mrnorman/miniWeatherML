@@ -8,7 +8,8 @@
 
 NODES=16
 MW_HOME=/ccs/home/imn/miniWeatherML
-JOBDIR=/lustre/orion/stf006/scratch/imn/miniWeatherML_jobs/nodes_$NODES
+# JOBDIR=/lustre/orion/stf006/scratch/imn/miniWeatherML_jobs/nodes_$NODES
+JOBDIR=/gpfs/alpine/stf006/scratch/imn/miniWeatherML_jobs/nodes_$NODES
 
 TASKS=`echo "8*$NODES" | bc`
 echo "*** USING $TASKS TASKS ***"

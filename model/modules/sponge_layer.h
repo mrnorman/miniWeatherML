@@ -50,12 +50,18 @@ namespace modules {
       if (ifld != WFLD) yakl::atomicAdd( havg_fields(ifld,kloc,iens) , full_fields(ifld,k,j,i,iens) );
     });
 
-    auto havg_fields_loc_host = havg_fields.createHostCopy();
-    auto havg_fields_host = havg_fields_loc_host.createHostObject();
-    auto mpi_data_type = coupler.get_mpi_data_type();
-    MPI_Allreduce( havg_fields_loc_host.data() , havg_fields_host.data() , havg_fields_host.size() ,
-                   mpi_data_type , MPI_SUM , MPI_COMM_WORLD );
-    havg_fields_host.deep_copy_to(havg_fields);  // After this, havg_fields has the sum, not average, over tasks
+    #ifdef MW_GPU_AWARE_MPI
+      auto havg_fields_loc = havg_fields.createDeviceObject();
+      havg_fields.deep_copy_to(havg_fields_loc);
+      MPI_Allreduce( havg_fields_loc.data() , havg_fields.data() , havg_fields.size() ,
+                     coupler.get_mpi_data_type() , MPI_SUM , MPI_COMM_WORLD );
+    #else
+      auto havg_fields_loc_host = havg_fields.createHostCopy();
+      auto havg_fields_host = havg_fields_loc_host.createHostObject();
+      MPI_Allreduce( havg_fields_loc_host.data() , havg_fields_host.data() , havg_fields_host.size() ,
+                     coupler.get_mpi_data_type() , MPI_SUM , MPI_COMM_WORLD );
+      havg_fields_host.deep_copy_to(havg_fields);  // After this, havg_fields has the sum, not average, over tasks
+    #endif
 
     real time_factor = dt / time_scale;
 
