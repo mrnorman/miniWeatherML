@@ -926,34 +926,29 @@ namespace modules {
         immersed_proportion = 0;
 
         real height_mean = 60;
-        real height_std  = 0;
+        real height_std  = 10;
 
-        int pad_x1 = 3;
-        int pad_x2 = 10;
-        int pad_y1 = 1;
-        int pad_y2 = 1;
+        int building_length = 30;
+        int cells_per_building = (int) std::round(building_length / dx);
+        int buildings_pad = 20;
+        int nblocks_x = (static_cast<int>(xlen)/building_length - 2*buildings_pad)/3;
+        int nblocks_y = (static_cast<int>(ylen)/building_length - 2*buildings_pad)/9;
+        int nbuildings_x = nblocks_x * 3;
+        int nbuildings_y = nblocks_y * 9;
 
-        int nblocks_x = floor(xlen/90 -pad_x1-pad_x2);
-        int nblocks_y = floor(ylen/270-pad_y1-pad_y2);
-
-        // int nbuildings_x = nblocks_x * 2;
-        // int nbuildings_y = nblocks_y * 8;
-
-        int cells_per_building_x = floor(30/dx);
-        int cells_per_building_y = floor(30/dy);
-
-        // realHost2d building_heights_host("building_heights",nbuildings_y,nbuildings_x);
-        // {
-        //   std::random_device rd{};
-        //   std::mt19937 gen{rd()};
-        //   std::normal_distribution<> d{height_mean, height_std};
-        //   for (int j=0; j < nbuildings_y; j++) {
-        //     for (int i=0; i < nbuildings_x; i++) {
-        //       building_heights_host(j,i) = d(gen);
-        //     }
-        //   }
-        // }
-        // auto building_heights = building_heights_host.createDeviceCopy();
+        realHost2d building_heights_host("building_heights",nbuildings_y,nbuildings_x);
+        if (coupler.is_mainproc()) {
+          std::mt19937 gen{17};
+          std::normal_distribution<> d{height_mean, height_std};
+          for (int j=0; j < nbuildings_y; j++) {
+            for (int i=0; i < nbuildings_x; i++) {
+              building_heights_host(j,i) = d(gen);
+            }
+          }
+        }
+        auto type = coupler.get_mpi_data_type();
+        MPI_Bcast( building_heights_host.data() , building_heights_host.size() , type , 0 , MPI_COMM_WORLD);
+        auto building_heights = building_heights_host.createDeviceCopy();
 
         // Define quadrature weights and points for 3-point rules
         const int nqpoints = 9;
@@ -1005,14 +1000,11 @@ namespace modules {
               }
             }
           }
-          int inorm = (i_beg+i-cells_per_building_x*3*pad_x1)/cells_per_building_x;
-          int jnorm = (j_beg+j-cells_per_building_y*9*pad_y1)/cells_per_building_y;
-          int iblock = inorm / 3;
-          int jblock = jnorm / 9;
+          int inorm = (static_cast<int>(i_beg)+i)/cells_per_building - buildings_pad;
+          int jnorm = (static_cast<int>(j_beg)+j)/cells_per_building - buildings_pad;
           if ( ( inorm >= 0 && inorm < nblocks_x*3 && inorm%3 < 2 ) &&
                ( jnorm >= 0 && jnorm < nblocks_y*9 && jnorm%9 < 8 ) ) {
-            // if ( k <= std::ceil( building_heights(jblock*8+jnorm%8,iblock*2+inorm%2) / dz ) ) {
-            if ( k <= std::ceil( 60 / dz ) ) {
+            if ( k <= std::ceil( building_heights(jnorm,inorm) / dz ) ) {
               immersed_proportion(k,j,i,iens) = 1;
               state(idU,hs+k,hs+j,hs+i,iens) = 0;
               state(idV,hs+k,hs+j,hs+i,iens) = 0;
