@@ -51,8 +51,7 @@ namespace modules {
     });
 
     #ifdef MW_GPU_AWARE_MPI
-      auto havg_fields_loc = havg_fields.createDeviceObject();
-      havg_fields.deep_copy_to(havg_fields_loc);
+      auto havg_fields_loc = havg_fields.createDeviceCopy(); // Has an implicit fence()
       MPI_Allreduce( havg_fields_loc.data() , havg_fields.data() , havg_fields.size() ,
                      coupler.get_mpi_data_type() , MPI_SUM , MPI_COMM_WORLD );
     #else

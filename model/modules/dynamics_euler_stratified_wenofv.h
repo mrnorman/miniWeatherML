@@ -683,6 +683,16 @@ namespace modules {
           state_tend(idV,k,j,i,iens) = prop*imm_tend_idV + (1-prop)*state_tend(idV,k,j,i,iens);
           state_tend(idW,k,j,i,iens) = prop*imm_tend_idW + (1-prop)*state_tend(idW,k,j,i,iens);
           state_tend(idT,k,j,i,iens) = prop*imm_tend_idT + (1-prop)*state_tend(idT,k,j,i,iens);
+
+          // // Determine the time scale of damping
+          // real delta        = std::pow( dx*dy*dz , 1._fp/3._fp );
+          // real tau          = dt;
+          // real prop         = immersed_proportion(k,j,i,iens);
+          // state_tend(idR,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idR,hs+k,hs+j,hs+i,iens) + state_tend(idR,k,j,i,iens)*dt ) / dt;
+          // state_tend(idU,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idU,hs+k,hs+j,hs+i,iens) + state_tend(idU,k,j,i,iens)*dt ) / dt;
+          // state_tend(idV,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idV,hs+k,hs+j,hs+i,iens) + state_tend(idV,k,j,i,iens)*dt ) / dt;
+          // state_tend(idW,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idW,hs+k,hs+j,hs+i,iens) + state_tend(idW,k,j,i,iens)*dt ) / dt;
+          // state_tend(idT,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idT,hs+k,hs+j,hs+i,iens) + state_tend(idT,k,j,i,iens)*dt ) / dt;
         }
       });
     }
@@ -919,7 +929,7 @@ namespace modules {
 
       } else if (init_data_int == DATA_CITY) {
 
-        coupler.add_option<int>("bc_x",BC_OPEN    );
+        coupler.add_option<int>("bc_x",BC_PERIODIC);
         coupler.add_option<int>("bc_y",BC_PERIODIC);
         coupler.add_option<int>("bc_z",BC_WALL    );
         coupler.set_option<bool>("use_immersed_boundaries",true);
@@ -1047,7 +1057,7 @@ namespace modules {
 
       } else if (init_data_int == DATA_BUILDING) {
 
-        coupler.add_option<int>("bc_x",BC_OPEN    );
+        coupler.add_option<int>("bc_x",BC_PERIODIC);
         coupler.add_option<int>("bc_y",BC_PERIODIC);
         coupler.add_option<int>("bc_z",BC_WALL    );
         coupler.set_option<bool>("use_immersed_boundaries",true);
@@ -1075,7 +1085,12 @@ namespace modules {
                 real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
                 real rho, u, v, w, theta, rho_v, hr, ht;
 
-                hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+                if (enable_gravity) {
+                  hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+                } else {
+                  hr = 1.15;
+                  ht = 300;
+                }
 
                 rho   = hr;
                 u     = 20;
@@ -1111,31 +1126,38 @@ namespace modules {
           }
         });
 
-        // Compute hydrostatic background cell averages using quadrature
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nens) , YAKL_LAMBDA (int k, int iens) {
-          hy_dens_cells      (k,iens) = 0.;
-          hy_dens_theta_cells(k,iens) = 0.;
-          for (int kk=0; kk<nqpoints; kk++) {
-            real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+        if (enable_gravity) {
+          // Compute hydrostatic background cell averages using quadrature
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nens) , YAKL_LAMBDA (int k, int iens) {
+            hy_dens_cells      (k,iens) = 0.;
+            hy_dens_theta_cells(k,iens) = 0.;
+            for (int kk=0; kk<nqpoints; kk++) {
+              real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+              real hr, ht;
+
+              hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
+
+              hy_dens_cells      (k,iens) += hr    * qweights(kk);
+              hy_dens_theta_cells(k,iens) += hr*ht * qweights(kk);
+            }
+          });
+
+          // Compute hydrostatic background cell edge values
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz+1,nens) , YAKL_LAMBDA (int k, int iens) {
+            real z = k*dz;
             real hr, ht;
 
             hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
 
-            hy_dens_cells      (k,iens) += hr    * qweights(kk);
-            hy_dens_theta_cells(k,iens) += hr*ht * qweights(kk);
-          }
-        });
-
-        // Compute hydrostatic background cell edge values
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz+1,nens) , YAKL_LAMBDA (int k, int iens) {
-          real z = k*dz;
-          real hr, ht;
-
-          hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
-
-          hy_dens_edges      (k,iens) = hr   ;
-          hy_dens_theta_edges(k,iens) = hr*ht;
-        });
+            hy_dens_edges      (k,iens) = hr   ;
+            hy_dens_theta_edges(k,iens) = hr*ht;
+          });
+        } else {
+          hy_dens_cells = 1.15;
+          hy_dens_edges = 1.15;
+          hy_dens_theta_cells = 1.15*300;
+          hy_dens_theta_edges = 1.15*300;
+        }
 
       }
 

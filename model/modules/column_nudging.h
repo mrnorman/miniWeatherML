@@ -88,6 +88,7 @@ namespace modules {
 
       #ifdef MW_GPU_AWARE_MPI
         auto column_total = column_loc.createDeviceObject();
+        yakl::fence();
         MPI_Allreduce( column_loc.data() , column_total.data() , column_total.size() ,
                        coupler.get_mpi_data_type() , MPI_SUM , MPI_COMM_WORLD );
       #else
