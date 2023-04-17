@@ -704,11 +704,11 @@ namespace modules {
 
       auto &dm = coupler.get_data_manager_readwrite();
 
-      dm.register_and_allocate<real>("density_dry","",{nz,nx,ny});
-      dm.register_and_allocate<real>("uvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("vvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("wvel","",{nz,nx,ny});
-      dm.register_and_allocate<real>("temp","",{nz,nx,ny});
+      dm.register_and_allocate<real>("density_dry","",{nz,ny,nx});
+      dm.register_and_allocate<real>("uvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("vvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("wvel","",{nz,ny,nx});
+      dm.register_and_allocate<real>("temp","",{nz,ny,nx});
 
       sim2d = (coupler.get_ny_glob() == 1);
 
@@ -1257,96 +1257,96 @@ namespace modules {
 
     // Perform file output
     void output( core::Coupler const &coupler , real etime ) const {
-      using yakl::c::parallel_for;
-      using yakl::c::Bounds;
-      yakl::timer_start("output");
+      // using yakl::c::parallel_for;
+      // using yakl::c::Bounds;
+      // yakl::timer_start("output");
 
-      YAKL_SCOPE( dx                  , this->dx                  );
-      YAKL_SCOPE( dy                  , this->dy                  );
-      YAKL_SCOPE( dz                  , this->dz                  );
+      // YAKL_SCOPE( dx                  , this->dx                  );
+      // YAKL_SCOPE( dy                  , this->dy                  );
+      // YAKL_SCOPE( dz                  , this->dz                  );
 
-      real4d state  ("state"  ,num_state  ,hs+nz,hs+ny,hs+nx);
-      real4d tracers("tracers",num_tracers,hs+nz,hs+ny,hs+nx);
-      convert_coupler_to_dynamics( coupler , state , tracers );
+      // real4d state  ("state"  ,num_state  ,hs+nz,hs+ny,hs+nx);
+      // real4d tracers("tracers",num_tracers,hs+nz,hs+ny,hs+nx);
+      // convert_coupler_to_dynamics( coupler , state , tracers );
 
-      yakl::SimplePNetCDF nc;
-      MPI_Offset ulIndex = 0; // Unlimited dimension index to place this data at
+      // yakl::SimplePNetCDF nc;
+      // MPI_Offset ulIndex = 0; // Unlimited dimension index to place this data at
 
-      int i_beg = coupler.get_i_beg();
-      int j_beg = coupler.get_j_beg();
+      // int i_beg = coupler.get_i_beg();
+      // int j_beg = coupler.get_j_beg();
 
-      if (etime == 0) {
-        nc.create(fname , NC_CLOBBER | NC_64BIT_DATA);
+      // if (etime == 0) {
+      //   nc.create(fname , NC_CLOBBER | NC_64BIT_DATA);
 
-        nc.create_dim( "x" , coupler.get_nx_glob() );
-        nc.create_dim( "y" , coupler.get_ny_glob() );
-        nc.create_dim( "z" , nz );
-        nc.create_unlim_dim( "t" );
+      //   nc.create_dim( "x" , coupler.get_nx_glob() );
+      //   nc.create_dim( "y" , coupler.get_ny_glob() );
+      //   nc.create_dim( "z" , nz );
+      //   nc.create_unlim_dim( "t" );
 
-        nc.create_var<real>( "x" , {"x"} );
-        nc.create_var<real>( "y" , {"y"} );
-        nc.create_var<real>( "z" , {"z"} );
-        nc.create_var<real>( "t" , {"t"} );
-        nc.create_var<real>( "density_dry" , {"t","z","y","x"} );
-        nc.create_var<real>( "uvel"        , {"t","z","y","x"} );
-        nc.create_var<real>( "vvel"        , {"t","z","y","x"} );
-        nc.create_var<real>( "wvel"        , {"t","z","y","x"} );
-        nc.create_var<real>( "temperature" , {"t","z","y","x"} );
-        auto tracer_names = coupler.get_tracer_names();
-        for (int tr = 0; tr < num_tracers; tr++) {
-          nc.create_var<real>( tracer_names[tr] , {"t","z","y","x"} );
-        }
+      //   nc.create_var<real>( "x" , {"x"} );
+      //   nc.create_var<real>( "y" , {"y"} );
+      //   nc.create_var<real>( "z" , {"z"} );
+      //   nc.create_var<real>( "t" , {"t"} );
+      //   nc.create_var<real>( "density_dry" , {"t","z","y","x"} );
+      //   nc.create_var<real>( "uvel"        , {"t","z","y","x"} );
+      //   nc.create_var<real>( "vvel"        , {"t","z","y","x"} );
+      //   nc.create_var<real>( "wvel"        , {"t","z","y","x"} );
+      //   nc.create_var<real>( "temperature" , {"t","z","y","x"} );
+      //   auto tracer_names = coupler.get_tracer_names();
+      //   for (int tr = 0; tr < num_tracers; tr++) {
+      //     nc.create_var<real>( tracer_names[tr] , {"t","z","y","x"} );
+      //   }
 
-        nc.enddef();
+      //   nc.enddef();
 
-        // x-coordinate
-        real1d xloc("xloc",nx);
-        parallel_for( YAKL_AUTO_LABEL() , nx , YAKL_LAMBDA (int i) { xloc(i) = (i+i_beg+0.5)*dx; });
-        nc.write_all( xloc.createHostCopy() , "x" , {i_beg} );
+      //   // x-coordinate
+      //   real1d xloc("xloc",nx);
+      //   parallel_for( YAKL_AUTO_LABEL() , nx , YAKL_LAMBDA (int i) { xloc(i) = (i+i_beg+0.5)*dx; });
+      //   nc.write_all( xloc.createHostCopy() , "x" , {i_beg} );
 
-        // y-coordinate
-        real1d yloc("yloc",ny);
-        parallel_for( YAKL_AUTO_LABEL() , ny , YAKL_LAMBDA (int j) { yloc(j) = (j+j_beg+0.5)*dy; });
-        nc.write_all( yloc.createHostCopy() , "y" , {j_beg} );
+      //   // y-coordinate
+      //   real1d yloc("yloc",ny);
+      //   parallel_for( YAKL_AUTO_LABEL() , ny , YAKL_LAMBDA (int j) { yloc(j) = (j+j_beg+0.5)*dy; });
+      //   nc.write_all( yloc.createHostCopy() , "y" , {j_beg} );
 
-        // z-coordinate
-        real1d zloc("zloc",nz);
-        parallel_for( YAKL_AUTO_LABEL() , nz , YAKL_LAMBDA (int k) { zloc(k) = (k      +0.5)*dz; });
-        nc.begin_indep_data();
-        if (coupler.is_mainproc()) {
-          nc.write( zloc.createHostCopy() , "z" );
-          nc.write1( 0._fp , "t" , 0 , "t" );
-        }
-        nc.end_indep_data();
+      //   // z-coordinate
+      //   real1d zloc("zloc",nz);
+      //   parallel_for( YAKL_AUTO_LABEL() , nz , YAKL_LAMBDA (int k) { zloc(k) = (k      +0.5)*dz; });
+      //   nc.begin_indep_data();
+      //   if (coupler.is_mainproc()) {
+      //     nc.write( zloc.createHostCopy() , "z" );
+      //     nc.write1( 0._fp , "t" , 0 , "t" );
+      //   }
+      //   nc.end_indep_data();
 
-      } else {
+      // } else {
 
-        nc.open(fname);
-        ulIndex = nc.get_dim_size("t");
+      //   nc.open(fname);
+      //   ulIndex = nc.get_dim_size("t");
 
-        // Write the elapsed time
-        nc.begin_indep_data();
-        if (coupler.is_mainproc()) {
-          nc.write1(etime,"t",ulIndex,"t");
-        }
-        nc.end_indep_data();
+      //   // Write the elapsed time
+      //   nc.begin_indep_data();
+      //   if (coupler.is_mainproc()) {
+      //     nc.write1(etime,"t",ulIndex,"t");
+      //   }
+      //   nc.end_indep_data();
 
-      }
+      // }
 
-      auto &dm = coupler.get_data_manager_readonly();
-      nc.write1_all(dm.get<real const,3>("density_dry").createHostCopy(),"density_dry",ulIndex,{0,j_beg,i_beg},"t");
-      nc.write1_all(dm.get<real const,3>("uvel"       ).createHostCopy(),"uvel"       ,ulIndex,{0,j_beg,i_beg},"t");
-      nc.write1_all(dm.get<real const,3>("vvel"       ).createHostCopy(),"vvel"       ,ulIndex,{0,j_beg,i_beg},"t");
-      nc.write1_all(dm.get<real const,3>("wvel"       ).createHostCopy(),"wvel"       ,ulIndex,{0,j_beg,i_beg},"t");
-      nc.write1_all(dm.get<real const,3>("temp"       ).createHostCopy(),"temperature",ulIndex,{0,j_beg,i_beg},"t");
-      // Write the tracers to file
-      auto tracer_names = coupler.get_tracer_names();
-      for (int tr = 0; tr < num_tracers; tr++) {
-        nc.write1_all(dm.get<real const,3>(tracer_names[tr]).createHostCopy(),tracer_names[tr],ulIndex,{0,j_beg,i_beg},"t");
-      }
+      // auto &dm = coupler.get_data_manager_readonly();
+      // nc.write1_all(dm.get<real const,3>("density_dry").createHostCopy(),"density_dry",ulIndex,{0,j_beg,i_beg},"t");
+      // nc.write1_all(dm.get<real const,3>("uvel"       ).createHostCopy(),"uvel"       ,ulIndex,{0,j_beg,i_beg},"t");
+      // nc.write1_all(dm.get<real const,3>("vvel"       ).createHostCopy(),"vvel"       ,ulIndex,{0,j_beg,i_beg},"t");
+      // nc.write1_all(dm.get<real const,3>("wvel"       ).createHostCopy(),"wvel"       ,ulIndex,{0,j_beg,i_beg},"t");
+      // nc.write1_all(dm.get<real const,3>("temp"       ).createHostCopy(),"temperature",ulIndex,{0,j_beg,i_beg},"t");
+      // // Write the tracers to file
+      // auto tracer_names = coupler.get_tracer_names();
+      // for (int tr = 0; tr < num_tracers; tr++) {
+      //   nc.write1_all(dm.get<real const,3>(tracer_names[tr]).createHostCopy(),tracer_names[tr],ulIndex,{0,j_beg,i_beg},"t");
+      // }
 
-      nc.close();
-      yakl::timer_stop("output");
+      // nc.close();
+      // yakl::timer_stop("output");
     }
 
 
@@ -1410,50 +1410,83 @@ namespace modules {
       auto &neigh = coupler.get_neighbor_rankid_matrix();
       auto mpi_data_type = coupler.get_mpi_data_type();
 
-      //Pre-post the receives
-      MPI_Irecv( halo_recv_buf_W_host.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,0) , 0 , MPI_COMM_WORLD , &rReq[0] );
-      MPI_Irecv( halo_recv_buf_E_host.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,2) , 1 , MPI_COMM_WORLD , &rReq[1] );
-      if (!sim2d) {
-        MPI_Irecv( halo_recv_buf_S_host.data() , npack*nz*hs*nx , mpi_data_type , neigh(0,1) , 2 , MPI_COMM_WORLD , &rReq[2] );
-        MPI_Irecv( halo_recv_buf_N_host.data() , npack*nz*hs*nx , mpi_data_type , neigh(2,1) , 3 , MPI_COMM_WORLD , &rReq[3] );
-      }
+      #ifdef MW_GPU_AWARE_MPI
+        yakl::fence();
 
-      halo_send_buf_W.deep_copy_to(halo_send_buf_W_host);
-      halo_send_buf_E.deep_copy_to(halo_send_buf_E_host);
-      if (!sim2d) {
-        halo_send_buf_S.deep_copy_to(halo_send_buf_S_host);
-        halo_send_buf_N.deep_copy_to(halo_send_buf_N_host);
-      }
+        //Pre-post the receives
+        MPI_Irecv( halo_recv_buf_W.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,0) , 0 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_E.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,2) , 1 , MPI_COMM_WORLD , &rReq[1] );
+        if (!sim2d) {
+          MPI_Irecv( halo_recv_buf_S.data() , npack*nz*hs*nx , mpi_data_type , neigh(0,1) , 2 , MPI_COMM_WORLD , &rReq[2] );
+          MPI_Irecv( halo_recv_buf_N.data() , npack*nz*hs*nx , mpi_data_type , neigh(2,1) , 3 , MPI_COMM_WORLD , &rReq[3] );
+        }
 
-      yakl::fence();
+        //Send the data
+        MPI_Isend( halo_send_buf_W.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,0) , 1 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_E.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,2) , 0 , MPI_COMM_WORLD , &sReq[1] );
+        if (!sim2d) {
+          MPI_Isend( halo_send_buf_S.data() , npack*nz*hs*nx , mpi_data_type , neigh(0,1) , 3 , MPI_COMM_WORLD , &sReq[2] );
+          MPI_Isend( halo_send_buf_N.data() , npack*nz*hs*nx , mpi_data_type , neigh(2,1) , 2 , MPI_COMM_WORLD , &sReq[3] );
+        }
 
-      //Send the data
-      MPI_Isend( halo_send_buf_W_host.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,0) , 1 , MPI_COMM_WORLD , &sReq[0] );
-      MPI_Isend( halo_send_buf_E_host.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,2) , 0 , MPI_COMM_WORLD , &sReq[1] );
-      if (!sim2d) {
-        MPI_Isend( halo_send_buf_S_host.data() , npack*nz*hs*nx , mpi_data_type , neigh(0,1) , 3 , MPI_COMM_WORLD , &sReq[2] );
-        MPI_Isend( halo_send_buf_N_host.data() , npack*nz*hs*nx , mpi_data_type , neigh(2,1) , 2 , MPI_COMM_WORLD , &sReq[3] );
-      }
+        MPI_Status  sStat[4];
+        MPI_Status  rStat[4];
 
-      MPI_Status  sStat[4];
-      MPI_Status  rStat[4];
+        //Wait for the sends and receives to finish
+        if (sim2d) {
+          MPI_Waitall(2, sReq, sStat);
+          MPI_Waitall(2, rReq, rStat);
+        } else {
+          MPI_Waitall(4, sReq, sStat);
+          MPI_Waitall(4, rReq, rStat);
+        }
+        yakl::timer_stop("halo_exchange_mpi");
+      #else
+        //Pre-post the receives
+        MPI_Irecv( halo_recv_buf_W_host.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,0) , 0 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_E_host.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,2) , 1 , MPI_COMM_WORLD , &rReq[1] );
+        if (!sim2d) {
+          MPI_Irecv( halo_recv_buf_S_host.data() , npack*nz*hs*nx , mpi_data_type , neigh(0,1) , 2 , MPI_COMM_WORLD , &rReq[2] );
+          MPI_Irecv( halo_recv_buf_N_host.data() , npack*nz*hs*nx , mpi_data_type , neigh(2,1) , 3 , MPI_COMM_WORLD , &rReq[3] );
+        }
 
-      //Wait for the sends and receives to finish
-      if (sim2d) {
-        MPI_Waitall(2, sReq, sStat);
-        MPI_Waitall(2, rReq, rStat);
-      } else {
-        MPI_Waitall(4, sReq, sStat);
-        MPI_Waitall(4, rReq, rStat);
-      }
-      yakl::timer_stop("halo_exchange_mpi");
+        halo_send_buf_W.deep_copy_to(halo_send_buf_W_host);
+        halo_send_buf_E.deep_copy_to(halo_send_buf_E_host);
+        if (!sim2d) {
+          halo_send_buf_S.deep_copy_to(halo_send_buf_S_host);
+          halo_send_buf_N.deep_copy_to(halo_send_buf_N_host);
+        }
 
-      halo_recv_buf_W_host.deep_copy_to(halo_recv_buf_W);
-      halo_recv_buf_E_host.deep_copy_to(halo_recv_buf_E);
-      if (!sim2d) {
-        halo_recv_buf_S_host.deep_copy_to(halo_recv_buf_S);
-        halo_recv_buf_N_host.deep_copy_to(halo_recv_buf_N);
-      }
+        yakl::fence();
+
+        //Send the data
+        MPI_Isend( halo_send_buf_W_host.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,0) , 1 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_E_host.data() , npack*nz*ny*hs , mpi_data_type , neigh(1,2) , 0 , MPI_COMM_WORLD , &sReq[1] );
+        if (!sim2d) {
+          MPI_Isend( halo_send_buf_S_host.data() , npack*nz*hs*nx , mpi_data_type , neigh(0,1) , 3 , MPI_COMM_WORLD , &sReq[2] );
+          MPI_Isend( halo_send_buf_N_host.data() , npack*nz*hs*nx , mpi_data_type , neigh(2,1) , 2 , MPI_COMM_WORLD , &sReq[3] );
+        }
+
+        MPI_Status  sStat[4];
+        MPI_Status  rStat[4];
+
+        //Wait for the sends and receives to finish
+        if (sim2d) {
+          MPI_Waitall(2, sReq, sStat);
+          MPI_Waitall(2, rReq, rStat);
+        } else {
+          MPI_Waitall(4, sReq, sStat);
+          MPI_Waitall(4, rReq, rStat);
+        }
+        yakl::timer_stop("halo_exchange_mpi");
+
+        halo_recv_buf_W_host.deep_copy_to(halo_recv_buf_W);
+        halo_recv_buf_E_host.deep_copy_to(halo_recv_buf_E);
+        if (!sim2d) {
+          halo_recv_buf_S_host.deep_copy_to(halo_recv_buf_S);
+          halo_recv_buf_N_host.deep_copy_to(halo_recv_buf_N);
+        }
+      #endif
 
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(npack,nz,ny,hs) , YAKL_LAMBDA (int v, int k, int j, int ii) {
         if (v < num_state) {
@@ -1540,50 +1573,83 @@ namespace modules {
       auto &neigh = coupler.get_neighbor_rankid_matrix();
       auto mpi_data_type = coupler.get_mpi_data_type();
 
-      //Pre-post the receives
-      MPI_Irecv( edge_recv_buf_W_host.data() , npack*nz*ny , mpi_data_type , neigh(1,0) , 4 , MPI_COMM_WORLD , &rReq[0] );
-      MPI_Irecv( edge_recv_buf_E_host.data() , npack*nz*ny , mpi_data_type , neigh(1,2) , 5 , MPI_COMM_WORLD , &rReq[1] );
-      if (!sim2d) {
-        MPI_Irecv( edge_recv_buf_S_host.data() , npack*nz*nx , mpi_data_type , neigh(0,1) , 6 , MPI_COMM_WORLD , &rReq[2] );
-        MPI_Irecv( edge_recv_buf_N_host.data() , npack*nz*nx , mpi_data_type , neigh(2,1) , 7 , MPI_COMM_WORLD , &rReq[3] );
-      }
+      #ifdef MW_GPU_AWARE_MPI
+        yakl::fence();
 
-      edge_send_buf_W.deep_copy_to(edge_send_buf_W_host);
-      edge_send_buf_E.deep_copy_to(edge_send_buf_E_host);
-      if (!sim2d) {
-        edge_send_buf_S.deep_copy_to(edge_send_buf_S_host);
-        edge_send_buf_N.deep_copy_to(edge_send_buf_N_host);
-      }
+        //Pre-post the receives
+        MPI_Irecv( edge_recv_buf_W.data() , npack*nz*ny , mpi_data_type , neigh(1,0) , 4 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( edge_recv_buf_E.data() , npack*nz*ny , mpi_data_type , neigh(1,2) , 5 , MPI_COMM_WORLD , &rReq[1] );
+        if (!sim2d) {
+          MPI_Irecv( edge_recv_buf_S.data() , npack*nz*nx , mpi_data_type , neigh(0,1) , 6 , MPI_COMM_WORLD , &rReq[2] );
+          MPI_Irecv( edge_recv_buf_N.data() , npack*nz*nx , mpi_data_type , neigh(2,1) , 7 , MPI_COMM_WORLD , &rReq[3] );
+        }
 
-      yakl::fence();
+        //Send the data
+        MPI_Isend( edge_send_buf_W.data() , npack*nz*ny , mpi_data_type , neigh(1,0) , 5 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( edge_send_buf_E.data() , npack*nz*ny , mpi_data_type , neigh(1,2) , 4 , MPI_COMM_WORLD , &sReq[1] );
+        if (!sim2d) {
+          MPI_Isend( edge_send_buf_S.data() , npack*nz*nx , mpi_data_type , neigh(0,1) , 7 , MPI_COMM_WORLD , &sReq[2] );
+          MPI_Isend( edge_send_buf_N.data() , npack*nz*nx , mpi_data_type , neigh(2,1) , 6 , MPI_COMM_WORLD , &sReq[3] );
+        }
 
-      //Send the data
-      MPI_Isend( edge_send_buf_W_host.data() , npack*nz*ny , mpi_data_type , neigh(1,0) , 5 , MPI_COMM_WORLD , &sReq[0] );
-      MPI_Isend( edge_send_buf_E_host.data() , npack*nz*ny , mpi_data_type , neigh(1,2) , 4 , MPI_COMM_WORLD , &sReq[1] );
-      if (!sim2d) {
-        MPI_Isend( edge_send_buf_S_host.data() , npack*nz*nx , mpi_data_type , neigh(0,1) , 7 , MPI_COMM_WORLD , &sReq[2] );
-        MPI_Isend( edge_send_buf_N_host.data() , npack*nz*nx , mpi_data_type , neigh(2,1) , 6 , MPI_COMM_WORLD , &sReq[3] );
-      }
+        MPI_Status  sStat[4];
+        MPI_Status  rStat[4];
 
-      MPI_Status  sStat[4];
-      MPI_Status  rStat[4];
+        //Wait for the sends and receives to finish
+        if (sim2d) {
+          MPI_Waitall(2, sReq, sStat);
+          MPI_Waitall(2, rReq, rStat);
+        } else {
+          MPI_Waitall(4, sReq, sStat);
+          MPI_Waitall(4, rReq, rStat);
+        }
+        yakl::timer_stop("edge_exchange_mpi");
+      #else
+        //Pre-post the receives
+        MPI_Irecv( edge_recv_buf_W_host.data() , npack*nz*ny , mpi_data_type , neigh(1,0) , 4 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( edge_recv_buf_E_host.data() , npack*nz*ny , mpi_data_type , neigh(1,2) , 5 , MPI_COMM_WORLD , &rReq[1] );
+        if (!sim2d) {
+          MPI_Irecv( edge_recv_buf_S_host.data() , npack*nz*nx , mpi_data_type , neigh(0,1) , 6 , MPI_COMM_WORLD , &rReq[2] );
+          MPI_Irecv( edge_recv_buf_N_host.data() , npack*nz*nx , mpi_data_type , neigh(2,1) , 7 , MPI_COMM_WORLD , &rReq[3] );
+        }
 
-      //Wait for the sends and receives to finish
-      if (sim2d) {
-        MPI_Waitall(2, sReq, sStat);
-        MPI_Waitall(2, rReq, rStat);
-      } else {
-        MPI_Waitall(4, sReq, sStat);
-        MPI_Waitall(4, rReq, rStat);
-      }
-      yakl::timer_stop("edge_exchange_mpi");
+        edge_send_buf_W.deep_copy_to(edge_send_buf_W_host);
+        edge_send_buf_E.deep_copy_to(edge_send_buf_E_host);
+        if (!sim2d) {
+          edge_send_buf_S.deep_copy_to(edge_send_buf_S_host);
+          edge_send_buf_N.deep_copy_to(edge_send_buf_N_host);
+        }
 
-      edge_recv_buf_W_host.deep_copy_to(edge_recv_buf_W);
-      edge_recv_buf_E_host.deep_copy_to(edge_recv_buf_E);
-      if (!sim2d) {
-        edge_recv_buf_S_host.deep_copy_to(edge_recv_buf_S);
-        edge_recv_buf_N_host.deep_copy_to(edge_recv_buf_N);
-      }
+        yakl::fence();
+
+        //Send the data
+        MPI_Isend( edge_send_buf_W_host.data() , npack*nz*ny , mpi_data_type , neigh(1,0) , 5 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( edge_send_buf_E_host.data() , npack*nz*ny , mpi_data_type , neigh(1,2) , 4 , MPI_COMM_WORLD , &sReq[1] );
+        if (!sim2d) {
+          MPI_Isend( edge_send_buf_S_host.data() , npack*nz*nx , mpi_data_type , neigh(0,1) , 7 , MPI_COMM_WORLD , &sReq[2] );
+          MPI_Isend( edge_send_buf_N_host.data() , npack*nz*nx , mpi_data_type , neigh(2,1) , 6 , MPI_COMM_WORLD , &sReq[3] );
+        }
+
+        MPI_Status  sStat[4];
+        MPI_Status  rStat[4];
+
+        //Wait for the sends and receives to finish
+        if (sim2d) {
+          MPI_Waitall(2, sReq, sStat);
+          MPI_Waitall(2, rReq, rStat);
+        } else {
+          MPI_Waitall(4, sReq, sStat);
+          MPI_Waitall(4, rReq, rStat);
+        }
+        yakl::timer_stop("edge_exchange_mpi");
+
+        edge_recv_buf_W_host.deep_copy_to(edge_recv_buf_W);
+        edge_recv_buf_E_host.deep_copy_to(edge_recv_buf_E);
+        if (!sim2d) {
+          edge_recv_buf_S_host.deep_copy_to(edge_recv_buf_S);
+          edge_recv_buf_N_host.deep_copy_to(edge_recv_buf_N);
+        }
+      #endif
 
       parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(npack,nz,ny) , YAKL_LAMBDA (int v, int k, int j) {
         if (v < num_state) {
