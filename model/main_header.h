@@ -64,12 +64,7 @@ YAKL_INLINE real constexpr operator"" _fp( long double x ) {
 
 
 YAKL_INLINE void endrun(char const * msg) {
-  #if YAKL_CURRENTLY_ON_HOST()
-    std::cerr << msg << std::endl << std::endl;
-    throw std::runtime_error(msg);
-  #else
-    yakl::yakl_throw("ERROR: An error has been encountered on the device.");
-  #endif
+  yakl::yakl_throw(msg);
 };
 
 
