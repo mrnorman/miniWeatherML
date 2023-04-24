@@ -2,184 +2,210 @@
 #pragma once
 
 #include "main_header.h"
-#include "TransformMatrices.h"
+#include "WenoLimiter_recon.h"
 
 
 namespace weno {
 
-
-  template <int ord>
-  YAKL_INLINE void map_weights( SArray<real,1,(ord-1)/2+2> const &idl , SArray<real,1,(ord-1)/2+2> &wts ) {
-    int constexpr hs = (ord-1)/2;
-    // Map the weights for quicker convergence. WARNING: Ideal weights must be (0,1) before mapping
-    for (int i=0; i<hs+2; i++) {
-      wts(i) = wts(i) * ( idl(i) + idl(i)*idl(i) - 3._fp*idl(i)*wts(i) + wts(i)*wts(i) ) /
-                        ( idl(i)*idl(i) + wts(i) * ( 1._fp - 2._fp * idl(i) ) );
-    }
-  }
+  template <int ord> struct WenoLimiter;
 
 
-  template <int ord>
-  YAKL_INLINE void convexify( SArray<real,1,(ord-1)/2+2> &wts ) {
-    int constexpr hs = (ord-1)/2;
-    real sum = 0._fp;
-    real const eps = 1.0e-20;
-    for (int i=0; i<hs+2; i++) { sum += wts(i); }
-    for (int i=0; i<hs+2; i++) { wts(i) /= (sum + eps); }
-  }
 
+  template <> struct WenoLimiter<3> {
+    real cutoff, idl_L, idl_R, idl_H;
 
-  template <int ord>
-  YAKL_INLINE void wenoSetIdealSigma(SArray<real,1,(ord-1)/2+2> &idl, real &sigma) {
-    if        (ord == 3) {
-      sigma = 0.0343557947899881_fp;
-      idl(0) = 1._fp;
-      idl(1) = 1._fp;
-      idl(2) = 1224.61619926508_fp;
-    } else if (ord == 5) {
-      sigma = 0.73564225445964_fp;
-      idl(0) = 1._fp;
-      idl(1) = 73.564225445964_fp;
-      idl(2) = 1._fp;
-      idl(3) = 1584.89319246111_fp;
-    } else if (ord == 7) {
-      sigma = 0.125594321575479_fp;
-      idl(0) = 1._fp;
-      idl(1) = 7.35642254459641_fp;
-      idl(2) = 7.35642254459641_fp;
-      idl(3) = 1._fp;
-      idl(4) = 794.328234724281_fp;
-    } else if (ord == 9) {
-      sigma = 0.0288539981181442_fp;
-      idl(0) = 1._fp;
-      idl(1) = 2.15766927997459_fp;
-      idl(2) = 2.40224886796286_fp;
-      idl(3) = 2.15766927997459_fp;
-      idl(4) = 1._fp;
-      idl(5) = 1136.12697719888_fp;
-    } else if (ord == 11) {
-      // These aren't tuned!!!
-      sigma = 0.1_fp;
-      idl(0) = 1._fp;
-      idl(1) = 1._fp;
-      idl(2) = 1._fp;
-      idl(3) = 1._fp;
-      idl(4) = 1._fp;
-      idl(5) = 1._fp;
-      idl(6) = 1._fp;
-    } else if (ord == 13) {
-      // These aren't tuned!!!
-      sigma = 0.1_fp;
-      idl(0) = 1._fp;
-      idl(1) = 1._fp;
-      idl(2) = 1._fp;
-      idl(3) = 1._fp;
-      idl(4) = 1._fp;
-      idl(5) = 1._fp;
-      idl(6) = 1._fp;
-      idl(7) = 1._fp;
-    } else if (ord == 15) {
-      // These aren't tuned!!!
-      sigma = 0.1_fp;
-      idl(0) = 1._fp;
-      idl(1) = 1._fp;
-      idl(2) = 1._fp;
-      idl(3) = 1._fp;
-      idl(4) = 1._fp;
-      idl(5) = 1._fp;
-      idl(6) = 1._fp;
-      idl(7) = 1._fp;
-      idl(8) = 1._fp;
-    }
-    convexify<ord>( idl );
-  }
-
-
-  template <int ord>
-  YAKL_INLINE void compute_weno_coefs( SArray<real,3,(ord-1)/2+1,(ord-1)/2+1,(ord-1)/2+1> const &recon_lo ,
-                                       SArray<real,2,ord,ord> const & recon_hi ,
-                                       SArray<real,1,ord> const &u ,
-                                       SArray<real,1,ord> &aw ,
-                                       SArray<real,1,(ord-1)/2+2> const &idl ,
-                                       real const sigma ) {
-    int constexpr hs = (ord-1)/2;
-    SArray<real,2,hs+1,hs+1> a_lo;
-    SArray<real,1,ord> a_hi;
-    real const eps = 1.0e-20;
-
-    // Compute three quadratic polynomials (left, center, and right) and the high-order polynomial
-    for(int i=0; i<hs+1; i++) {
-      for (int ii=0; ii<hs+1; ii++) {
-        real tmp = 0;
-        for (int s=0; s<hs+1; s++) {
-          tmp += recon_lo(i,s,ii) * u(i+s);
-        }
-        a_lo(i,ii) = tmp;
-      }
-    }
-    for (int ii=0; ii<ord; ii++) {
-      real tmp = 0;
-      for (int s=0; s<ord; s++) {
-        tmp += recon_hi(s,ii) * u(s);
-      }
-      a_hi(ii) = tmp;
+    YAKL_INLINE WenoLimiter(real cutoff_in = 0.0,
+                            real idl_L_in  = 1,
+                            real idl_R_in  = 1,
+                            real idl_H_in  = 5.e2) {
+      cutoff = cutoff_in;
+      idl_L  = idl_L_in;
+      idl_R  = idl_R_in;
+      idl_H  = idl_H_in;
+      convexify( idl_L , idl_R , idl_H );
     }
 
-    // Compute "bridge" polynomial
-    for (int i=0; i<hs+1; i++) {
-      for (int ii=0; ii<hs+1; ii++) {
-        a_hi(ii) -= idl(i)*a_lo(i,ii);
-      }
+    YAKL_INLINE SArray<real,1,3> compute_limited_coefs( SArray<real,1,3> s ) const {
+      // Reconstruct left, right, and high-order polynomials
+      SArray<real,1,2> coefs_L, coefs_R;
+      SArray<real,1,3> coefs_H;
+      coefs2_shift1( coefs_L , s(0) , s(1) );
+      coefs2_shift2( coefs_R , s(1) , s(2) );
+      coefs3_shift2( coefs_H , s(0) , s(1) , s(2) );
+      // Compute TVs
+      real w_L = TV( coefs_L );
+      real w_R = TV( coefs_R );
+      real w_H = TV( coefs_H );
+      convexify( w_L , w_R , w_H );
+      w_L = idl_L / (w_L*w_L + 1.e-20);
+      w_R = idl_R / (w_R*w_R + 1.e-20);
+      w_H = idl_H / (w_H*w_H + 1.e-20);
+      convexify( w_L , w_R , w_H );
+      if (w_L <= cutoff) w_L = 0;
+      if (w_R <= cutoff) w_R = 0;
+      convexify( w_L , w_R , w_H );
+      coefs_H(0) = coefs_H(0)*w_H + coefs_L(0)*w_L + coefs_R(0)*w_R;
+      coefs_H(1) = coefs_H(1)*w_H + coefs_L(1)*w_L + coefs_R(1)*w_R;
+      coefs_H(2) = coefs_H(2)*w_H;
+      return coefs_H;
     }
-    for (int ii=0; ii<ord; ii++) {
-      a_hi(ii) /= idl(hs+1);
+  };
+
+
+
+  template <> struct WenoLimiter<5> {
+    real cutoff, idl_L, idl_C, idl_R, idl_H;
+
+    YAKL_INLINE WenoLimiter(real cutoff_in = 0,
+                            real idl_L_in  = 1,
+                            real idl_C_in  = 2,
+                            real idl_R_in  = 1,
+                            real idl_H_in  = 1.e3) {
+      cutoff = cutoff_in;
+      idl_L  = idl_L_in;
+      idl_C  = idl_C_in;
+      idl_R  = idl_R_in;
+      idl_H  = idl_H_in;
+      convexify( idl_L , idl_C , idl_R , idl_H );
     }
 
-    SArray<real,1,hs+1> lotmp;
-    SArray<real,1,hs+2> tv;
-
-    // Compute total variation of all candidate polynomials
-    for (int i=0; i<hs+1; i++) {
-      for (int ii=0; ii<hs+1; ii++) {
-        lotmp(ii) = a_lo(i,ii);
-      }
-      tv(i) = TransformMatrices::coefs_to_tv(lotmp);
+    YAKL_INLINE SArray<real,1,5> compute_limited_coefs( SArray<real,1,5> s ) const {
+      // Reconstruct left, right, and high-order polynomials
+      SArray<real,1,3> coefs_L, coefs_C, coefs_R;
+      SArray<real,1,5> coefs_H;
+      coefs3_shift1( coefs_L , s(0) , s(1) , s(2) );
+      coefs3_shift2( coefs_C , s(1) , s(2) , s(3) );
+      coefs3_shift3( coefs_R , s(2) , s(3) , s(4) );
+      coefs5_shift3( coefs_H , s(0) , s(1) , s(2) , s(3) , s(4) );
+      // Compute TVs
+      real w_L = TV( coefs_L );
+      real w_C = TV( coefs_C );
+      real w_R = TV( coefs_R );
+      real w_H = TV( coefs_H );
+      convexify( w_L , w_C , w_R , w_H );
+      w_L = idl_L / (w_L*w_L + 1.e-20);
+      w_C = idl_C / (w_C*w_C + 1.e-20);
+      w_R = idl_R / (w_R*w_R + 1.e-20);
+      w_H = idl_H / (w_H*w_H + 1.e-20);
+      convexify( w_L , w_C , w_R , w_H );
+      if (w_L <= cutoff) w_L = 0;
+      if (w_C <= cutoff) w_C = 0;
+      if (w_R <= cutoff) w_R = 0;
+      convexify( w_L , w_C , w_R , w_H );
+      coefs_H(0) = coefs_H(0)*w_H + coefs_L(0)*w_L + coefs_C(0)*w_C + coefs_R(0)*w_R;
+      coefs_H(1) = coefs_H(1)*w_H + coefs_L(1)*w_L + coefs_C(1)*w_C + coefs_R(1)*w_R;
+      coefs_H(2) = coefs_H(2)*w_H + coefs_L(2)*w_L + coefs_C(2)*w_C + coefs_R(2)*w_R;
+      coefs_H(3) = coefs_H(3)*w_H;
+      coefs_H(4) = coefs_H(4)*w_H;
+      return coefs_H;
     }
-    tv(hs+1) = TransformMatrices::coefs_to_tv(a_hi);
+  };
 
-    real lo_avg;
 
-    // Reduce the bridge polynomial TV to something closer to the other TV values
-    lo_avg = 0._fp;
-    for (int i=0; i<hs+1; i++) {
-      lo_avg += tv(i);
+
+  template <> struct WenoLimiter<7> {
+    real cutoff, idl_L, idl_C, idl_R, idl_H;
+
+    YAKL_INLINE WenoLimiter(real cutoff_in = 0,
+                            real idl_L_in  = 1,
+                            real idl_C_in  = 2,
+                            real idl_R_in  = 1,
+                            real idl_H_in  = 1.e5) {
+      cutoff = cutoff_in;
+      idl_L  = idl_L_in;
+      idl_C  = idl_C_in;
+      idl_R  = idl_R_in;
+      idl_H  = idl_H_in;
+      convexify( idl_L , idl_C , idl_R , idl_H );
     }
-    lo_avg /= hs+1;
-    tv(hs+1) = lo_avg + ( tv(hs+1) - lo_avg ) * sigma;
 
-    SArray<real,1,hs+2> wts;
-
-    // WENO weights are proportional to the inverse of TV**2 and then re-confexified
-    for (int i=0; i<hs+2; i++) {
-      wts(i) = idl(i) / ( tv(i)*tv(i) + eps );
+    YAKL_INLINE SArray<real,1,7> compute_limited_coefs( SArray<real,1,7> s ) const {
+      // Reconstruct left, right, and high-order polynomials
+      SArray<real,1,3> coefs_L, coefs_C, coefs_R;
+      SArray<real,1,7> coefs_H;
+      coefs3_shift1( coefs_L , s(1) , s(2) , s(3) );
+      coefs3_shift2( coefs_C , s(2) , s(3) , s(4) );
+      coefs3_shift3( coefs_R , s(3) , s(4) , s(5) );
+      coefs7       ( coefs_H , s(0) , s(1) , s(2) , s(3) , s(4) , s(5) , s(6) );
+      // Compute TVs
+      real w_L = TV( coefs_L );
+      real w_C = TV( coefs_C );
+      real w_R = TV( coefs_R );
+      real w_H = TV( coefs_H );
+      convexify( w_L , w_C , w_R , w_H );
+      w_L = idl_L / (w_L*w_L + 1.e-20);
+      w_C = idl_C / (w_C*w_C + 1.e-20);
+      w_R = idl_R / (w_R*w_R + 1.e-20);
+      w_H = idl_H / (w_H*w_H + 1.e-20);
+      convexify( w_L , w_C , w_R , w_H );
+      if (w_L <= cutoff) w_L = 0;
+      if (w_C <= cutoff) w_C = 0;
+      if (w_R <= cutoff) w_R = 0;
+      convexify( w_L , w_C , w_R , w_H );
+      coefs_H(0) = coefs_H(0)*w_H + coefs_L(0)*w_L + coefs_C(0)*w_C + coefs_R(0)*w_R;
+      coefs_H(1) = coefs_H(1)*w_H + coefs_L(1)*w_L + coefs_C(1)*w_C + coefs_R(1)*w_R;
+      coefs_H(2) = coefs_H(2)*w_H + coefs_L(2)*w_L + coefs_C(2)*w_C + coefs_R(2)*w_R;
+      coefs_H(3) = coefs_H(3)*w_H;
+      coefs_H(4) = coefs_H(4)*w_H;
+      coefs_H(5) = coefs_H(5)*w_H;
+      coefs_H(6) = coefs_H(6)*w_H;
+      return coefs_H;
     }
-    convexify<ord>(wts);
+  };
 
-    // Map WENO weights for sharper fronts and less sensitivity to "eps"
-    map_weights<ord>(idl,wts);
-    convexify<ord>(wts);
 
-    // WENO polynomial is the weighted sum of candidate polynomials using WENO weights instead of ideal weights
-    for (int i=0; i < ord; i++) {
-      aw(i) = wts(hs+1) * a_hi(i);
+
+  template <> struct WenoLimiter<9> {
+    real cutoff, idl_L, idl_C, idl_R, idl_H;
+
+    YAKL_INLINE WenoLimiter(real cutoff_in = 0,
+                            real idl_L_in  = 1,
+                            real idl_C_in  = 2,
+                            real idl_R_in  = 1,
+                            real idl_H_in  = 1.e8) {
+      cutoff = cutoff_in;
+      idl_L  = idl_L_in;
+      idl_C  = idl_C_in;
+      idl_R  = idl_R_in;
+      idl_H  = idl_H_in;
+      convexify( idl_L , idl_C , idl_R , idl_H );
     }
-    for (int i=0; i<hs+1; i++) {
-      for (int ii=0; ii<hs+1; ii++) {
-        aw(ii) += wts(i) * a_lo(i,ii);
-      }
-    }
-  }
 
+    YAKL_INLINE SArray<real,1,9> compute_limited_coefs( SArray<real,1,9> s ) const {
+      // Reconstruct left, right, and high-order polynomials
+      SArray<real,1,3> coefs_L, coefs_C, coefs_R;
+      SArray<real,1,9> coefs_H;
+      coefs3_shift1( coefs_L , s(2) , s(3) , s(4) );
+      coefs3_shift2( coefs_C , s(3) , s(4) , s(5) );
+      coefs3_shift3( coefs_R , s(4) , s(5) , s(6) );
+      coefs9       ( coefs_H , s(0) , s(1) , s(2) , s(3) , s(4) , s(5) , s(6) , s(7) , s(8) );
+      // Compute TVs
+      real w_L = TV( coefs_L );
+      real w_C = TV( coefs_C );
+      real w_R = TV( coefs_R );
+      real w_H = TV( coefs_H );
+      convexify( w_L , w_C , w_R , w_H );
+      w_L = idl_L / (w_L*w_L + 1.e-20);
+      w_C = idl_C / (w_C*w_C + 1.e-20);
+      w_R = idl_R / (w_R*w_R + 1.e-20);
+      w_H = idl_H / (w_H*w_H + 1.e-20);
+      convexify( w_L , w_C , w_R , w_H );
+      if (w_L <= cutoff) w_L = 0;
+      if (w_C <= cutoff) w_C = 0;
+      if (w_R <= cutoff) w_R = 0;
+      convexify( w_L , w_C , w_R , w_H );
+      coefs_H(0) = coefs_H(0)*w_H + coefs_L(0)*w_L + coefs_C(0)*w_C + coefs_R(0)*w_R;
+      coefs_H(1) = coefs_H(1)*w_H + coefs_L(1)*w_L + coefs_C(1)*w_C + coefs_R(1)*w_R;
+      coefs_H(2) = coefs_H(2)*w_H + coefs_L(2)*w_L + coefs_C(2)*w_C + coefs_R(2)*w_R;
+      coefs_H(3) = coefs_H(3)*w_H;
+      coefs_H(4) = coefs_H(4)*w_H;
+      coefs_H(5) = coefs_H(5)*w_H;
+      coefs_H(6) = coefs_H(6)*w_H;
+      coefs_H(7) = coefs_H(7)*w_H;
+      coefs_H(8) = coefs_H(8)*w_H;
+      return coefs_H;
+    }
+  };
 
 }
 

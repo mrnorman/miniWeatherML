@@ -21,7 +21,7 @@ namespace modules {
 
     // Order of accuracy (numerical convergence for smooth flows) for the dynamical core
     #ifndef MW_ORD
-      int  static constexpr ord = 5;
+      int  static constexpr ord = 3;
     #else
       int  static constexpr ord = MW_ORD;
     #endif
@@ -63,11 +63,7 @@ namespace modules {
 
     SArray<real,1,ord>            gll_pts;          // GLL point locations in domain [-0.5 , 0.5]
     SArray<real,1,ord>            gll_wts;          // GLL weights normalized to sum to 1
-    SArray<real,2,ord,ord>        sten_to_coefs;    // Matrix to convert ord stencil avgs to ord poly coefs
     SArray<real,2,ord,2  >        coefs_to_gll;     // Matrix to convert ord poly coefs to two GLL points
-    SArray<real,3,hs+1,hs+1,hs+1> weno_recon_lower; // WENO's lower-order reconstruction matrices (sten_to_coefs)
-    SArray<real,1,hs+2>           weno_idl;         // Ideal weights for WENO
-    real                          weno_sigma;       // WENO sigma parameter (handicap high-order TV estimate)
 
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
@@ -246,10 +242,6 @@ namespace modules {
       YAKL_SCOPE( hy_dens_theta_edges        , this->hy_dens_theta_edges        );
       YAKL_SCOPE( tracer_positive            , this->tracer_positive            );
       YAKL_SCOPE( coefs_to_gll               , this->coefs_to_gll               );
-      YAKL_SCOPE( sten_to_coefs              , this->sten_to_coefs              );
-      YAKL_SCOPE( weno_recon_lower           , this->weno_recon_lower           );
-      YAKL_SCOPE( weno_idl                   , this->weno_idl                   );
-      YAKL_SCOPE( weno_sigma                 , this->weno_sigma                 );
 
       // Since tracers are full mass, it's helpful before reconstruction to remove the background density for potentially
       // more accurate reconstructions of tracer concentrations
@@ -272,6 +264,8 @@ namespace modules {
       real6d tracers_limits_y("tracers_limits_y",num_tracers,2,nz  ,ny+1,nx  ,nens);
       real6d tracers_limits_z("tracers_limits_z",num_tracers,2,nz+1,ny  ,nx  ,nens);
 
+      weno::WenoLimiter<ord> limiter;
+
       // Compute samples of state and tracers at cell edges using cell-centered reconstructions at high-order with WENO
       // At the end of this, we will have two samples per cell edge in each dimension, one from each adjacent cell.
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
@@ -284,7 +278,7 @@ namespace modules {
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
           state_limits_x(l,1,k,j,i  ,iens) = gll(0);
           state_limits_x(l,0,k,j,i+1,iens) = gll(1);
         }
@@ -306,7 +300,7 @@ namespace modules {
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,hs+j,i+s,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
           tracers_limits_x(l,1,k,j,i  ,iens) = gll(0) * state_limits_x(idR,1,k,j,i  ,iens);
           tracers_limits_x(l,0,k,j,i+1,iens) = gll(1) * state_limits_x(idR,0,k,j,i+1,iens);
         }
@@ -322,7 +316,7 @@ namespace modules {
             SArray<real,1,ord> stencil;
             SArray<real,1,2>   gll;
             for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i,iens); }
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+            reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
             state_limits_y(l,1,k,j  ,i,iens) = gll(0);
             state_limits_y(l,0,k,j+1,i,iens) = gll(1);
           }
@@ -344,7 +338,7 @@ namespace modules {
             SArray<real,1,ord> stencil;
             SArray<real,1,2>   gll;
             for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,j+s,hs+i,iens); }
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+            reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
             tracers_limits_y(l,1,k,j  ,i,iens) = gll(0) * state_limits_y(idR,1,k,j  ,i,iens);
             tracers_limits_y(l,0,k,j+1,i,iens) = gll(1) * state_limits_y(idR,0,k,j+1,i,iens);
           }
@@ -368,7 +362,7 @@ namespace modules {
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = state(l,k+s,hs+j,hs+i,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
           state_limits_z(l,1,k  ,j,i,iens) = gll(0);
           state_limits_z(l,0,k+1,j,i,iens) = gll(1);
         }
@@ -390,7 +384,7 @@ namespace modules {
           SArray<real,1,ord> stencil;
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = tracers(l,k+s,hs+j,hs+i,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,sten_to_coefs,weno_recon_lower,weno_idl,weno_sigma);
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
           tracers_limits_z(l,1,k  ,j,i,iens) = gll(0) * state_limits_z(idR,1,k  ,j,i,iens);
           tracers_limits_z(l,0,k+1,j,i,iens) = gll(1) * state_limits_z(idR,0,k+1,j,i,iens);
         }
@@ -776,10 +770,7 @@ namespace modules {
       // Use TransformMatrices class to create matrices & GLL points to convert degrees of freedom as needed
       TransformMatrices::get_gll_points          (gll_pts         );
       TransformMatrices::get_gll_weights         (gll_wts         );
-      TransformMatrices::sten_to_coefs           (sten_to_coefs   );
       TransformMatrices::coefs_to_gll_lower      (coefs_to_gll    );
-      TransformMatrices::weno_lower_sten_to_coefs(weno_recon_lower);
-      weno::wenoSetIdealSigma<ord>( weno_idl , weno_sigma );
 
       // Create arrays to determine whether we should add mass for a tracer or whether it should remain non-negative
       num_tracers = coupler.get_num_tracers();
@@ -2252,16 +2243,12 @@ namespace modules {
 
 
     // ord stencil cell averages to two GLL point values via high-order reconstruction and WENO limiting
-    YAKL_INLINE static void reconstruct_gll_values( SArray<real,1,ord> const stencil                      ,
-                                                    SArray<real,1,2> &gll                                 ,
-                                                    SArray<real,2,ord,2> const &coefs_to_gll              ,
-                                                    SArray<real,2,ord,ord>  const &sten_to_coefs          ,
-                                                    SArray<real,3,hs+1,hs+1,hs+1> const &weno_recon_lower ,
-                                                    SArray<real,1,hs+2> const &idl                        ,
-                                                    real sigma ) {
+    YAKL_INLINE static void reconstruct_gll_values( SArray<real,1,ord> const stencil         ,
+                                                    SArray<real,1,2> &gll                    ,
+                                                    SArray<real,2,ord,2> const &coefs_to_gll ,
+                                                    weno::WenoLimiter<ord> const &limiter    ) {
       // Reconstruct values
-      SArray<real,1,ord> wenoCoefs;
-      weno::compute_weno_coefs<ord>( weno_recon_lower , sten_to_coefs , stencil , wenoCoefs , idl , sigma );
+      auto wenoCoefs = limiter.compute_limited_coefs( stencil );
       // Transform ord weno coefficients into 2 GLL points
       for (int ii=0; ii<2; ii++) {
         real tmp = 0;
