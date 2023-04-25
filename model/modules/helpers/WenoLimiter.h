@@ -26,12 +26,10 @@ namespace weno {
     }
 
     YAKL_INLINE void compute_limited_coefs( SArray<real,1,3> const &s , SArray<real,1,3> &coefs_H ) const {
-      // Reconstruct left, right, and high-order polynomials
       SArray<real,1,2> coefs_L, coefs_R;
       coefs2_shift1( coefs_L , s(0) , s(1) );
       coefs2_shift2( coefs_R , s(1) , s(2) );
       coefs3_shift2( coefs_H , s(0) , s(1) , s(2) );
-      // Compute TVs
       real w_L = TV( coefs_L );
       real w_R = TV( coefs_R );
       real w_H = TV( coefs_H );
@@ -68,13 +66,11 @@ namespace weno {
     }
 
     YAKL_INLINE void compute_limited_coefs( SArray<real,1,5> const &s , SArray<real,1,5> &coefs_H ) const {
-      // Reconstruct left, right, and high-order polynomials
       SArray<real,1,3> coefs_L, coefs_C, coefs_R;
       coefs3_shift1( coefs_L , s(0) , s(1) , s(2) );
       coefs3_shift2( coefs_C , s(1) , s(2) , s(3) );
       coefs3_shift3( coefs_R , s(2) , s(3) , s(4) );
       coefs5_shift3( coefs_H , s(0) , s(1) , s(2) , s(3) , s(4) );
-      // Compute TVs
       real w_L = TV( coefs_L );
       real w_C = TV( coefs_C );
       real w_R = TV( coefs_R );
@@ -116,13 +112,11 @@ namespace weno {
     }
 
     YAKL_INLINE void compute_limited_coefs( SArray<real,1,7> const &s , SArray<real,1,7> &coefs_H ) const {
-      // Reconstruct left, right, and high-order polynomials
       SArray<real,1,3> coefs_L, coefs_C, coefs_R;
       coefs3_shift1( coefs_L , s(1) , s(2) , s(3) );
       coefs3_shift2( coefs_C , s(2) , s(3) , s(4) );
       coefs3_shift3( coefs_R , s(3) , s(4) , s(5) );
       coefs7       ( coefs_H , s(0) , s(1) , s(2) , s(3) , s(4) , s(5) , s(6) );
-      // Compute TVs
       real w_L = TV( coefs_L );
       real w_C = TV( coefs_C );
       real w_R = TV( coefs_R );
@@ -166,13 +160,11 @@ namespace weno {
     }
 
     YAKL_INLINE void compute_limited_coefs( SArray<real,1,9> const &s , SArray<real,1,9> &coefs_H ) const {
-      // Reconstruct left, right, and high-order polynomials
       SArray<real,1,3> coefs_L, coefs_C, coefs_R;
       coefs3_shift1( coefs_L , s(2) , s(3) , s(4) );
       coefs3_shift2( coefs_C , s(3) , s(4) , s(5) );
       coefs3_shift3( coefs_R , s(4) , s(5) , s(6) );
       coefs9       ( coefs_H , s(0) , s(1) , s(2) , s(3) , s(4) , s(5) , s(6) , s(7) , s(8) );
-      // Compute TVs
       real w_L = TV( coefs_L );
       real w_C = TV( coefs_C );
       real w_R = TV( coefs_R );
