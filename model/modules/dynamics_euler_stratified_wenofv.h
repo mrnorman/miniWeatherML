@@ -21,7 +21,7 @@ namespace modules {
 
     // Order of accuracy (numerical convergence for smooth flows) for the dynamical core
     #ifndef MW_ORD
-      int  static constexpr ord = 5;
+      int  static constexpr ord = 3;
     #else
       int  static constexpr ord = MW_ORD;
     #endif
@@ -293,7 +293,6 @@ namespace modules {
         state_limits_x(idW,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
         state_limits_x(idT,1,k,j,i  ,iens) += hy_dens_theta_cells(k,iens);
         state_limits_x(idT,0,k,j,i+1,iens) += hy_dens_theta_cells(k,iens);
-
         // Tracers
         for (int l=0; l < num_tracers; l++) {
           // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
@@ -331,7 +330,6 @@ namespace modules {
           state_limits_y(idW,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
           state_limits_y(idT,1,k,j  ,i,iens) += hy_dens_theta_cells(k,iens);
           state_limits_y(idT,0,k,j+1,i,iens) += hy_dens_theta_cells(k,iens);
-
           // Tracers
           for (int l=0; l < num_tracers; l++) {
             // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
@@ -377,7 +375,6 @@ namespace modules {
         state_limits_z(idW,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
         state_limits_z(idT,1,k  ,j,i,iens) += hy_dens_theta_edges(k  ,iens);
         state_limits_z(idT,0,k+1,j,i,iens) += hy_dens_theta_edges(k+1,iens);
-
         // Tracers
         for (int l=0; l < num_tracers; l++) {
           // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
@@ -536,8 +533,8 @@ namespace modules {
         }
         if (use_immersed_boundaries) {
           // Determine the time scale of damping
-          real delta        = std::pow( dx*dy*dz , 1._fp/3._fp );
-          real tau          = 20*dt;
+          real delta = std::pow( dx*dy*dz , 1._fp/3._fp );
+          real tau   = 20*dt;
           // Compute immersed material tendencies (zero velocity, reference density & temperature)
           real imm_tend_idR = -std::min(1._fp,dt/tau)*state(idR,hs+k,hs+j,hs+i,iens)/dt;
           real imm_tend_idU = -std::min(1._fp,dt/tau)*state(idU,hs+k,hs+j,hs+i,iens)/dt;
@@ -545,22 +542,12 @@ namespace modules {
           real imm_tend_idW = -std::min(1._fp,dt/tau)*state(idW,hs+k,hs+j,hs+i,iens)/dt;
           real imm_tend_idT = -std::min(1._fp,dt/tau)*state(idT,hs+k,hs+j,hs+i,iens)/dt;
           // immersed proportion has immersed tendnecies. Other proportion has free tendencies
-          real prop         = immersed_proportion(k,j,i,iens);
+          real prop = immersed_proportion(k,j,i,iens);
           state_tend(idR,k,j,i,iens) = prop*imm_tend_idR + (1-prop)*state_tend(idR,k,j,i,iens);
           state_tend(idU,k,j,i,iens) = prop*imm_tend_idU + (1-prop)*state_tend(idU,k,j,i,iens);
           state_tend(idV,k,j,i,iens) = prop*imm_tend_idV + (1-prop)*state_tend(idV,k,j,i,iens);
           state_tend(idW,k,j,i,iens) = prop*imm_tend_idW + (1-prop)*state_tend(idW,k,j,i,iens);
           state_tend(idT,k,j,i,iens) = prop*imm_tend_idT + (1-prop)*state_tend(idT,k,j,i,iens);
-
-          // // Determine the time scale of damping
-          // real delta        = std::pow( dx*dy*dz , 1._fp/3._fp );
-          // real tau          = dt;
-          // real prop         = immersed_proportion(k,j,i,iens);
-          // state_tend(idR,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idR,hs+k,hs+j,hs+i,iens) + state_tend(idR,k,j,i,iens)*dt ) / dt;
-          // state_tend(idU,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idU,hs+k,hs+j,hs+i,iens) + state_tend(idU,k,j,i,iens)*dt ) / dt;
-          // state_tend(idV,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idV,hs+k,hs+j,hs+i,iens) + state_tend(idV,k,j,i,iens)*dt ) / dt;
-          // state_tend(idW,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idW,hs+k,hs+j,hs+i,iens) + state_tend(idW,k,j,i,iens)*dt ) / dt;
-          // state_tend(idT,k,j,i,iens) -= prop * std::min(1._fp,dt/tau) * ( state(idT,hs+k,hs+j,hs+i,iens) + state_tend(idT,k,j,i,iens)*dt ) / dt;
         }
       });
     }
@@ -2117,12 +2104,13 @@ namespace modules {
 
 
     // ord stencil cell averages to two GLL point values via high-order reconstruction and WENO limiting
-    YAKL_INLINE static void reconstruct_gll_values( SArray<real,1,ord> const stencil         ,
+    YAKL_INLINE static void reconstruct_gll_values( SArray<real,1,ord> const &stencil        ,
                                                     SArray<real,1,2> &gll                    ,
                                                     SArray<real,2,ord,2> const &coefs_to_gll ,
                                                     weno::WenoLimiter<ord> const &limiter    ) {
       // Reconstruct values
-      auto wenoCoefs = limiter.compute_limited_coefs( stencil );
+      SArray<real,1,ord> wenoCoefs;
+      limiter.compute_limited_coefs( stencil , wenoCoefs );
       // Transform ord weno coefficients into 2 GLL points
       for (int ii=0; ii<2; ii++) {
         real tmp = 0;

@@ -25,10 +25,9 @@ namespace weno {
       convexify( idl_L , idl_R , idl_H );
     }
 
-    YAKL_INLINE SArray<real,1,3> compute_limited_coefs( SArray<real,1,3> s ) const {
+    YAKL_INLINE void compute_limited_coefs( SArray<real,1,3> const &s , SArray<real,1,3> &coefs_H ) const {
       // Reconstruct left, right, and high-order polynomials
       SArray<real,1,2> coefs_L, coefs_R;
-      SArray<real,1,3> coefs_H;
       coefs2_shift1( coefs_L , s(0) , s(1) );
       coefs2_shift2( coefs_R , s(1) , s(2) );
       coefs3_shift2( coefs_H , s(0) , s(1) , s(2) );
@@ -47,7 +46,6 @@ namespace weno {
       coefs_H(0) = coefs_H(0)*w_H + coefs_L(0)*w_L + coefs_R(0)*w_R;
       coefs_H(1) = coefs_H(1)*w_H + coefs_L(1)*w_L + coefs_R(1)*w_R;
       coefs_H(2) = coefs_H(2)*w_H;
-      return coefs_H;
     }
   };
 
@@ -69,10 +67,9 @@ namespace weno {
       convexify( idl_L , idl_C , idl_R , idl_H );
     }
 
-    YAKL_INLINE SArray<real,1,5> compute_limited_coefs( SArray<real,1,5> s ) const {
+    YAKL_INLINE void compute_limited_coefs( SArray<real,1,5> const &s , SArray<real,1,5> &coefs_H ) const {
       // Reconstruct left, right, and high-order polynomials
       SArray<real,1,3> coefs_L, coefs_C, coefs_R;
-      SArray<real,1,5> coefs_H;
       coefs3_shift1( coefs_L , s(0) , s(1) , s(2) );
       coefs3_shift2( coefs_C , s(1) , s(2) , s(3) );
       coefs3_shift3( coefs_R , s(2) , s(3) , s(4) );
@@ -97,7 +94,6 @@ namespace weno {
       coefs_H(2) = coefs_H(2)*w_H + coefs_L(2)*w_L + coefs_C(2)*w_C + coefs_R(2)*w_R;
       coefs_H(3) = coefs_H(3)*w_H;
       coefs_H(4) = coefs_H(4)*w_H;
-      return coefs_H;
     }
   };
 
@@ -119,10 +115,9 @@ namespace weno {
       convexify( idl_L , idl_C , idl_R , idl_H );
     }
 
-    YAKL_INLINE SArray<real,1,7> compute_limited_coefs( SArray<real,1,7> s ) const {
+    YAKL_INLINE void compute_limited_coefs( SArray<real,1,7> const &s , SArray<real,1,7> &coefs_H ) const {
       // Reconstruct left, right, and high-order polynomials
       SArray<real,1,3> coefs_L, coefs_C, coefs_R;
-      SArray<real,1,7> coefs_H;
       coefs3_shift1( coefs_L , s(1) , s(2) , s(3) );
       coefs3_shift2( coefs_C , s(2) , s(3) , s(4) );
       coefs3_shift3( coefs_R , s(3) , s(4) , s(5) );
@@ -149,7 +144,6 @@ namespace weno {
       coefs_H(4) = coefs_H(4)*w_H;
       coefs_H(5) = coefs_H(5)*w_H;
       coefs_H(6) = coefs_H(6)*w_H;
-      return coefs_H;
     }
   };
 
@@ -171,10 +165,9 @@ namespace weno {
       convexify( idl_L , idl_C , idl_R , idl_H );
     }
 
-    YAKL_INLINE SArray<real,1,9> compute_limited_coefs( SArray<real,1,9> s ) const {
+    YAKL_INLINE void compute_limited_coefs( SArray<real,1,9> const &s , SArray<real,1,9> &coefs_H ) const {
       // Reconstruct left, right, and high-order polynomials
       SArray<real,1,3> coefs_L, coefs_C, coefs_R;
-      SArray<real,1,9> coefs_H;
       coefs3_shift1( coefs_L , s(2) , s(3) , s(4) );
       coefs3_shift2( coefs_C , s(3) , s(4) , s(5) );
       coefs3_shift3( coefs_R , s(4) , s(5) , s(6) );
@@ -203,7 +196,6 @@ namespace weno {
       coefs_H(6) = coefs_H(6)*w_H;
       coefs_H(7) = coefs_H(7)*w_H;
       coefs_H(8) = coefs_H(8)*w_H;
-      return coefs_H;
     }
   };
 
