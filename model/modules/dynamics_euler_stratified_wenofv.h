@@ -396,10 +396,9 @@ namespace modules {
 
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-        ////////////////////////////////////////////////////////
         // X-direction
-        ////////////////////////////////////////////////////////
         if (j < ny && k < nz) {
+          // Acoustically upwind mass flux and pressure
           real ru_L = state_limits_x(idU,0,k,j,i,iens);   real ru_R = state_limits_x(idU,1,k,j,i,iens);
           real rt_L = state_limits_x(idT,0,k,j,i,iens);   real rt_R = state_limits_x(idT,1,k,j,i,iens);
           real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
@@ -408,6 +407,7 @@ namespace modules {
           real w2 = 0.5_fp * (p_L+cs*ru_L);
           real p_upw  = w1 + w2;
           real ru_upw = (w2-w1)/cs;
+          // Advectively upwind everything else
           int ind = ru_L+ru_R > 0 ? 0 : 1;
           real r_upw = state_limits_x(idR,ind,k,j,i,iens);
           state_flux_x(idR,k,j,i,iens) = ru_upw;
@@ -420,11 +420,10 @@ namespace modules {
           }
         }
 
-        ////////////////////////////////////////////////////////
         // Y-direction
-        ////////////////////////////////////////////////////////
         // If we are simulating in 2-D, then do not do Riemann in the y-direction
         if ( (! sim2d) && i < nx && k < nz) {
+          // Acoustically upwind mass flux and pressure
           real rv_L = state_limits_y(idV,0,k,j,i,iens);   real rv_R = state_limits_y(idV,1,k,j,i,iens);
           real rt_L = state_limits_y(idT,0,k,j,i,iens);   real rt_R = state_limits_y(idT,1,k,j,i,iens);
           real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
@@ -433,6 +432,7 @@ namespace modules {
           real w2 = 0.5_fp * (p_L+cs*rv_L);
           real p_upw  = w1 + w2;
           real rv_upw = (w2-w1)/cs;
+          // Advectively upwind everything else
           int ind = rv_L+rv_R > 0 ? 0 : 1;
           real r_upw = state_limits_y(idR,ind,k,j,i,iens);
           state_flux_y(idR,k,j,i,iens) = rv_upw;
@@ -452,10 +452,9 @@ namespace modules {
           for (int tr=0; tr < num_tracers; tr++) { tracers_flux_y(tr,k,j,i,iens) = 0; }
         }
 
-        ////////////////////////////////////////////////////////
         // Z-direction
-        ////////////////////////////////////////////////////////
         if (i < nx && j < ny) {
+          // Acoustically upwind mass flux and pressure
           real rw_L = state_limits_z(idW,0,k,j,i,iens);   real rw_R = state_limits_z(idW,1,k,j,i,iens);
           real rt_L = state_limits_z(idT,0,k,j,i,iens);   real rt_R = state_limits_z(idT,1,k,j,i,iens);
           real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
@@ -464,6 +463,7 @@ namespace modules {
           real w2 = 0.5_fp * (p_L+cs*rw_L);
           real p_upw  = w1 + w2;
           real rw_upw = (w2-w1)/cs;
+          // Advectively upwind everything else
           int ind = rw_L+rw_R > 0 ? 0 : 1;
           real r_upw = state_limits_z(idR,ind,k,j,i,iens);
           state_flux_z(idR,k,j,i,iens) = rw_upw;
@@ -476,6 +476,7 @@ namespace modules {
           }
         }
 
+        // Multiply density back to other variables
         if (i < nx && j < ny && k < nz) {
           state(idU,hs+k,hs+j,hs+i,iens) *= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
           state(idV,hs+k,hs+j,hs+i,iens) *= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
