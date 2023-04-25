@@ -2104,9 +2104,9 @@ namespace modules {
 
 
     // ord stencil cell averages to two GLL point values via high-order reconstruction and WENO limiting
-    YAKL_INLINE static void reconstruct_gll_values( SArray<real,1,ord> const &stencil        ,
-                                                    SArray<real,1,2> &gll                    ,
-                                                    SArray<real,2,ord,2> const &coefs_to_gll ,
+    YAKL_INLINE static void reconstruct_gll_values( SArray<real,1,ord>     const &stencil      ,
+                                                    SArray<real,1,2>             &gll          ,
+                                                    SArray<real,2,ord,2>   const &coefs_to_gll ,
                                                     weno::WenoLimiter<ord> const &limiter    ) {
       // Reconstruct values
       SArray<real,1,ord> wenoCoefs;
