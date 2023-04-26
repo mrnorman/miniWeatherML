@@ -20,7 +20,7 @@ zlen: 20000
 init_data: supercell
 
 # Output filename
-out_fname: test.nc
+out_prefix: test.nc
 
 # GCM time step
 dt_gcm: 900

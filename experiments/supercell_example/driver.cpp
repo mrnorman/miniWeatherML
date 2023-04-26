@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
     auto zlen      = config["zlen"    ].as<real>();
     auto dtphys_in = config["dt_phys" ].as<real>();
 
-    coupler.set_option<std::string>( "out_fname" , config["out_fname"].as<std::string>() );
+    coupler.set_option<std::string>( "out_prefix" , config["out_prefix"].as<std::string>() );
     coupler.set_option<std::string>( "init_data" , config["init_data"].as<std::string>() );
     coupler.set_option<real       >( "out_freq"  , config["out_freq" ].as<real       >() );
 
