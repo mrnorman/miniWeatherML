@@ -16,7 +16,7 @@ zlen: 300
 init_data: city
 
 # Output filename
-out_fname: test.nc
+out_prefix: test.nc
 
 # GCM time step
 dt_gcm: 900

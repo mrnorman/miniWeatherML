@@ -6,6 +6,7 @@
 #include "TransformMatrices.h"
 #include "WenoLimiter.h"
 #include <random>
+#include <sstream>
 
 namespace modules {
 
@@ -54,7 +55,6 @@ namespace modules {
     real        etime;         // Elapsed time
     real        out_freq;      // Frequency out file output
     int         num_out;       // Number of outputs produced thus far
-    std::string fname;         // File name for file output
     int         init_data_int; // Integer representation of the type of initial data to use (test case)
 
     int         idWV;              // Index number for water vapor in the tracers array
@@ -1295,7 +1295,6 @@ namespace modules {
       tracer_adds_mass_host.deep_copy_to(tracer_adds_mass);
 
       auto init_data = coupler.get_option<std::string>("init_data");
-      fname          = coupler.get_option<std::string>("out_fname");
       out_freq       = coupler.get_option<real       >("out_freq" );
 
       coupler.set_option<int>("idWV",idWV);
@@ -2030,18 +2029,82 @@ namespace modules {
       auto dy          = coupler.get_dy();
       auto dz          = coupler.get_dz();
       auto num_tracers = coupler.get_num_tracers();
-
-      yakl::SimplePNetCDF nc;
-      MPI_Offset ulIndex = 0; // Unlimited dimension index to place this data at
-
       int i_beg = coupler.get_i_beg();
       int j_beg = coupler.get_j_beg();
+      int iens = 0;
 
-      for (int iens=0; iens < nens; iens++) {
-        std::string fname_loc = fname;;
-        if (nens > 1) fname_loc = std::string("ens_")+std::to_string(iens)+std::string("_")+fname;
+      if (coupler.get_option<bool>("file_per_process",false)) {
+
+        yakl::SimpleNetCDF nc;
+        MPI_Offset ulIndex = 0; // Unlimited dimension index to place this data at
+
+        
+        std::stringstream fname;
+        fname << coupler.get_option<std::string>("out_prefix") << "_" << std::setw(8) << std::setfill('0')
+              << coupler.get_myrank() << ".nc";
+
         if (etime == 0) {
-          nc.create(fname_loc , NC_CLOBBER | NC_64BIT_DATA);
+          nc.create( fname.str() , yakl::NETCDF_MODE_REPLACE );
+
+          nc.createDim( "x" , coupler.get_nx() );
+          nc.createDim( "y" , coupler.get_ny() );
+          nc.createDim( "z" , nz );
+          nc.createDim( "t" );
+
+          // x-coordinate
+          real1d xloc("xloc",nx);
+          parallel_for( YAKL_AUTO_LABEL() , nx , YAKL_LAMBDA (int i) { xloc(i) = (i+i_beg+0.5)*dx; });
+          nc.write( xloc , "x" , {"x"} );
+
+          // y-coordinate
+          real1d yloc("yloc",ny);
+          parallel_for( YAKL_AUTO_LABEL() , ny , YAKL_LAMBDA (int j) { yloc(j) = (j+j_beg+0.5)*dy; });
+          nc.write( yloc , "y" , {"y"} );
+
+          // z-coordinate
+          real1d zloc("zloc",nz);
+          parallel_for( YAKL_AUTO_LABEL() , nz , YAKL_LAMBDA (int k) { zloc(k) = (k      +0.5)*dz; });
+          nc.write( zloc , "z" , {"z"} );
+          nc.write1( 0._fp , "t" , 0 , "t" );
+
+        } else {
+
+          nc.open( fname.str() , yakl::NETCDF_MODE_WRITE );
+          ulIndex = nc.getDimSize("t");
+
+          // Write the elapsed time
+          nc.write1(etime,"t",ulIndex,"t");
+
+        }
+
+        std::vector<std::string> varnames(num_state+num_tracers);
+        varnames[0] = "density_dry";
+        varnames[1] = "uvel";
+        varnames[2] = "vvel";
+        varnames[3] = "wvel";
+        varnames[4] = "temp";
+        auto tracer_names = coupler.get_tracer_names();
+        for (int tr=0; tr < num_tracers; tr++) { varnames[num_state+tr] = tracer_names[tr]; }
+
+        auto &dm = coupler.get_data_manager_readonly();
+        real3d data("data",nz,ny,nx);
+        for (int i=0; i < varnames.size(); i++) {
+          auto var = dm.get<real const,4>(varnames[i]);
+          parallel_for( Bounds<3>(nz,ny,nx) , YAKL_LAMBDA (int k, int j, int i) { data(k,j,i) = var(k,j,i,iens); });
+          nc.write1(data,varnames[i],{"z","y","x"},ulIndex,"t");
+        }
+
+        nc.close();
+
+      } else { // if file_per_process
+
+        yakl::SimplePNetCDF nc;
+        MPI_Offset ulIndex = 0; // Unlimited dimension index to place this data at
+
+        std::stringstream fname;
+        fname << coupler.get_option<std::string>("out_prefix") << ".nc";
+        if (etime == 0) {
+          nc.create(fname.str() , NC_CLOBBER | NC_64BIT_DATA);
 
           nc.create_dim( "x" , coupler.get_nx_glob() );
           nc.create_dim( "y" , coupler.get_ny_glob() );
@@ -2086,7 +2149,7 @@ namespace modules {
 
         } else {
 
-          nc.open(fname_loc);
+          nc.open(fname.str());
           ulIndex = nc.get_dim_size("t");
 
           // Write the elapsed time
@@ -2116,7 +2179,9 @@ namespace modules {
         }
 
         nc.close();
-      }
+
+      } // if file_per_process
+
       yakl::timer_stop("output");
     }
 
