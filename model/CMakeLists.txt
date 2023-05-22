@@ -6,6 +6,9 @@ set(YAKL_BIN  ${CMAKE_CURRENT_BINARY_DIR}/yakl PARENT_SCOPE)
 add_subdirectory(${YAKL_HOME} ${YAKL_BIN})
 include_directories(${YAKL_BIN})
 
+set(YAML_CPP_BUILD_TOOLS   OFF CACHE BOOL "" FORCE)
+set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../external/yaml-cpp ${CMAKE_CURRENT_BINARY_DIR}/yaml-cpp)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../external/ponni ponni)

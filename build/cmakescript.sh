@@ -26,6 +26,13 @@ cmake      \
   -DYAKL_F90_FLAGS="${YAKL_F90_FLAGS}"           \
   -DMW_LINK_FLAGS="${MW_LINK_FLAGS}"             \
   -DYAKL_ARCH="${YAKL_ARCH}"                     \
+  -DYAKL_HAVE_MPI=ON                             \
+  -DYAKL_DEBUG="${YAKL_DEBUG}"                   \
+  -DYAKL_PROFILE="${YAKL_PROFILE}"               \
+  -DYAKL_AUTO_PROFILE="${YAKL_AUTO_PROFILE}"     \
+  -DYAKL_VERBOSE="${YAKL_VERBOSE}"               \
+  -DYAKL_VERBOSE_FILE="${YAKL_VERBOSE_FILE}"     \
+  -DYAKL_AUTO_FENCE="${YAKL_AUTO_FENCE}"         \
   -DCMAKE_CUDA_HOST_COMPILER="${CXX}"            \
   -DMINIWEATHER_ML_HOME="`pwd`/.."               \
   -Wno-dev                                       \
