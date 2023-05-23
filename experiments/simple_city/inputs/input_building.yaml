@@ -16,7 +16,7 @@ zlen: 500
 init_data: building
 
 # Output filename
-out_prefix: test.nc
+out_prefix: test
 
 # GCM time step
 dt_gcm: 900
@@ -29,4 +29,5 @@ out_freq: 10.
 
 enable_gravity: false
 
+file_per_process: true
 
