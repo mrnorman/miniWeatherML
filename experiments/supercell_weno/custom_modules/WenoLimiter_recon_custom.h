@@ -7,7 +7,7 @@ namespace weno{
 
   YAKL_INLINE static void convexify(real & w1, real & w2) {
     real rtot = 1._fp / std::max( 1.e-20 , w1 + w2 );
-    w1 *= tot;   w2 *= tot;
+    w1 *= rtot;   w2 *= rtot;
   }
 
 

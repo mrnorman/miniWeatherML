@@ -1,10 +1,14 @@
 
 #include "coupler.h"
 #include "dynamics_euler_stratified_wenofv.h"
+#include "dycore_custom.h"
 #include "microphysics_kessler.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
 #include "column_nudging.h"
+#include "ponni.h"
+#include "Train_Weno.h"
+#include "calculate_loss_and_overwrite_lo.h"
 
 int main(int argc, char** argv) {
   MPI_Init( &argc , &argv );
@@ -41,17 +45,6 @@ int main(int argc, char** argv) {
     coupler_hi.set_option<real       >( "out_freq"   , config["out_freq"  ].as<real       >() );
     coupler_hi.set_option<std::string>( "standalone_input_file" , inFile );
 
-    // Coupler state is: (1) dry density;  (2) u-velocity;  (3) v-velocity;  (4) w-velocity;  (5) temperature
-    //                   (6+) tracer masses (*not* mixing ratios!)
-    coupler_lo.distribute_mpi_and_allocate_coupled_state(nz, ny_glob, nx_glob, nens);
-    auto ny_glob_hi = ny_glob == 1 ? 1 : ny_glob*refine_factor;
-    coupler_hi.distribute_mpi_and_allocate_coupled_state(
-                                            nz*refine_factor , ny_glob_hi , nx_glob*refine_factor, 1 ,
-                                            coupler_lo.get_nproc_x() , coupler_lo.get_nproc_y() ,
-                                            coupler_lo.get_px()      , coupler_lo.get_py()      ,
-                                            coupler_lo.get_i_beg()   , coupler_lo.get_i_end()   ,
-                                            coupler_lo.get_j_beg()   , coupler_lo.get_j_end()   );
-
     ////////////////////////////////////////////////////////////////////////////
     // BEGIN: PONNI MODEL AND TRAINER CREATION
     ////////////////////////////////////////////////////////////////////////////
@@ -66,34 +59,46 @@ int main(int argc, char** argv) {
     int  num_outputs         = MW_ORD-1; // WENO parameters outputs
     int  num_neurons         = MW_ORD;   // Size of hidden layers
     int  nens                = 1;
-    real relu_negative_slope = 0.3;
-    auto model = create_inference_model( Matvec<real>      ( num_inputs,num_neurons,nens     ) ,
-                                         Bias  <real>      ( num_neurons,nens                ) ,
-                                         Relu  <real>      ( num_neurons,relu_negative_slope ) ,
-                                         Save_State<0,real>( num_neurons                     ) ,
-                                         Matvec<real>      ( num_neurons,num_neurons,nens    ) ,
-                                         Bias  <real>      ( num_neurons,nens                ) ,
-                                         Relu  <real>      ( num_neurons,relu_negative_slope ) ,
-                                         Binop_Add<0,real> ( num_neurons                     ) ,
-                                         Matvec<real>      ( num_neurons,num_outputs,nens    ) ,
-                                         Bias  <real>      ( num_outputs,nens                ) );
-    auto num_parameters = test.get_num_trainable_parameters();
-    Trainer_GD_Adam_FD<real> trainer( test.get_trainable_parameters().reshape(num_parameters) );
-    auto nens = test.get_num_trainable_parameters() + 1;
-    model = create_inference_model( Matvec<real>      ( num_inputs,num_neurons,nens     ) ,
-                                    Bias  <real>      ( num_neurons,nens                ) ,
-                                    Relu  <real>      ( num_neurons,relu_negative_slope ) ,
-                                    Save_State<0,real>( num_neurons                     ) ,
-                                    Matvec<real>      ( num_neurons,num_neurons,nens    ) ,
-                                    Bias  <real>      ( num_neurons,nens                ) ,
-                                    Relu  <real>      ( num_neurons,relu_negative_slope ) ,
-                                    Binop_Add<0,real> ( num_neurons                     ) ,
-                                    Matvec<real>      ( num_neurons,num_outputs,nens    ) ,
-                                    Bias  <real>      ( num_outputs,nens                ) );
-    model.init( coupler_lo.get_nx()*coupler_lo.get_ny()*coupler_lo.get_nz() , nens );
+    float relu_negative_slope = 0.3;
+    auto model = create_inference_model( Matvec<float>      ( num_inputs,num_neurons,nens     ) ,
+                                         Bias  <float>      ( num_neurons,nens                ) ,
+                                         Relu  <float>      ( num_neurons,relu_negative_slope ) ,
+                                         Save_State<0,float>( num_neurons                     ) ,
+                                         Matvec<float>      ( num_neurons,num_neurons,nens    ) ,
+                                         Bias  <float>      ( num_neurons,nens                ) ,
+                                         Relu  <float>      ( num_neurons,relu_negative_slope ) ,
+                                         Binop_Add<0,float> ( num_neurons                     ) ,
+                                         Matvec<float>      ( num_neurons,num_outputs,nens    ) ,
+                                         Bias  <float>      ( num_outputs,nens                ) );
+    auto num_parameters = model.get_num_trainable_parameters();
+    Trainer_GD_Adam_FD<float> trainer( model.get_trainable_parameters().reshape(num_parameters) );
+    nens = model.get_num_trainable_parameters() + 1;
+    model = create_inference_model( Matvec<float>      ( num_inputs,num_neurons,nens     ) ,
+                                    Bias  <float>      ( num_neurons,nens                ) ,
+                                    Relu  <float>      ( num_neurons,relu_negative_slope ) ,
+                                    Save_State<0,float>( num_neurons                     ) ,
+                                    Matvec<float>      ( num_neurons,num_neurons,nens    ) ,
+                                    Bias  <float>      ( num_neurons,nens                ) ,
+                                    Relu  <float>      ( num_neurons,relu_negative_slope ) ,
+                                    Binop_Add<0,float> ( num_neurons                     ) ,
+                                    Matvec<float>      ( num_neurons,num_outputs,nens    ) ,
+                                    Bias  <float>      ( num_outputs,nens                ) );
     ////////////////////////////////////////////////////////////////////////////
     // END: PONNI MODEL AND TRAINER CREATION
     ////////////////////////////////////////////////////////////////////////////
+
+    // Coupler state is: (1) dry density;  (2) u-velocity;  (3) v-velocity;  (4) w-velocity;  (5) temperature
+    //                   (6+) tracer masses (*not* mixing ratios!)
+    coupler_lo.distribute_mpi_and_allocate_coupled_state(nz, ny_glob, nx_glob, nens);
+    auto ny_glob_hi = ny_glob == 1 ? 1 : ny_glob*refine_factor;
+    coupler_hi.distribute_mpi_and_allocate_coupled_state(
+                                            nz*refine_factor , ny_glob_hi , nx_glob*refine_factor, 1 ,
+                                            coupler_lo.get_nproc_x() , coupler_lo.get_nproc_y() ,
+                                            coupler_lo.get_px()      , coupler_lo.get_py()      ,
+                                            coupler_lo.get_i_beg()   , coupler_lo.get_i_end()   ,
+                                            coupler_lo.get_j_beg()   , coupler_lo.get_j_end()   );
+
+    model.init( coupler_lo.get_nx()*coupler_lo.get_ny()*coupler_lo.get_nz() , nens );
 
     // Just tells the coupler how big the domain is in each dimensions
     coupler_lo.set_grid( xlen , ylen , zlen );
@@ -109,6 +114,8 @@ int main(int argc, char** argv) {
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
     custom_modules::Dynamics_Euler_Stratified_WenoFV  dycore_lo;
     modules::Dynamics_Euler_Stratified_WenoFV         dycore_hi;
+    // The class used to perform mini batch updates from ensemble losses
+    custom_modules::Train_WENO                        train_weno;
 
     // Run the initialization modules
     micro_lo .init              ( coupler_lo ); // Allocate micro state and register its tracers in the coupler
@@ -121,12 +128,15 @@ int main(int argc, char** argv) {
     column_nudger_hi.set_column ( coupler_hi ); // Set the column before perturbing
     modules::perturb_temperature( coupler_hi ); // Randomly perturb bottom layers of temperature to initiate convection
 
+    int desired_batch_size = 4096;
+    train_weno.init( coupler_lo , desired_batch_size );
+
     real etime = 0;   // Elapsed time
 
     real dtphys = dtphys_in;
     while (etime < sim_time) {
       // If dtphys <= 0, then set it to the low-res dynamical core's max stable time step
-      if (dtphys_in <= 0.) { dtphys = dycore_lo.compute_time_step(coupler); }
+      if (dtphys_in <= 0.) { dtphys = dycore_lo.compute_time_step(coupler_lo); }
       // If we're about to go past the final time, then limit to time step to exactly hit the final time
       if (etime + dtphys > sim_time) { dtphys = sim_time - etime; }
 
@@ -134,23 +144,23 @@ int main(int argc, char** argv) {
       auto ensemble = trainer.get_ensemble();
       model.set_trainable_parameters( ensemble.get_parameters() );
       dycore_lo.time_step             ( coupler_lo , dtphys , model );
-      micro _lo.time_step             ( coupler_lo , dtphys );
+      micro_lo.time_step              ( coupler_lo , dtphys );
       modules::sponge_layer           ( coupler_lo , dtphys );
       column_nudger_lo.nudge_to_column( coupler_lo , dtphys );
 
       // Run the high resolution model
       dycore_hi.time_step             ( coupler_hi , dtphys );
-      micro _hi.time_step             ( coupler_hi , dtphys );
+      micro_hi.time_step              ( coupler_hi , dtphys );
       modules::sponge_layer           ( coupler_hi , dtphys );
       column_nudger_hi.nudge_to_column( coupler_hi , dtphys );
 
       // Calculate the loss, and overwrite the low-res state with the high-res state
       auto loss2d = custom_modules::calculate_loss_and_overwrite_lo( coupler_lo , coupler_hi , model );
 
+      train_weno.train_mini_batches( trainer , ensemble , loss2d );
+
       etime += dtphys; // Advance elapsed time
     }
-
-    // TODO: Add finalize( coupler ) modules here
 
     yakl::timer_stop("main");
   }

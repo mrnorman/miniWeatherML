@@ -4,7 +4,7 @@
 #include "main_header.h"
 #include "MultipleFields.h"
 #include "TransformMatrices.h"
-#include "WenoLimiter.h"
+#include "WenoLimiter_custom.h"
 #include <random>
 #include <sstream>
 
@@ -199,16 +199,17 @@ namespace custom_modules {
     }
 
 
-    template <class MODEL>
+    template <class MODEL, class PARAMS>
     YAKL_INLINE static void predict_weno_params( SArray<real,1,ord> const &stencil ,
                                                  custom_modules::weno::WenoLimiter<ord> &limiter,
-                                                 MODEL const &model , MODEL::Params const &model_params ,
+                                                 MODEL const &model , PARAMS const &model_params ,
+                                                 float3d const &model_inputs , float3d const &model_outputs,
                                                  int k, int j, int i, int iens, int ny, int nx) {
         real mx = stencil(0);
         real mn = stencil(0);
         for (int s=1; s < ord; s++) { mx = std::max(mx,stencil(s));    mn = std::min(mn,stencil(s)); }
         int ibatch = k*ny*nx+j*nx+i;
-        for (int s=0; s < ord; s++) { model_inputs(s,ibatch,iens) = (stencil(s)-mn) / std::mx( 1.e-20 , mx-mn ); }
+        for (int s=0; s < ord; s++) { model_inputs(s,ibatch,iens) = (stencil(s)-mn) / std::max( 1.e-20_fp , mx-mn ); }
         MODEL::forward_batch_parallel_in_kernel( model_inputs , model_outputs , model_params , ibatch , iens );
         if constexpr (ord == 3) {
           float weno3_cutoff = std::min(1.f,std::max(0.f,model_outputs(0,ibatch,iens)));
@@ -313,8 +314,8 @@ namespace custom_modules {
       real6d tracers_limits_z("tracers_limits_z",num_tracers,2,nz+1,ny  ,nx  ,nens);
 
       // Allocate model inputs and outputs as ( num_[in|out]puts , batch_size , num_ensembles )
-      real2d model_inputs ("model_inputs" ,ord  ,nz*ny*nx,nens);
-      real2d model_outputs("model_outputs",ord-1,nz*ny*nx,nens);
+      float3d model_inputs ("model_inputs" ,ord  ,nz*ny*nx,nens);
+      float3d model_outputs("model_outputs",ord-1,nz*ny*nx,nens);
 
       YAKL_SCOPE( model_params , model.params );
 
@@ -331,7 +332,7 @@ namespace custom_modules {
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s,iens); }
           custom_modules::weno::WenoLimiter<ord> limiter;
-          predict_weno_params( stencil , limiter , model , model_params , k , j , i , iens , nx , ny );
+          predict_weno_params(stencil,limiter,model,model_params,model_inputs,model_outputs,k,j,i,iens,nx,ny);
           reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
           state_limits_x(l,1,k,j,i  ,iens) = gll(0);
           state_limits_x(l,0,k,j,i+1,iens) = gll(1);
@@ -354,7 +355,7 @@ namespace custom_modules {
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,hs+j,i+s,iens); }
           custom_modules::weno::WenoLimiter<ord> limiter;
-          predict_weno_params( stencil , limiter , model , model_params , k , j , i , iens , nx , ny );
+          predict_weno_params(stencil,limiter,model,model_params,model_inputs,model_outputs,k,j,i,iens,nx,ny);
           reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
           tracers_limits_x(l,1,k,j,i  ,iens) = gll(0) * state_limits_x(idR,1,k,j,i  ,iens);
           tracers_limits_x(l,0,k,j,i+1,iens) = gll(1) * state_limits_x(idR,0,k,j,i+1,iens);
@@ -372,7 +373,7 @@ namespace custom_modules {
             SArray<real,1,2>   gll;
             for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i,iens); }
             custom_modules::weno::WenoLimiter<ord> limiter;
-            predict_weno_params( stencil , limiter , model , model_params , k , j , i , iens , nx , ny );
+            predict_weno_params(stencil,limiter,model,model_params,model_inputs,model_outputs,k,j,i,iens,nx,ny);
             reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
             state_limits_y(l,1,k,j  ,i,iens) = gll(0);
             state_limits_y(l,0,k,j+1,i,iens) = gll(1);
@@ -395,7 +396,7 @@ namespace custom_modules {
             SArray<real,1,2>   gll;
             for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,j+s,hs+i,iens); }
             custom_modules::weno::WenoLimiter<ord> limiter;
-            predict_weno_params( stencil , limiter , model , model_params , k , j , i , iens , nx , ny );
+            predict_weno_params(stencil,limiter,model,model_params,model_inputs,model_outputs,k,j,i,iens,nx,ny);
             reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
             tracers_limits_y(l,1,k,j  ,i,iens) = gll(0) * state_limits_y(idR,1,k,j  ,i,iens);
             tracers_limits_y(l,0,k,j+1,i,iens) = gll(1) * state_limits_y(idR,0,k,j+1,i,iens);
@@ -421,7 +422,7 @@ namespace custom_modules {
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = state(l,k+s,hs+j,hs+i,iens); }
           custom_modules::weno::WenoLimiter<ord> limiter;
-          predict_weno_params( stencil , limiter , model , model_params , k , j , i , iens , nx , ny );
+          predict_weno_params(stencil,limiter,model,model_params,model_inputs,model_outputs,k,j,i,iens,nx,ny);
           reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
           state_limits_z(l,1,k  ,j,i,iens) = gll(0);
           state_limits_z(l,0,k+1,j,i,iens) = gll(1);
@@ -444,7 +445,7 @@ namespace custom_modules {
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = tracers(l,k+s,hs+j,hs+i,iens); }
           custom_modules::weno::WenoLimiter<ord> limiter;
-          predict_weno_params( stencil , limiter , model , model_params , k , j , i , iens , nx , ny );
+          predict_weno_params(stencil,limiter,model,model_params,model_inputs,model_outputs,k,j,i,iens,nx,ny);
           reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
           tracers_limits_z(l,1,k  ,j,i,iens) = gll(0) * state_limits_z(idR,1,k  ,j,i,iens);
           tracers_limits_z(l,0,k+1,j,i,iens) = gll(1) * state_limits_z(idR,0,k+1,j,i,iens);
@@ -616,22 +617,32 @@ namespace custom_modules {
     }
 
 
+    YAKL_INLINE static void compute_weno_coefs( SArray<real,1,3> const &s , SArray<real,1,3> &wenoCoefs ,
+                                                custom_modules::weno::WenoLimiter<3> const &limiter ) {
+      limiter.compute_limited_coefs( s(0),s(1),s(2) , wenoCoefs );
+    }
+    YAKL_INLINE static void compute_weno_coefs( SArray<real,1,5> const &s , SArray<real,1,5> &wenoCoefs ,
+                                                custom_modules::weno::WenoLimiter<5> const &limiter ) {
+      limiter.compute_limited_coefs( s(0),s(1),s(2),s(3),s(4) , wenoCoefs );
+    }
+    YAKL_INLINE static void compute_weno_coefs( SArray<real,1,7> const &s , SArray<real,1,7> &wenoCoefs ,
+                                                custom_modules::weno::WenoLimiter<7> const &limiter ) {
+      limiter.compute_limited_coefs( s(0),s(1),s(2),s(3),s(4),s(5),s(6) , wenoCoefs );
+    }
+    YAKL_INLINE static void compute_weno_coefs( SArray<real,1,9> const &s , SArray<real,1,9> &wenoCoefs ,
+                                                custom_modules::weno::WenoLimiter<9> const &limiter ) {
+      limiter.compute_limited_coefs( s(0),s(1),s(2),s(3),s(4),s(5),s(6),s(7),s(8) , wenoCoefs );
+    }
+
+
     // ord stencil cell averages to two GLL point values via high-order reconstruction and WENO limiting
     YAKL_INLINE static void reconstruct_gll_values( SArray<real,1,ord>     const &s            ,
                                                     SArray<real,1,2>             &gll          ,
                                                     SArray<real,2,ord,2>   const &coefs_to_gll ,
-                                                    custom_modules::weno::WenoLimiter<ord> const &limiter    ) {
+                                                    custom_modules::weno::WenoLimiter<ord> const &limiter ) {
       // Reconstruct values
       SArray<real,1,ord> wenoCoefs;
-      if constexpr (ord == 3) {
-        limiter.compute_limited_coefs( s(0),s(1),s(2) , wenoCoefs );
-      } else if constexpr (ord == 5) {
-        limiter.compute_limited_coefs( s(0),s(1),s(2),s(3),s(4) , wenoCoefs );
-      } else if constexpr (ord == 7) {
-        limiter.compute_limited_coefs( s(0),s(1),s(2),s(3),s(4),s(5),s(6) , wenoCoefs );
-      } else if constexpr (ord == 9) {
-        limiter.compute_limited_coefs( s(0),s(1),s(2),s(3),s(4),s(5),s(6),s(7),s(8) , wenoCoefs );
-      }
+      compute_weno_coefs( s , wenoCoefs , limiter );
       // Transform ord weno coefficients into 2 GLL points
       for (int ii=0; ii<2; ii++) {
         real tmp = 0;

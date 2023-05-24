@@ -4,8 +4,8 @@
 namespace custom_modules {
 
   template <class MODEL>
-  inline real2d calculate_loss_and_overwrite_lo( core::Coupler coupler_lo ,
-                                                 core::Coupler coupler_hi ,
+  inline real2d calculate_loss_and_overwrite_lo( core::Coupler &coupler_lo ,
+                                                 core::Coupler &coupler_hi ,
                                                  MODEL const &model       ) {
     using yakl::c::parallel_for;
     using yakl::c::SimpleBounds;
@@ -22,6 +22,9 @@ namespace custom_modules {
     auto ny_hi = coupler_hi.get_ny();
     auto nz_hi = coupler_hi.get_nz();
     auto refine_factor = nx_hi / nx_lo;
+    // Get tracer information
+    auto num_tracers = coupler_lo.get_num_tracers();
+    auto tracer_names = coupler_lo.get_tracer_names();
     // Accrue lo state
     auto &dm_lo = coupler_lo.get_data_manager_readwrite();
     core::MultiField<real,4> fields_lo;
@@ -30,14 +33,18 @@ namespace custom_modules {
     fields_lo.add_field( dm_lo.get<real,4>("vvel") );
     fields_lo.add_field( dm_lo.get<real,4>("wvel") );
     fields_lo.add_field( dm_lo.get<real,4>("temp") );
+    for (int tr = 0; tr < num_tracers; tr++) { fields_lo.add_field( dm_lo.get<real,4>(tracer_names[tr]) ); }
     // Accrue hi state
     auto &dm_hi = coupler_hi.get_data_manager_readonly();
     core::MultiField<real const,4> fields_hi;
-    fields_hi.add_field( dm.get<real const,4>("density_dry") );
-    fields_hi.add_field( dm.get<real const,4>("uvel"       ) );
-    fields_hi.add_field( dm.get<real const,4>("vvel"       ) );
-    fields_hi.add_field( dm.get<real const,4>("wvel"       ) );
-    fields_hi.add_field( dm.get<real const,4>("temp"       ) );
+    fields_hi.add_field( dm_hi.get<real const,4>("density_dry") );
+    fields_hi.add_field( dm_hi.get<real const,4>("uvel"       ) );
+    fields_hi.add_field( dm_hi.get<real const,4>("vvel"       ) );
+    fields_hi.add_field( dm_hi.get<real const,4>("wvel"       ) );
+    fields_hi.add_field( dm_hi.get<real const,4>("temp"       ) );
+    for (int tr = 0; tr < num_tracers; tr++) { fields_hi.add_field( dm_hi.get<real const,4>(tracer_names[tr]) ); }
+    // Get number of fields
+    auto num_fields = fields_hi.get_num_fields();
     // Calculate min
     auto dtype = coupler_lo.get_mpi_data_type();
     realHost1d min_loc("min_loc",num_fields);
@@ -50,7 +57,7 @@ namespace custom_modules {
     realHost1d max_glob("max_glob",num_fields);
     MPI_Allreduce( max_loc.data() , max_glob.data() , max_loc.size() , dtype , MPI_MAX , MPI_COMM_WORLD );
     // Calculate range
-    realHost1d range("range",num_fields);
+    realHost1d range_host("range_host",num_fields);
     for (int l=0; l < num_fields; l++) { range_host(l) = std::max( 1.e-20 , max_glob(l)-min_glob(l) ); }
     auto range = range_host.createDeviceCopy();
     // Calculate the coarsened hi-res solution
