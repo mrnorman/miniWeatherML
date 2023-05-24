@@ -1,0 +1,31 @@
+---
+# Simulation time in seconds
+sim_time: 7200.  # 86400
+
+# Number of cells to use in the CRMs
+nx_glob_lo: 100
+ny_glob_lo: 1
+nz_lo     : 20
+
+refine_factor: 4
+
+# Domain size of the CRMs
+xlen: 100000
+ylen: 100000
+zlen: 20000
+
+init_data: supercell
+
+# Output filename
+out_prefix: test
+
+# GCM time step
+dt_gcm: 900
+
+# CRM physics time step
+dt_phys: 0.
+
+# Output frequency in seconds
+out_freq: 100.
+
+

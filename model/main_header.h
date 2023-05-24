@@ -6,6 +6,9 @@
 #include "yaml-cpp/yaml.h"
 #include <stdexcept>
 
+#ifndef MW_ORD
+#define MW_ORD 5
+#endif
 
 using yakl::memHost;
 using yakl::memDevice;
