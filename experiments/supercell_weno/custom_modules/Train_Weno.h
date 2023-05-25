@@ -9,11 +9,13 @@ namespace custom_modules {
     int          num_batches;
     int          data_size;
     int          nranks;
+    int          myrank;
     MPI_Datatype mpi_dtype;
 
     void init( core::Coupler const &coupler , int desired_batch_size ) {
       data_size = coupler.get_nx()*coupler.get_ny()*coupler.get_nz();
       nranks = coupler.get_nranks();
+      myrank = coupler.get_myrank();
       mpi_dtype = coupler.get_mpi_data_type();
       if (coupler.get_myrank() == 0) {
         if (desired_batch_size < 0) desired_batch_size = nranks;
@@ -59,6 +61,8 @@ namespace custom_modules {
         });
         trainer.update_from_ensemble( ensemble );
       }
+      trainer.increment_epoch();
+      if (myrank == 0) std::cout << std::defaultfloat << yakl::intrinsics::sum(loss)/loss.size() << std::endl;
     }
   };
 
