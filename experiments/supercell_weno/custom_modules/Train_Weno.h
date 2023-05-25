@@ -28,6 +28,9 @@ namespace custom_modules {
     void train_mini_batches( TRAINER &trainer , ENSEMBLE &ensemble , real2d const &loss ) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
+      YAKL_SCOPE( batch_size_per_rank , this->batch_size_per_rank );
+      YAKL_SCOPE( data_size           , this->data_size           );
+      YAKL_SCOPE( nranks              , this->nranks              );
       int num_ensembles = ensemble.get_ensemble_size();
       ponni::shuffle_data(loss,1); // Shuffle the batch dimension of the losses
       real2d batch_loss("batch_loss",num_ensembles,batch_size_per_rank);

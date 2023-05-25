@@ -10,8 +10,6 @@ namespace weno {
 
   template <int ord> struct WenoLimiter;
 
-  real constexpr minTV = 1.e-4;
-
 
   template <> struct WenoLimiter<3> {
     real cutoff, idl_1, idl_3;
@@ -27,7 +25,7 @@ namespace weno {
 
     YAKL_INLINE void compute_limited_coefs( real s0, real s1, real s2, SArray<real,1,3> &coefs_3 ) const {
       coefs3_shift2( coefs_3 , s0 , s1 , s2 );
-      real w_1 = minTV;  // We need something non-zero but small here for this to ever work
+      real w_1 = 1.e-4;  // We need something non-zero but small here for this to ever work
       real w_3 = TV( coefs_3 );
       convexify( w_1 , w_3 );
       w_1 = idl_1 / std::max( w_1*w_1 , 1.e-20 );
@@ -63,7 +61,7 @@ namespace weno {
       SArray<real,1,3> coefs_3;
       weno3.compute_limited_coefs( s1 , s2 , s3 , coefs_3 );
       coefs5_shift3( coefs_5 , s0 , s1 , s2 , s3 , s4 );
-      real w_3 = std::max( minTV , TV( coefs_3 ) );
+      real w_3 = std::max( 1.e-4 , TV( coefs_3 ) );
       real w_5 = TV( coefs_5 );
       convexify( w_3 , w_5 );
       w_3 = idl_3 / std::max(w_3*w_3 , 1.e-20);
@@ -104,7 +102,7 @@ namespace weno {
       SArray<real,1,5> coefs_5;
       weno5.compute_limited_coefs( s1 , s2 , s3 , s4 , s5 , coefs_5);
       coefs7( coefs_7 , s0 , s1 , s2 , s3 , s4 , s5 , s6 );
-      real w_5 = std::max( minTV , TV( coefs_5 ) );
+      real w_5 = std::max( 1.e-4 , TV( coefs_5 ) );
       real w_7 = TV( coefs_7 );
       convexify( w_5 , w_7 );
       w_5 = idl_5 / std::max( w_5*w_5 , 1.e-20 );
@@ -149,7 +147,7 @@ namespace weno {
       SArray<real,1,7> coefs_7;
       weno7.compute_limited_coefs( s1 , s2 , s3 , s4 , s5 , s6 , s7 , coefs_7 );
       coefs9( coefs_9 , s0 , s1 , s2 , s3 , s4 , s5 , s6 , s7 , s8 );
-      real w_7 = std::max( minTV , TV( coefs_7 ) );
+      real w_7 = std::max( 1.e-4 , TV( coefs_7 ) );
       real w_9 = TV( coefs_9 );
       convexify( w_7 , w_9 );
       w_7 = idl_7 / (w_7*w_7 + 1.e-20);

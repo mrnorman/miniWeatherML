@@ -26,9 +26,9 @@ int main(int argc, char** argv) {
     YAML::Node config = YAML::LoadFile(inFile);
     if ( !config            ) { endrun("ERROR: Invalid YAML input file"); }
     auto sim_time      = config["sim_time"     ].as<real>();
-    auto nx_glob       = config["nx_glob_lo"   ].as<size_t>();
-    auto ny_glob       = config["ny_glob_lo"   ].as<size_t>();
-    auto nz            = config["nz_lo"        ].as<int>();
+    auto nx_glob_lo    = config["nx_glob_lo"   ].as<size_t>();
+    auto ny_glob_lo    = config["ny_glob_lo"   ].as<size_t>();
+    auto nz_lo         = config["nz_lo"        ].as<int>();
     auto xlen          = config["xlen"         ].as<real>();
     auto ylen          = config["ylen"         ].as<real>();
     auto zlen          = config["zlen"         ].as<real>();
@@ -89,14 +89,19 @@ int main(int argc, char** argv) {
 
     // Coupler state is: (1) dry density;  (2) u-velocity;  (3) v-velocity;  (4) w-velocity;  (5) temperature
     //                   (6+) tracer masses (*not* mixing ratios!)
-    coupler_lo.distribute_mpi_and_allocate_coupled_state(nz, ny_glob, nx_glob, nens);
-    auto ny_glob_hi = ny_glob == 1 ? 1 : ny_glob*refine_factor;
-    coupler_hi.distribute_mpi_and_allocate_coupled_state(
-                                            nz*refine_factor , ny_glob_hi , nx_glob*refine_factor, 1 ,
-                                            coupler_lo.get_nproc_x() , coupler_lo.get_nproc_y() ,
-                                            coupler_lo.get_px()      , coupler_lo.get_py()      ,
-                                            coupler_lo.get_i_beg()   , coupler_lo.get_i_end()   ,
-                                            coupler_lo.get_j_beg()   , coupler_lo.get_j_end()   );
+    coupler_lo.distribute_mpi_and_allocate_coupled_state(nz_lo, ny_glob_lo, nx_glob_lo, nens);
+    int refine_factor_y = ny_glob_lo == 1 ? 1 : refine_factor;
+    int nens_hi = 1;
+    int i_beg_hi = coupler_lo.get_i_beg()*refine_factor  ;
+    int j_beg_hi = coupler_lo.get_j_beg()*refine_factor_y;
+    int i_end_hi = i_beg_hi + coupler_lo.get_nx()*refine_factor   - 1;
+    int j_end_hi = j_beg_hi + coupler_lo.get_ny()*refine_factor_y - 1;
+    coupler_hi.distribute_mpi_and_allocate_coupled_state( nz_lo     *refine_factor                            ,
+                                                          ny_glob_lo*refine_factor_y                          ,
+                                                          nx_glob_lo*refine_factor   , nens_hi                ,
+                                                          coupler_lo.get_nproc_x() , coupler_lo.get_nproc_y() ,
+                                                          coupler_lo.get_px()      , coupler_lo.get_py()      ,
+                                                          i_beg_hi , i_end_hi , j_beg_hi , j_end_hi           );
 
     model.init( coupler_lo.get_nx()*coupler_lo.get_ny()*coupler_lo.get_nz() , nens );
 
