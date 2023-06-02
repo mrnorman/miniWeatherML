@@ -1,6 +1,6 @@
 ---
 # Simulation time in seconds
-sim_time: 7200.  # 86400
+sim_time: 86400.  # 86400
 
 # Number of cells to use in the CRMs
 nx_glob_lo: 100

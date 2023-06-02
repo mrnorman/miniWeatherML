@@ -17,15 +17,10 @@ namespace custom_modules {
   // Since the coupler state is dry density, u-, v-, and w-velocity, and temperature, we need to convert to and from
   // the coupler state.
 
+  template <int ord>
   class Dynamics_Euler_Stratified_WenoFV {
     public:
 
-    // Order of accuracy (numerical convergence for smooth flows) for the dynamical core
-    #ifndef MW_ORD
-      int  static constexpr ord = 5;
-    #else
-      int  static constexpr ord = MW_ORD;
-    #endif
     int  static constexpr hs  = (ord-1)/2; // Number of halo cells ("hs" == "halo size")
 
     int  static constexpr num_state = 5;
@@ -204,7 +199,8 @@ namespace custom_modules {
                                                  custom_modules::weno::WenoLimiter<ord> &limiter,
                                                  MODEL const &model , PARAMS const &model_params ,
                                                  float3d const &model_inputs , float3d const &model_outputs,
-                                                 int k, int j, int i, int iens, int ny, int nx) {
+                                                 int k, int j, int i, int iens, int ny, int nx,
+                                                 float4d weno_parameters = float4d() ) {
         real mx = stencil(0);
         real mn = stencil(0);
         for (int s=1; s < ord; s++) { mx = std::max(mx,stencil(s));    mn = std::min(mn,stencil(s)); }
@@ -214,12 +210,22 @@ namespace custom_modules {
         if constexpr (ord == 3) {
           float weno3_cutoff = std::min(1.f,std::max(0.f,model_outputs(0,ibatch,iens)));
           float weno3_mult   = std::pow( 10.f ,          model_outputs(1,ibatch,iens) );
+          if (iens == 0 && weno_parameters.initialized()) {
+            weno_parameters(0,k,j,i) = weno3_cutoff;
+            weno_parameters(1,k,j,i) = weno3_mult  ;
+          }
           limiter = custom_modules::weno::WenoLimiter<ord>( weno3_cutoff , weno3_mult );
         } else if constexpr (ord == 5) {
           float weno3_cutoff = std::min(1.f,std::max(0.f,model_outputs(0,ibatch,iens)));
           float weno3_mult   = std::pow( 10.f ,          model_outputs(1,ibatch,iens) );
           float weno5_cutoff = std::min(1.f,std::max(0.f,model_outputs(2,ibatch,iens)));
           float weno5_mult   = std::pow( 10.f ,          model_outputs(3,ibatch,iens) );
+          if (iens == 0 && weno_parameters.initialized()) {
+            weno_parameters(0,k,j,i) = weno3_cutoff;
+            weno_parameters(1,k,j,i) = weno3_mult  ;
+            weno_parameters(2,k,j,i) = weno5_cutoff;
+            weno_parameters(3,k,j,i) = weno5_mult  ;
+          }
           limiter = custom_modules::weno::WenoLimiter<ord>( weno3_cutoff , weno3_mult , weno5_cutoff , weno5_mult );
         } else if constexpr (ord == 7) {
           float weno3_cutoff = std::min(1.f,std::max(0.f,model_outputs(0,ibatch,iens)));
@@ -228,6 +234,14 @@ namespace custom_modules {
           float weno5_mult   = std::pow( 10.f ,          model_outputs(3,ibatch,iens) );
           float weno7_cutoff = std::min(1.f,std::max(0.f,model_outputs(4,ibatch,iens)));
           float weno7_mult   = std::pow( 10.f ,          model_outputs(5,ibatch,iens) );
+          if (iens == 0 && weno_parameters.initialized()) {
+            weno_parameters(0,k,j,i) = weno3_cutoff;
+            weno_parameters(1,k,j,i) = weno3_mult  ;
+            weno_parameters(2,k,j,i) = weno5_cutoff;
+            weno_parameters(3,k,j,i) = weno5_mult  ;
+            weno_parameters(4,k,j,i) = weno7_cutoff;
+            weno_parameters(5,k,j,i) = weno7_mult  ;
+          }
           limiter = custom_modules::weno::WenoLimiter<ord>( weno3_cutoff , weno3_mult , weno5_cutoff , weno5_mult ,
                                                             weno7_cutoff , weno7_mult );
         } else if constexpr (ord == 9) {
@@ -239,6 +253,16 @@ namespace custom_modules {
           float weno7_mult   = std::pow( 10.f ,          model_outputs(5,ibatch,iens) );
           float weno9_cutoff = std::min(1.f,std::max(0.f,model_outputs(6,ibatch,iens)));
           float weno9_mult   = std::pow( 10.f ,          model_outputs(7,ibatch,iens) );
+          if (iens == 0 && weno_parameters.initialized()) {
+            weno_parameters(0,k,j,i) = weno3_cutoff;
+            weno_parameters(1,k,j,i) = weno3_mult  ;
+            weno_parameters(2,k,j,i) = weno5_cutoff;
+            weno_parameters(3,k,j,i) = weno5_mult  ;
+            weno_parameters(4,k,j,i) = weno7_cutoff;
+            weno_parameters(5,k,j,i) = weno7_mult  ;
+            weno_parameters(6,k,j,i) = weno9_cutoff;
+            weno_parameters(7,k,j,i) = weno9_mult  ;
+          }
           limiter = custom_modules::weno::WenoLimiter<ord>( weno3_cutoff , weno3_mult , weno5_cutoff , weno5_mult ,
                                                             weno7_cutoff , weno7_mult , weno9_cutoff , weno9_mult );
         }
@@ -317,6 +341,8 @@ namespace custom_modules {
       float3d model_inputs ("model_inputs" ,ord  ,nz*ny*nx,nens);
       float3d model_outputs("model_outputs",ord-1,nz*ny*nx,nens);
 
+      float4d weno_parameters("weno_parameters",ord-1,nz,ny,nx);
+
       YAKL_SCOPE( model_params , model.params );
 
       // Compute samples of state and tracers at cell edges using cell-centered reconstructions at high-order with WENO
@@ -332,7 +358,7 @@ namespace custom_modules {
           SArray<real,1,2>   gll;
           for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s,iens); }
           custom_modules::weno::WenoLimiter<ord> limiter;
-          predict_weno_params(stencil,limiter,model,model_params,model_inputs,model_outputs,k,j,i,iens,nx,ny);
+          predict_weno_params(stencil,limiter,model,model_params,model_inputs,model_outputs,k,j,i,iens,nx,ny,weno_parameters);
           reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
           state_limits_x(l,1,k,j,i  ,iens) = gll(0);
           state_limits_x(l,0,k,j,i+1,iens) = gll(1);
@@ -451,6 +477,13 @@ namespace custom_modules {
           tracers_limits_z(l,0,k+1,j,i,iens) = gll(1) * state_limits_z(idR,0,k+1,j,i,iens);
         }
       });
+
+      std::cout << "WENO Parameters Avg: ";
+      for (int i=0; i < ord-1; i++) {
+        auto slice = weno_parameters.slice<1>(i,0,0,0);
+        std::cout << yakl::intrinsics::sum(slice) / slice.size() << " , ";
+      }
+      std::cout << std::endl;
 
       edge_exchange( coupler , state_limits_x , tracers_limits_x ,
                                state_limits_y , tracers_limits_y ,

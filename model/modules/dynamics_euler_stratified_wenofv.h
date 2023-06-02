@@ -17,15 +17,10 @@ namespace modules {
   // Since the coupler state is dry density, u-, v-, and w-velocity, and temperature, we need to convert to and from
   // the coupler state.
 
+  template <int ord>
   class Dynamics_Euler_Stratified_WenoFV {
     public:
 
-    // Order of accuracy (numerical convergence for smooth flows) for the dynamical core
-    #ifndef MW_ORD
-      int  static constexpr ord = 5;
-    #else
-      int  static constexpr ord = MW_ORD;
-    #endif
     int  static constexpr hs  = (ord-1)/2; // Number of halo cells ("hs" == "halo size")
 
     int  static constexpr num_state = 5;

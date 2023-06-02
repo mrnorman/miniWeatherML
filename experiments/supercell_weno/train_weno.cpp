@@ -35,6 +35,9 @@ int main(int argc, char** argv) {
     auto dtphys_in     = config["dt_phys"      ].as<real>();
     auto refine_factor = config["refine_factor"].as<real>();
 
+    int constexpr dycore_ord_hi = 5;
+    int constexpr dycore_ord_lo = 9;
+
     coupler_lo.set_option<std::string>( "out_prefix" , config["out_prefix"].as<std::string>()+std::string("_lo") );
     coupler_lo.set_option<std::string>( "init_data"  , config["init_data" ].as<std::string>() );
     coupler_lo.set_option<real       >( "out_freq"   , config["out_freq"  ].as<real       >() );
@@ -55,9 +58,9 @@ int main(int argc, char** argv) {
     using ponni::Save_State;
     using ponni::Binop_Add;
     using ponni::Trainer_GD_Adam_FD;
-    int  num_inputs          = MW_ORD;   // Normalize stencil of inputs
-    int  num_outputs         = MW_ORD-1; // WENO parameters outputs
-    int  num_neurons         = MW_ORD;   // Size of hidden layers
+    int  num_inputs          = dycore_ord_lo;   // Normalize stencil of inputs
+    int  num_outputs         = dycore_ord_lo-1;    // WENO parameters outputs
+    int  num_neurons         = 10;   // Size of hidden layers
     int  nens                = 1;
     float relu_negative_slope = 0.3;
     auto model = create_inference_model( Matvec<float>      ( num_inputs,num_neurons,nens     ) ,
@@ -111,16 +114,16 @@ int main(int argc, char** argv) {
 
     // The column nudger nudges the column-average of the model state toward the initial column-averaged state
     // This is primarily for the supercell test case to keep the the instability persistently strong
-    modules::ColumnNudger                             column_nudger_lo;
-    modules::ColumnNudger                             column_nudger_hi;
+    modules::ColumnNudger                                column_nudger_lo;
+    modules::ColumnNudger                                column_nudger_hi;
     // Microphysics performs water phase changess + hydrometeor production, transport, collision, and aggregation
-    modules::Microphysics_Kessler                     micro_lo;
-    modules::Microphysics_Kessler                     micro_hi;
+    modules::Microphysics_Kessler                        micro_lo;
+    modules::Microphysics_Kessler                        micro_hi;
     // They dynamical core "dycore" integrates the Euler equations and performans transport of tracers
-    custom_modules::Dynamics_Euler_Stratified_WenoFV  dycore_lo;
-    modules::Dynamics_Euler_Stratified_WenoFV         dycore_hi;
+    custom_modules::Dynamics_Euler_Stratified_WenoFV<5>  dycore_lo;
+    modules::Dynamics_Euler_Stratified_WenoFV<5>         dycore_hi;
     // The class used to perform mini batch updates from ensemble losses
-    custom_modules::Train_WENO                        train_weno;
+    custom_modules::Train_WENO                           train_weno;
 
     // Run the initialization modules
     micro_lo .init              ( coupler_lo ); // Allocate micro state and register its tracers in the coupler

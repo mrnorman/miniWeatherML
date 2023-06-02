@@ -5,9 +5,17 @@ namespace custom_modules {
 namespace weno{
 
 
-  YAKL_INLINE static void convexify(real & w1, real & w2) {
-    real rtot = 1._fp / std::max( 1.e-20 , w1 + w2 );
+  YAKL_INLINE static void convexify(real &w1, real &w2) {
+    real rtot = 1._fp / std::max( 1.e-20 , w1+w2 );
     w1 *= rtot;   w2 *= rtot;
+  }
+  YAKL_INLINE static void convexify(real &w1, real &w2, real &w3) {
+    real rtot = 1._fp / std::max( 1.e-20 , w1+w2+w3 );
+    w1 *= rtot;   w2 *= rtot;   w3 *= rtot;
+  }
+  YAKL_INLINE static void convexify(real &w1, real &w2, real &w3, real &w4) {
+    real rtot = 1._fp / std::max( 1.e-20 , w1+w2+w3+w4 );
+    w1 *= rtot;   w2 *= rtot;   w3 *= rtot;   w4 *= rtot;
   }
 
 
