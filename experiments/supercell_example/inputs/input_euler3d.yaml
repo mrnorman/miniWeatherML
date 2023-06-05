@@ -25,6 +25,6 @@ dt_gcm: 900
 dt_phys: 0.
 
 # Output frequency in seconds
-out_freq: 1.
+out_freq: 0.
 
 
