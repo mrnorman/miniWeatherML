@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
     micro .init                 ( coupler ); // Allocate micro state and register its tracers in the coupler
     dycore.init                 ( coupler ); // Dycore should initialize its own state here
     column_nudger.set_column    ( coupler ); // Set the column before perturbing
-    modules::perturb_temperature( coupler ); // Randomly perturb bottom layers of temperature to initiate convection
+    // modules::perturb_temperature( coupler ); // Randomly perturb bottom layers of temperature to initiate convection
 
     real etime = 0;   // Elapsed time
 
@@ -71,9 +71,9 @@ int main(int argc, char** argv) {
 
       // Run the runtime modules
       dycore.time_step             ( coupler , dtphys );  // Move the flow forward according to the Euler equations
-      micro .time_step             ( coupler , dtphys );  // Perform phase changes for water + precipitation / falling
-      modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
-      column_nudger.nudge_to_column( coupler , dtphys );  // Nudge slightly back toward unstable profile
+      // micro .time_step             ( coupler , dtphys );  // Perform phase changes for water + precipitation / falling
+      // modules::sponge_layer        ( coupler , dtphys );  // Damp spurious waves to the horiz. mean at model top
+      // column_nudger.nudge_to_column( coupler , dtphys );  // Nudge slightly back toward unstable profile
                                                           // so that supercell persists for all time
 
       etime += dtphys; // Advance elapsed time
