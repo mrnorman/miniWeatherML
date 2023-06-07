@@ -1432,17 +1432,12 @@ namespace modules {
         coupler.add_option<int>("bc_z",BC_WALL    );
         coupler.add_option<real>("latitude",0);
         // Define quadrature weights and points for 3-point rules
-        const int nqpoints = 3;
+        const int nqpoints = 9;
         SArray<real,1,nqpoints> qpoints;
         SArray<real,1,nqpoints> qweights;
 
-        qpoints(0) = 0.112701665379258311482073460022;
-        qpoints(1) = 0.500000000000000000000000000000;
-        qpoints(2) = 0.887298334620741688517926539980;
-
-        qweights(0) = 0.277777777777777777777777777779;
-        qweights(1) = 0.444444444444444444444444444444;
-        qweights(2) = 0.277777777777777777777777777779;
+        TransformMatrices::get_gll_points ( qpoints  );
+        TransformMatrices::get_gll_weights( qweights );
 
         size_t i_beg = coupler.get_i_beg();
         size_t j_beg = coupler.get_j_beg();
@@ -1493,7 +1488,7 @@ namespace modules {
                 real v = 0;
                 real w = 0;
                 real rho_v = 0;
-                real theta = ht + sample_ellipse_cosine(2._fp , x,y,z , xlen/2,ylen/2,2000. , 2000.,2000.,2000.);
+                real theta = ht; // + sample_ellipse_cosine(2._fp , x,y,z , xlen/2,ylen/2,2000. , 2000.,2000.,2000.);
 
                 if (sim2d) v = 0;
 

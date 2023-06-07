@@ -1,6 +1,6 @@
 
 #include "coupler.h"
-#include "dynamics_euler_stratified_wenofv_subtract_exact.h"
+#include "dynamics_euler_stratified_wenofv_balance_with_gravity.h"
 #include "microphysics_kessler.h"
 #include "sponge_layer.h"
 #include "perturb_temperature.h"
