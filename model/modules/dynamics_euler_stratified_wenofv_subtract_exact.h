@@ -50,8 +50,6 @@ namespace modules {
     // Hydrostatic background profiles for density and potential temperature as cell averages and cell edge values
     real2d      hy_dens_cells;
     real2d      hy_pressure_cells;
-    real2d      hy_dens_edges;
-    real2d      hy_pressure_edges;
     real        etime;         // Elapsed time
     real        out_freq;      // Frequency out file output
     int         num_out;       // Number of outputs produced thus far
@@ -238,8 +236,6 @@ namespace modules {
       // A slew of things to bring from class scope into local scope so that lambdas copy them by value to the GPU
       YAKL_SCOPE( hy_dens_cells     , this->hy_dens_cells     );
       YAKL_SCOPE( hy_pressure_cells , this->hy_pressure_cells );
-      YAKL_SCOPE( hy_dens_edges     , this->hy_dens_edges     );
-      YAKL_SCOPE( hy_pressure_edges , this->hy_pressure_edges );
       YAKL_SCOPE( tracer_positive   , this->tracer_positive   );
       YAKL_SCOPE( coefs_to_gll      , this->coefs_to_gll      );
 
@@ -620,6 +616,10 @@ namespace modules {
       auto bc_x        = coupler.get_option<int>("bc_x");
       auto bc_y        = coupler.get_option<int>("bc_y");
       auto bc_z        = coupler.get_option<int>("bc_z");
+      auto gamma       = coupler.get_option<real>("gamma_d");
+      auto C0          = coupler.get_option<real>("C0");
+      auto grav        = coupler.get_option<real>("grav");
+      auto dz          = coupler.get_dz();
 
       int npack = num_state + num_tracers + 1;
 
@@ -810,7 +810,8 @@ namespace modules {
       } else if (bc_z == BC_WALL || bc_z == BC_OPEN) {
         parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(hs,ny,nx,nens) ,
                                           YAKL_LAMBDA (int kk, int j, int i, int iens) {
-          for (int l=0; l < num_state; l++) {
+          // Exclude density (idR == 0) because that's calculated lower down
+          for (int l=1; l < num_state; l++) {
             if (l == idW && bc_z == BC_WALL) {
               state(l,      kk,hs+j,hs+i,iens) = 0;
               state(l,hs+nz+kk,hs+j,hs+i,iens) = 0;
@@ -825,6 +826,26 @@ namespace modules {
           }
           pressure(      kk,hs+j,hs+i,iens) = pressure(hs+0   ,hs+j,hs+i,iens);
           pressure(hs+nz+kk,hs+j,hs+i,iens) = pressure(hs+nz-1,hs+j,hs+i,iens);
+          {
+            int  k0       = hs;
+            int  k        = k0-1-kk;
+            real rho0     = state(idR,k0,hs+j,hs+i,iens);
+            real theta0   = state(idT,k0,hs+j,hs+i,iens);
+            real rho0_gm1 = std::pow(rho0  ,gamma-1);
+            real theta0_g = std::pow(theta0,gamma  );
+            state(idR,k,hs+j,hs+i,iens) = std::pow( rho0_gm1 + grav*(gamma-1)*dz*(kk+1)/(gamma*C0*theta0_g) ,
+                                                    1._fp/(gamma-1) );
+          }
+          {
+            int  k0       = hs+nz-1;
+            int  k        = k0+1+kk;
+            real rho0     = state(idR,k0,hs+j,hs+i,iens);
+            real theta0   = state(idT,k0,hs+j,hs+i,iens);
+            real rho0_gm1 = std::pow(rho0  ,gamma-1);
+            real theta0_g = std::pow(theta0,gamma  );
+            state(idR,k,hs+j,hs+i,iens) = std::pow( rho0_gm1 - grav*(gamma-1)*dz*(kk+1)/(gamma*C0*theta0_g) ,
+                                                    1._fp/(gamma-1) );
+          }
         });
       }
       if (bc_x == BC_WALL || bc_x == BC_OPEN) {
@@ -1279,8 +1300,6 @@ namespace modules {
       YAKL_SCOPE( init_data_int     , this->init_data_int     );
       YAKL_SCOPE( hy_dens_cells     , this->hy_dens_cells     );
       YAKL_SCOPE( hy_pressure_cells , this->hy_pressure_cells );
-      YAKL_SCOPE( hy_dens_edges     , this->hy_dens_edges     );
-      YAKL_SCOPE( hy_pressure_edges , this->hy_pressure_edges );
       YAKL_SCOPE( idWV              , this->idWV              );
 
       // Set class data from # grid points, grid spacing, domain sizes, whether it's 2-D, and physical constants
@@ -1402,8 +1421,6 @@ namespace modules {
       // Allocate arrays for hydrostatic background states
       hy_dens_cells     = real2d("hy_dens_cells"    ,nz  ,nens);
       hy_pressure_cells = real2d("hy_pressure_cells",nz  ,nens);
-      hy_dens_edges     = real2d("hy_dens_edges"    ,nz+1,nens);
-      hy_pressure_edges = real2d("hy_pressure_edges",nz+1,nens);
 
       if (init_data_int == DATA_SUPERCELL) {
 
@@ -1445,17 +1462,6 @@ namespace modules {
           }
         });
 
-        // Compute hydrostatic background cell edge values
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz+1,nens) , YAKL_LAMBDA (int k, int iens) {
-          real z = k*dz;
-          real hr, ht;
-
-          if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
-
-          hy_dens_edges    (k,iens) = hr   ;
-          hy_pressure_edges(k,iens) = C0*std::pow(hr*ht,gamma);
-        });
-
         // Use quadrature to initialize state and tracer data
         parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
           for (int l=0; l < num_state  ; l++) { state  (l,hs+k,hs+j,hs+i,iens) = 0.; }
@@ -1476,7 +1482,7 @@ namespace modules {
                 real v = 0;
                 real w = 0;
                 real rho_v = 0;
-                real theta = ht; // + sample_ellipse_cosine(2._fp , x,y,z , xlen/2,ylen/2,2000. , 2000.,2000.,2000.);
+                real theta = ht + sample_ellipse_cosine(2._fp , x,y,z , xlen/2,ylen/2,2000. , 2000.,2000.,2000.);
 
                 if (sim2d) v = 0;
 
@@ -1551,22 +1557,9 @@ namespace modules {
               hy_pressure_cells(k,iens) += C0*std::pow(hr*ht,gamma) * qweights(kk);
             }
           });
-
-          // Compute hydrostatic background cell edge values
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz+1,nens) , YAKL_LAMBDA (int k, int iens) {
-            real z = k*dz;
-            real hr, ht;
-
-            hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
-
-            hy_dens_edges    (k,iens) = hr                      ;
-            hy_pressure_edges(k,iens) = C0*std::pow(hr*ht,gamma);
-          });
         } else {
           hy_dens_cells = 1.15;
-          hy_dens_edges = 1.15;
           hy_pressure_cells = C0*std::pow(1.15*300,gamma);
-          hy_pressure_edges = C0*std::pow(1.15*300,gamma);
         }
 
         // Use quadrature to initialize state and tracer data
@@ -1659,15 +1652,10 @@ namespace modules {
             real hr, ht;
 
             hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
-
-            hy_dens_edges    (k,iens) = hr                      ;
-            hy_pressure_edges(k,iens) = C0*std::pow(hr*ht,gamma);
           });
         } else {
           hy_dens_cells = 1.15;
-          hy_dens_edges = 1.15;
           hy_pressure_cells = C0*std::pow(1.15*300,gamma);
-          hy_pressure_edges = C0*std::pow(1.15*300,gamma);
         }
 
         // Use quadrature to initialize state and tracer data
@@ -1759,8 +1747,6 @@ namespace modules {
 
       YAKL_SCOPE( hy_dens_cells     , this->hy_dens_cells     );
       YAKL_SCOPE( hy_pressure_cells , this->hy_pressure_cells );
-      YAKL_SCOPE( hy_dens_edges     , this->hy_dens_edges     );
-      YAKL_SCOPE( hy_pressure_edges , this->hy_pressure_edges );
       YAKL_SCOPE( idWV              , this->idWV              );
       YAKL_SCOPE( gll_pts           , this->gll_pts           );
       YAKL_SCOPE( gll_wts           , this->gll_wts           );
@@ -1853,18 +1839,6 @@ namespace modules {
         hyDensGLL     (k,kk) = dens;
         hyDensThetaGLL(k,kk) = dens_theta;
         hyDensVapGLL  (k,kk) = dens_vap;
-        if (kk == 0) {
-          for (int iens=0; iens < nens; iens++) {
-            hy_dens_edges    (k,iens) = dens;
-            hy_pressure_edges(k,iens) = press;
-          }
-        }
-        if (k == nz-1 && kk == ord-1) {
-          for (int iens=0; iens < nens; iens++) {
-            hy_dens_edges    (k+1,iens) = dens;
-            hy_pressure_edges(k+1,iens) = press;
-          }
-        }
       });
 
       // Compute hydrostatic background state over cells
@@ -1882,7 +1856,6 @@ namespace modules {
         real press      = press_tot;
         real dens       = dens_tot;
         real dens_vap   = dens_vap_tot;
-        real dens_theta = dens_theta_tot;
         real dens_dry   = dens - dens_vap;
         real R          = dens_dry / dens * R_d + dens_vap / dens * R_v;
         real temp       = press / (dens * R);
