@@ -47,10 +47,6 @@ namespace modules {
     int  static constexpr BC_OPEN     = 1;
     int  static constexpr BC_WALL     = 2;
 
-    real2d      pressure_int;
-    real3d      pressure_limits;
-    real2d      hy_dens_cells;
-    real2d      hy_theta_cells;
     real2d      pseudo_gravity;
     real        etime;             // Elapsed time
     real        out_freq;          // Frequency out file output
@@ -1358,8 +1354,8 @@ namespace modules {
         size_t j_beg = coupler.get_j_beg();
 
         // Compute hydrostatic density and density*theta profiles
-        hy_dens_cells  = real2d("hy_dens_cells" ,nz+2*hs,nens);
-        hy_theta_cells = real2d("hy_theta_cells",nz+2*hs,nens);
+        real2d hy_dens_cells ("hy_dens_cells" ,nz+2*hs,nens);
+        real2d hy_theta_cells("hy_theta_cells",nz+2*hs,nens);
         parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nens) , YAKL_LAMBDA (int k, int iens) {
           hy_dens_cells (hs+k,iens) = 0.;
           hy_theta_cells(hs+k,iens) = 0.;
@@ -1399,7 +1395,7 @@ namespace modules {
         });
 
         // Compute pseudo-gravity
-        pressure_limits = real3d("pressure_limits",2,nz+1,nens);
+        real3d pressure_limits("pressure_limits",2,nz+1,nens);
         weno::WenoLimiter<ord> limiter;
         parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nens) , YAKL_LAMBDA (int k, int iens) {
           SArray<real,1,2> r_gll;
@@ -1414,7 +1410,7 @@ namespace modules {
           if (k == nz-1) pressure_limits(1,k+1,iens) = pressure_limits(0,k+1,iens);
           if (k == 0   ) pressure_limits(0,k  ,iens) = pressure_limits(1,k  ,iens);
         });
-        pressure_int = real2d("pressure_int",nz+1,nens);
+        real2d pressure_int("pressure_int",nz+1,nens);
         parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz+1,nens) , YAKL_LAMBDA (int k, int iens) {
           pressure_int(k,iens) = 0.5_fp * ( pressure_limits(0,k,iens) + pressure_limits(1,k,iens) );
         });

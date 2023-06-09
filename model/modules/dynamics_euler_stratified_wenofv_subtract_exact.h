@@ -247,15 +247,12 @@ namespace modules {
 
       // Compute pressure perturbation, density perturbation, and divide density from all other quantities before interpolation
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-        pressure (hs+k,hs+j,hs+i,iens) = C0 * std::pow( state(idT,hs+k,hs+j,hs+i,iens) , gamma ) - hy_pressure_cells(k,iens);
+        pressure (hs+k,hs+j,hs+i,iens) = C0*std::pow(state(idT,hs+k,hs+j,hs+i,iens),gamma) - hy_pressure_cells(k,iens);
         state(idU,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens);
         state(idV,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens);
         state(idW,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens);
         state(idT,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens);
-        for (int tr=0; tr < num_tracers; tr++) {
-          tracers(tr,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens);
-        }
-        state(idR,hs+k,hs+j,hs+i,iens) -= hy_dens_cells(k,iens);
+        for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens); }
       });
 
       halo_exchange( coupler , state , tracers , pressure );
@@ -290,8 +287,6 @@ namespace modules {
           state_limits_x(l,0,k,j,i+1,iens) = gll(1);
         }
         // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-        state_limits_x(idR,1,k,j,i  ,iens) += hy_dens_cells(k,iens);
-        state_limits_x(idR,0,k,j,i+1,iens) += hy_dens_cells(k,iens);
         state_limits_x(idU,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
         state_limits_x(idU,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
         state_limits_x(idV,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
@@ -337,8 +332,6 @@ namespace modules {
             state_limits_y(l,0,k,j+1,i,iens) = gll(1);
           }
           // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-          state_limits_y(idR,1,k,j  ,i,iens) += hy_dens_cells(k,iens);
-          state_limits_y(idR,0,k,j+1,i,iens) += hy_dens_cells(k,iens);
           state_limits_y(idU,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
           state_limits_y(idU,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
           state_limits_y(idV,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
@@ -394,8 +387,6 @@ namespace modules {
           state_limits_z(l,0,k+1,j,i,iens) = gll(1);
         }
         // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-        state_limits_z(idR,1,k  ,j,i,iens) += hy_dens_edges(k  ,iens);
-        state_limits_z(idR,0,k+1,j,i,iens) += hy_dens_edges(k+1,iens);
         state_limits_z(idU,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
         state_limits_z(idU,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
         state_limits_z(idV,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
@@ -514,14 +505,11 @@ namespace modules {
 
         // Multiply density back to other variables
         if (i < nx && j < ny && k < nz) {
-          state(idR,hs+k,hs+j,hs+i,iens) += hy_dens_cells(k,iens);
           state(idU,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
           state(idV,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
           state(idW,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
           state(idT,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
-          for (int tr=0; tr < num_tracers; tr++) {
-            tracers(tr,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
-          }
+          for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens); }
         }
       });
 
