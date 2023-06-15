@@ -26,7 +26,8 @@ namespace modules {
     #else
       int  static constexpr ord = MW_ORD;
     #endif
-    int  static constexpr hs  = (ord-1)/2; // Number of halo cells ("hs" == "halo size")
+    // This is one value higher than normal to facilitate removing the Riemann solver phase
+    int  static constexpr hs  = (ord+1)/2; // Number of halo cells ("hs" == "halo size")
 
     int  static constexpr num_state = 5;
 
@@ -70,7 +71,7 @@ namespace modules {
       auto dy = coupler.get_dy();
       auto dz = coupler.get_dz();
       real constexpr maxwave = 350 + 80;
-      real cfl = 0.6;
+      real cfl = 0.3;
       return cfl * std::min( std::min( dx , dy ) , dz ) / maxwave;
     }
 
@@ -220,8 +221,11 @@ namespace modules {
       auto C0                      = coupler.get_option<real>("C0"     );
       auto gamma                   = coupler.get_option<real>("gamma_d");
       auto grav                    = coupler.get_option<real>("grav"   );
-      auto enable_gravity = coupler.get_option<bool>("enable_gravity",true);
+      auto enable_gravity          = coupler.get_option<bool>("enable_gravity",true);
       auto num_tracers             = coupler.get_num_tracers();
+      auto bc_x                    = coupler.get_option<int>("bc_x");
+      auto bc_y                    = coupler.get_option<int>("bc_y");
+      auto bc_z                    = coupler.get_option<int>("bc_z");
 
       // The store a single values flux at cell edges
       auto &dm = coupler.get_data_manager_readwrite();
@@ -253,289 +257,206 @@ namespace modules {
 
       halo_exchange( coupler , state , tracers , pressure );
 
-      // These arrays store high-order-accurate samples of the state and tracers at cell edges after cell-centered recon
-      real6d state_limits_x   ("state_limits_x"   ,num_state  ,2,nz  ,ny  ,nx+1,nens);
-      real6d state_limits_y   ("state_limits_y"   ,num_state  ,2,nz  ,ny+1,nx  ,nens);
-      real6d state_limits_z   ("state_limits_z"   ,num_state  ,2,nz+1,ny  ,nx  ,nens);
-      real6d tracers_limits_x ("tracers_limits_x" ,num_tracers,2,nz  ,ny  ,nx+1,nens);
-      real6d tracers_limits_y ("tracers_limits_y" ,num_tracers,2,nz  ,ny+1,nx  ,nens);
-      real6d tracers_limits_z ("tracers_limits_z" ,num_tracers,2,nz+1,ny  ,nx  ,nens);
-      real5d pressure_limits_x("pressure_limits_x"            ,2,nz  ,ny  ,nx+1,nens);
-      real5d pressure_limits_y("pressure_limits_y"            ,2,nz  ,ny+1,nx  ,nens);
-      real5d pressure_limits_z("pressure_limits_z"            ,2,nz+1,ny  ,nx  ,nens);
-
       weno::WenoLimiter<ord> limiter;
 
       // Compute samples of state and tracers at cell edges using cell-centered reconstructions at high-order with WENO
       // At the end of this, we will have two samples per cell edge in each dimension, one from each adjacent cell.
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-        ////////////////////////////////////////////////////////
-        // X-direction
-        ////////////////////////////////////////////////////////
-        // State
-        for (int l=0; l < num_state; l++) {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,hs+j,i+s,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
-          state_limits_x(l,1,k,j,i  ,iens) = gll(0);
-          state_limits_x(l,0,k,j,i+1,iens) = gll(1);
-        }
-        // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-        state_limits_x(idU,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
-        state_limits_x(idU,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
-        state_limits_x(idV,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
-        state_limits_x(idV,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
-        state_limits_x(idW,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
-        state_limits_x(idW,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
-        state_limits_x(idT,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
-        state_limits_x(idT,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
-        // Tracers
-        for (int l=0; l < num_tracers; l++) {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,hs+j,i+s,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
-          tracers_limits_x(l,1,k,j,i  ,iens) = gll(0) * state_limits_x(idR,1,k,j,i  ,iens);
-          tracers_limits_x(l,0,k,j,i+1,iens) = gll(1) * state_limits_x(idR,0,k,j,i+1,iens);
-        }
-        // Pressure
-        {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,hs+j,i+s,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
-          pressure_limits_x(1,k,j,i  ,iens) = gll(0);
-          pressure_limits_x(0,k,j,i+1,iens) = gll(1);
-        }
-
-        ////////////////////////////////////////////////////////
-        // Y-direction
-        ////////////////////////////////////////////////////////
-        // If we're simulating in only 2-D, then do not compute y-direction tendencies
-        if (!sim2d) {
-          // State
-          for (int l=0; l < num_state; l++) {
-            // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-            SArray<real,1,ord> stencil;
-            SArray<real,1,2>   gll;
-            for (int s=0; s < ord; s++) { stencil(s) = state(l,hs+k,j+s,hs+i,iens); }
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
-            state_limits_y(l,1,k,j  ,i,iens) = gll(0);
-            state_limits_y(l,0,k,j+1,i,iens) = gll(1);
-          }
-          // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-          state_limits_y(idU,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
-          state_limits_y(idU,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
-          state_limits_y(idV,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
-          state_limits_y(idV,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
-          state_limits_y(idW,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
-          state_limits_y(idW,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
-          state_limits_y(idT,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
-          state_limits_y(idT,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
-          // Tracers
-          for (int l=0; l < num_tracers; l++) {
-            // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-            SArray<real,1,ord> stencil;
-            SArray<real,1,2>   gll;
-            for (int s=0; s < ord; s++) { stencil(s) = tracers(l,hs+k,j+s,hs+i,iens); }
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
-            tracers_limits_y(l,1,k,j  ,i,iens) = gll(0) * state_limits_y(idR,1,k,j  ,i,iens);
-            tracers_limits_y(l,0,k,j+1,i,iens) = gll(1) * state_limits_y(idR,0,k,j+1,i,iens);
-          }
-          // Pressure
-          {
-            // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-            SArray<real,1,ord> stencil;
-            SArray<real,1,2>   gll;
-            for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,j+s,hs+i,iens); }
-            reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
-            pressure_limits_y(1,k,j  ,i,iens) = gll(0);
-            pressure_limits_y(0,k,j+1,i,iens) = gll(1);
-          }
-        } else {
-          for (int l=0; l < num_state; l++) {
-            state_limits_y(l,1,k,j  ,i,iens) = 0;
-            state_limits_y(l,0,k,j+1,i,iens) = 0;
-          }
-          for (int l=0; l < num_tracers; l++) {
-            tracers_limits_y(l,1,k,j  ,i,iens) = 0;
-            tracers_limits_y(l,0,k,j+1,i,iens) = 0;
-          }
-          pressure_limits_y(1,k,j  ,i,iens) = 0;
-          pressure_limits_y(0,k,j+1,i,iens) = 0;
-        }
-
-        ////////////////////////////////////////////////////////
-        // Z-direction
-        ////////////////////////////////////////////////////////
-        // State
-        for (int l=0; l < num_state; l++) {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) { stencil(s) = state(l,k+s,hs+j,hs+i,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
-          state_limits_z(l,1,k  ,j,i,iens) = gll(0);
-          state_limits_z(l,0,k+1,j,i,iens) = gll(1);
-        }
-        // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-        state_limits_z(idU,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
-        state_limits_z(idU,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
-        state_limits_z(idV,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
-        state_limits_z(idV,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
-        state_limits_z(idW,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
-        state_limits_z(idW,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
-        state_limits_z(idT,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
-        state_limits_z(idT,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
-        // Tracers
-        for (int l=0; l < num_tracers; l++) {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) { stencil(s) = tracers(l,k+s,hs+j,hs+i,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
-          tracers_limits_z(l,1,k  ,j,i,iens) = gll(0) * state_limits_z(idR,1,k  ,j,i,iens);
-          tracers_limits_z(l,0,k+1,j,i,iens) = gll(1) * state_limits_z(idR,0,k+1,j,i,iens);
-        }
-        // Pressure
-        {
-          // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
-          SArray<real,1,ord> stencil;
-          SArray<real,1,2>   gll;
-          for (int s=0; s < ord; s++) { stencil(s) = pressure(k+s,hs+j,hs+i,iens); }
-          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
-          pressure_limits_z(1,k  ,j,i,iens) = gll(0);
-          pressure_limits_z(0,k+1,j,i,iens) = gll(1);
-        }
-      });
-
-      edge_exchange( coupler , state_limits_x , tracers_limits_x , pressure_limits_x ,
-                               state_limits_y , tracers_limits_y , pressure_limits_y ,
-                               state_limits_z , tracers_limits_z , pressure_limits_z );
-
-      // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        real constexpr cs = 350;
+        ////////////////////////////////////////////////////////
         // X-direction
+        ////////////////////////////////////////////////////////
         if (j < ny && k < nz) {
-          // Acoustically upwind mass flux and pressure
-          real ru_L = state_limits_x(idU,0,k,j,i,iens);   real ru_R = state_limits_x(idU,1,k,j,i,iens);
-          real rt_L = state_limits_x(idT,0,k,j,i,iens);   real rt_R = state_limits_x(idT,1,k,j,i,iens);
-          real p_L  = pressure_limits_x (0,k,j,i,iens);   real p_R  = pressure_limits_x (1,k,j,i,iens);
-          real constexpr cs = 350;
-          real w1 = 0.5_fp * (p_R-cs*ru_R);
-          real w2 = 0.5_fp * (p_L+cs*ru_L);
-          real p_upw  = w1 + w2;
-          real ru_upw = (w2-w1)/cs;
-          // Advectively upwind everything else
-          int ind = ru_L+ru_R > 0 ? 0 : 1;
-          real r_upw = state_limits_x(idR,ind,k,j,i,iens);
-          state_flux_x(idR,k,j,i,iens) = ru_upw;
-          state_flux_x(idU,k,j,i,iens) = ru_upw*state_limits_x(idU,ind,k,j,i,iens)/r_upw + p_upw;
-          state_flux_x(idV,k,j,i,iens) = ru_upw*state_limits_x(idV,ind,k,j,i,iens)/r_upw;
-          state_flux_x(idW,k,j,i,iens) = ru_upw*state_limits_x(idW,ind,k,j,i,iens)/r_upw;
-          state_flux_x(idT,k,j,i,iens) = ru_upw*state_limits_x(idT,ind,k,j,i,iens)/r_upw;
+          SArray<real,1,ord> stencil;
+          // ACOUSTIC
+          real ru, pp;
+          {
+            // rho*u (left estimate)
+            int i_upw = 0;
+            for (int s=0; s < ord; s++) { stencil(s) = state(idR,hs+k,hs+j,i+i_upw+s,iens)*state(idU,hs+k,hs+j,i+i_upw+s,iens); }
+            real ru_L = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+            // rho*u (right estimate)
+            i_upw = 1;
+            for (int s=0; s < ord; s++) { stencil(s) = state(idR,hs+k,hs+j,i+i_upw+s,iens)*state(idU,hs+k,hs+j,i+i_upw+s,iens); }
+            real ru_R = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+            // pressure perturbation (left estimate)
+            i_upw = 0;
+            for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,hs+j,i+i_upw+s,iens); }
+            real pp_L = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+            // pressure perturbation (right estimate)
+            i_upw = 1;
+            for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,hs+j,i+i_upw+s,iens); }
+            real pp_R = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+            // Characteristics & upwind values
+            real w1 = 0.5_fp * (pp_R-cs*ru_R);
+            real w2 = 0.5_fp * (pp_L+cs*ru_L);
+            pp = w1+w2;
+            ru = (w2-w1)/cs;
+            state_flux_x(idR,k,j,i,iens) = ru;
+          }
+          // ADVECTIVE
+          int i_upw = ru > 0 ? 0 : 1;
+          // u-velocity
+          for (int s=0; s < ord; s++) { stencil(s) = state(idU,hs+k,hs+j,i+i_upw+s,iens); }
+          state_flux_x(idU,k,j,i,iens) = ru * reconstruct(stencil,coefs_to_gll,limiter,1-i_upw) + pp;
+          // v-velocity
+          for (int s=0; s < ord; s++) { stencil(s) = state(idV,hs+k,hs+j,i+i_upw+s,iens); }
+          state_flux_x(idV,k,j,i,iens) = ru * reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+          // w-velocity
+          for (int s=0; s < ord; s++) { stencil(s) = state(idW,hs+k,hs+j,i+i_upw+s,iens); }
+          state_flux_x(idW,k,j,i,iens) = ru * reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+          // theta
+          for (int s=0; s < ord; s++) { stencil(s) = state(idT,hs+k,hs+j,i+i_upw+s,iens); }
+          state_flux_x(idT,k,j,i,iens) = ru * reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+          // tracers
           for (int tr=0; tr < num_tracers; tr++) {
-            tracers_flux_x(tr,k,j,i,iens) = ru_upw*tracers_limits_x(tr,ind,k,j,i,iens)/r_upw;
+            for (int s=0; s < ord; s++) { stencil(s) = tracers(tr,hs+k,hs+j,i+i_upw+s,iens); }
+            tracers_flux_x(tr,k,j,i,iens) = ru * reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
           }
         }
 
+        ////////////////////////////////////////////////////////
         // Y-direction
-        // If we are simulating in 2-D, then do not do Riemann in the y-direction
-        if ( (! sim2d) && i < nx && k < nz) {
-          // Acoustically upwind mass flux and pressure
-          real rv_L = state_limits_y(idV,0,k,j,i,iens);   real rv_R = state_limits_y(idV,1,k,j,i,iens);
-          real rt_L = state_limits_y(idT,0,k,j,i,iens);   real rt_R = state_limits_y(idT,1,k,j,i,iens);
-          real p_L  = pressure_limits_y (0,k,j,i,iens);   real p_R  = pressure_limits_y (1,k,j,i,iens);
-          real constexpr cs = 350;
-          real w1 = 0.5_fp * (p_R-cs*rv_R);
-          real w2 = 0.5_fp * (p_L+cs*rv_L);
-          real p_upw  = w1 + w2;
-          real rv_upw = (w2-w1)/cs;
-          // Advectively upwind everything else
-          int ind = rv_L+rv_R > 0 ? 0 : 1;
-          real r_upw = state_limits_y(idR,ind,k,j,i,iens);
-          state_flux_y(idR,k,j,i,iens) = rv_upw;
-          state_flux_y(idU,k,j,i,iens) = rv_upw*state_limits_y(idU,ind,k,j,i,iens)/r_upw;
-          state_flux_y(idV,k,j,i,iens) = rv_upw*state_limits_y(idV,ind,k,j,i,iens)/r_upw + p_upw;
-          state_flux_y(idW,k,j,i,iens) = rv_upw*state_limits_y(idW,ind,k,j,i,iens)/r_upw;
-          state_flux_y(idT,k,j,i,iens) = rv_upw*state_limits_y(idT,ind,k,j,i,iens)/r_upw;
-          for (int tr=0; tr < num_tracers; tr++) {
-            tracers_flux_y(tr,k,j,i,iens) = rv_upw*tracers_limits_y(tr,ind,k,j,i,iens)/r_upw;
+        ////////////////////////////////////////////////////////
+        if (i < nx && k < nz) {
+          if (! sim2d) {
+            SArray<real,1,ord> stencil;
+            // ACOUSTIC
+            real rv, pp;
+            {
+              // rho*v (left estimate)
+              int j_upw = 0;
+              for (int s=0; s < ord; s++) { stencil(s) = state(idR,hs+k,j+j_upw+s,hs+i,iens)*state(idV,hs+k,j+j_upw+s,hs+i,iens); }
+              real rv_L = reconstruct(stencil,coefs_to_gll,limiter,1-j_upw);
+              // rho*v (right estimate)
+              j_upw = 1;
+              for (int s=0; s < ord; s++) { stencil(s) = state(idR,hs+k,j+j_upw+s,hs+i,iens)*state(idV,hs+k,j+j_upw+s,hs+i,iens); }
+              real rv_R = reconstruct(stencil,coefs_to_gll,limiter,1-j_upw);
+              // pressure perturbation (left estimate)
+              j_upw = 0;
+              for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,j+j_upw+s,hs+i,iens); }
+              real pp_L = reconstruct(stencil,coefs_to_gll,limiter,1-j_upw);
+              // pressure perturbation (right estimate)
+              j_upw = 1;
+              for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,j+j_upw+s,hs+i,iens); }
+              real pp_R = reconstruct(stencil,coefs_to_gll,limiter,1-j_upw);
+              // Characteristics & upwind values
+              real w1 = 0.5_fp * (pp_R-cs*rv_R);
+              real w2 = 0.5_fp * (pp_L+cs*rv_L);
+              pp = w1+w2;
+              rv = (w2-w1)/cs;
+              state_flux_y(idR,k,j,i,iens) = rv;
+            }
+            // ADVECTIVE
+            int j_upw = rv > 0 ? 0 : 1;
+            // u-velocity
+            for (int s=0; s < ord; s++) { stencil(s) = state(idU,hs+k,j+j_upw+s,hs+i,iens); }
+            state_flux_y(idU,k,j,i,iens) = rv * reconstruct(stencil,coefs_to_gll,limiter,1-j_upw);
+            // v-velocity
+            for (int s=0; s < ord; s++) { stencil(s) = state(idV,hs+k,j+j_upw+s,hs+i,iens); }
+            state_flux_y(idV,k,j,i,iens) = rv * reconstruct(stencil,coefs_to_gll,limiter,1-j_upw) + pp;
+            // w-velocity
+            for (int s=0; s < ord; s++) { stencil(s) = state(idW,hs+k,j+j_upw+s,hs+i,iens); }
+            state_flux_y(idW,k,j,i,iens) = rv * reconstruct(stencil,coefs_to_gll,limiter,1-j_upw);
+            // theta
+            for (int s=0; s < ord; s++) { stencil(s) = state(idT,hs+k,j+j_upw+s,hs+i,iens); }
+            state_flux_y(idT,k,j,i,iens) = rv * reconstruct(stencil,coefs_to_gll,limiter,1-j_upw);
+            // tracers
+            for (int tr=0; tr < num_tracers; tr++) {
+              for (int s=0; s < ord; s++) { stencil(s) = tracers(tr,hs+k,j+j_upw+s,hs+i,iens); }
+              tracers_flux_y(tr,k,j,i,iens) = rv * reconstruct(stencil,coefs_to_gll,limiter,1-j_upw);
+            }
+          } else {
+            state_flux_y(idR,k,j,i,iens) = 0;
+            state_flux_y(idU,k,j,i,iens) = 0;
+            state_flux_y(idV,k,j,i,iens) = 0;
+            state_flux_y(idW,k,j,i,iens) = 0;
+            state_flux_y(idT,k,j,i,iens) = 0;
+            for (int tr=0; tr < num_tracers; tr++) { tracers_flux_y(tr,k,j,i,iens) = 0; }
           }
-        } else if (i < nx && k < nz) {
-          state_flux_y(idR,k,j,i,iens) = 0;
-          state_flux_y(idU,k,j,i,iens) = 0;
-          state_flux_y(idV,k,j,i,iens) = 0;
-          state_flux_y(idW,k,j,i,iens) = 0;
-          state_flux_y(idT,k,j,i,iens) = 0;
-          for (int tr=0; tr < num_tracers; tr++) { tracers_flux_y(tr,k,j,i,iens) = 0; }
         }
 
+        ////////////////////////////////////////////////////////
         // Z-direction
+        ////////////////////////////////////////////////////////
         if (i < nx && j < ny) {
-          // Acoustically upwind mass flux and pressure
-          real rw_L = state_limits_z(idW,0,k,j,i,iens);   real rw_R = state_limits_z(idW,1,k,j,i,iens);
-          real rt_L = state_limits_z(idT,0,k,j,i,iens);   real rt_R = state_limits_z(idT,1,k,j,i,iens);
-          real p_L  = pressure_limits_z (0,k,j,i,iens);   real p_R  = pressure_limits_z (1,k,j,i,iens);
-          real constexpr cs = 350;
-          real w1 = 0.5_fp * (p_R-cs*rw_R);
-          real w2 = 0.5_fp * (p_L+cs*rw_L);
-          real p_upw  = w1 + w2;
-          real rw_upw = (w2-w1)/cs;
-          // Advectively upwind everything else
-          int ind = rw_L+rw_R > 0 ? 0 : 1;
-          real r_upw = state_limits_z(idR,ind,k,j,i,iens);
-          state_flux_z(idR,k,j,i,iens) = rw_upw;
-          state_flux_z(idU,k,j,i,iens) = rw_upw*state_limits_z(idU,ind,k,j,i,iens)/r_upw;
-          state_flux_z(idV,k,j,i,iens) = rw_upw*state_limits_z(idV,ind,k,j,i,iens)/r_upw;
-          state_flux_z(idW,k,j,i,iens) = rw_upw*state_limits_z(idW,ind,k,j,i,iens)/r_upw + p_upw;
-          state_flux_z(idT,k,j,i,iens) = rw_upw*state_limits_z(idT,ind,k,j,i,iens)/r_upw;
-          for (int tr=0; tr < num_tracers; tr++) {
-            tracers_flux_z(tr,k,j,i,iens) = rw_upw*tracers_limits_z(tr,ind,k,j,i,iens)/r_upw;
+          SArray<real,1,ord> stencil;
+          // ACOUSTIC
+          real rw, pp;
+          {
+            // rho*w (left estimate)
+            int k_upw = 0;
+            for (int s=0; s < ord; s++) { stencil(s) = state(idR,k+k_upw+s,hs+j,hs+i,iens)*state(idW,k+k_upw+s,hs+j,hs+i,iens); }
+            real rw_L = reconstruct(stencil,coefs_to_gll,limiter,1-k_upw);    if (bc_z == BC_WALL && (k == 0 || k == nz)) rw_L = 0;
+            // rho*w (right estimate)
+            k_upw = 1;
+            for (int s=0; s < ord; s++) { stencil(s) = state(idR,k+k_upw+s,hs+j,hs+i,iens)*state(idW,k+k_upw+s,hs+j,hs+i,iens); }
+            real rw_R = reconstruct(stencil,coefs_to_gll,limiter,1-k_upw);    if (bc_z == BC_WALL && (k == 0 || k == nz)) rw_R = 0;
+            // pressure perturbation (left estimate)
+            k_upw = 0;
+            for (int s=0; s < ord; s++) { stencil(s) = pressure(k+k_upw+s,hs+j,hs+i,iens); }
+            real pp_L = reconstruct(stencil,coefs_to_gll,limiter,1-k_upw);
+            // pressure perturbation (right estimate)
+            k_upw = 1;
+            for (int s=0; s < ord; s++) { stencil(s) = pressure(k+k_upw+s,hs+j,hs+i,iens); }
+            real pp_R = reconstruct(stencil,coefs_to_gll,limiter,1-k_upw);
+            // Characteristics & upwind values
+            real w1 = 0.5_fp * (pp_R-cs*rw_R);
+            real w2 = 0.5_fp * (pp_L+cs*rw_L);
+            pp = w1+w2;
+            rw = (w2-w1)/cs;
+            if (bc_z == BC_WALL && (k == 0 || k == nz)) rw = 0;
+            state_flux_z(idR,k,j,i,iens) = rw;
           }
-        }
-
-        // Multiply density back to other variables
-        if (i < nx && j < ny && k < nz) {
-          state(idU,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
-          state(idV,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
-          state(idW,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
-          state(idT,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
-          for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens); }
+          // ADVECTIVE
+          int k_upw = rw > 0 ? 0 : 1;
+          // u-velocity
+          for (int s=0; s < ord; s++) { stencil(s) = state(idU,k+k_upw+s,hs+j,hs+i,iens); }
+          state_flux_z(idU,k,j,i,iens) = rw * reconstruct(stencil,coefs_to_gll,limiter,1-k_upw);
+          // v-velocity
+          for (int s=0; s < ord; s++) { stencil(s) = state(idV,k+k_upw+s,hs+j,hs+i,iens); }
+          state_flux_z(idV,k,j,i,iens) = rw * reconstruct(stencil,coefs_to_gll,limiter,1-k_upw);
+          // w-velocity
+          for (int s=0; s < ord; s++) { stencil(s) = state(idW,k+k_upw+s,hs+j,hs+i,iens); }
+          state_flux_z(idW,k,j,i,iens) = rw * reconstruct(stencil,coefs_to_gll,limiter,1-k_upw) + pp;
+          // theta
+          for (int s=0; s < ord; s++) { stencil(s) = state(idT,k+k_upw+s,hs+j,hs+i,iens); }
+          state_flux_z(idT,k,j,i,iens) = rw * reconstruct(stencil,coefs_to_gll,limiter,1-k_upw);
+          // tracers
+          for (int tr=0; tr < num_tracers; tr++) {
+            for (int s=0; s < ord; s++) { stencil(s) = tracers(tr,k+k_upw+s,hs+j,hs+i,iens); }
+            tracers_flux_z(tr,k,j,i,iens) = rw * reconstruct(stencil,coefs_to_gll,limiter,1-k_upw);
+          }
         }
       });
-
-      // Deallocate state and tracer limits because they are no longer needed
-      state_limits_x   = real6d();
-      state_limits_y   = real6d();
-      state_limits_z   = real6d();
-      tracers_limits_x = real6d();
-      tracers_limits_y = real6d();
-      tracers_limits_z = real6d();
 
       // Flux Corrected Transport to enforce positivity for tracer species that must remain non-negative
       // This looks like it has a race condition, but it does not. Only one of the adjacent cells can ever change
       // a given edge flux because it's only changed if its sign oriented outward from a cell.
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<5>(num_tracers,nz,ny,nx,nens) ,
-                                        YAKL_LAMBDA (int tr, int k, int j, int i, int iens) {
-        if (tracer_positive(tr)) {
-          real mass_available = max(tracers(tr,hs+k,hs+j,hs+i,iens),0._fp) * dx * dy * dz;
-          real flux_out_x = ( max(tracers_flux_x(tr,k,j,i+1,iens),0._fp) - min(tracers_flux_x(tr,k,j,i,iens),0._fp) ) / dx;
-          real flux_out_y = ( max(tracers_flux_y(tr,k,j+1,i,iens),0._fp) - min(tracers_flux_y(tr,k,j,i,iens),0._fp) ) / dy;
-          real flux_out_z = ( max(tracers_flux_z(tr,k+1,j,i,iens),0._fp) - min(tracers_flux_z(tr,k,j,i,iens),0._fp) ) / dz;
-          real mass_out = (flux_out_x + flux_out_y + flux_out_z) * dt * dx * dy * dz;
-          if (mass_out > mass_available) {
-            real mult = mass_available / mass_out;
-            if (tracers_flux_x(tr,k,j,i+1,iens) > 0) tracers_flux_x(tr,k,j,i+1,iens) *= mult;
-            if (tracers_flux_x(tr,k,j,i  ,iens) < 0) tracers_flux_x(tr,k,j,i  ,iens) *= mult;
-            if (tracers_flux_y(tr,k,j+1,i,iens) > 0) tracers_flux_y(tr,k,j+1,i,iens) *= mult;
-            if (tracers_flux_y(tr,k,j  ,i,iens) < 0) tracers_flux_y(tr,k,j  ,i,iens) *= mult;
-            if (tracers_flux_z(tr,k+1,j,i,iens) > 0) tracers_flux_z(tr,k+1,j,i,iens) *= mult;
-            if (tracers_flux_z(tr,k  ,j,i,iens) < 0) tracers_flux_z(tr,k  ,j,i,iens) *= mult;
+      // Also, multiply density back onto the state and tracers
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) ,
+                                        YAKL_LAMBDA (int k, int j, int i, int iens) {
+        state(idU,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
+        state(idV,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
+        state(idW,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
+        state(idT,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
+        for (int tr=0; tr < num_tracers; tr++) {
+          tracers(tr,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
+          if (tracer_positive(tr)) {
+            real mass_available = max(tracers(tr,hs+k,hs+j,hs+i,iens),0._fp) * dx * dy * dz;
+            real flux_out_x = ( max(tracers_flux_x(tr,k,j,i+1,iens),0._fp) - min(tracers_flux_x(tr,k,j,i,iens),0._fp) ) / dx;
+            real flux_out_y = ( max(tracers_flux_y(tr,k,j+1,i,iens),0._fp) - min(tracers_flux_y(tr,k,j,i,iens),0._fp) ) / dy;
+            real flux_out_z = ( max(tracers_flux_z(tr,k+1,j,i,iens),0._fp) - min(tracers_flux_z(tr,k,j,i,iens),0._fp) ) / dz;
+            real mass_out = (flux_out_x + flux_out_y + flux_out_z) * dt * dx * dy * dz;
+            if (mass_out > mass_available) {
+              real mult = mass_available / mass_out;
+              if (tracers_flux_x(tr,k,j,i+1,iens) > 0) tracers_flux_x(tr,k,j,i+1,iens) *= mult;
+              if (tracers_flux_x(tr,k,j,i  ,iens) < 0) tracers_flux_x(tr,k,j,i  ,iens) *= mult;
+              if (tracers_flux_y(tr,k,j+1,i,iens) > 0) tracers_flux_y(tr,k,j+1,i,iens) *= mult;
+              if (tracers_flux_y(tr,k,j  ,i,iens) < 0) tracers_flux_y(tr,k,j  ,i,iens) *= mult;
+              if (tracers_flux_z(tr,k+1,j,i,iens) > 0) tracers_flux_z(tr,k+1,j,i,iens) *= mult;
+              if (tracers_flux_z(tr,k  ,j,i,iens) < 0) tracers_flux_z(tr,k  ,j,i,iens) *= mult;
+            }
           }
         }
       });
@@ -578,21 +499,16 @@ namespace modules {
 
 
     // ord stencil cell averages to two GLL point values via high-order reconstruction and WENO limiting
-    YAKL_INLINE static void reconstruct_gll_values( SArray<real,1,ord>     const &stencil      ,
-                                                    SArray<real,1,2>             &gll          ,
-                                                    SArray<real,2,ord,2>   const &coefs_to_gll ,
-                                                    weno::WenoLimiter<ord> const &limiter    ) {
+    YAKL_INLINE static real reconstruct( SArray<real,1,ord>     const &stencil      ,
+                                         SArray<real,2,ord,2>   const &coefs_to_gll ,
+                                         weno::WenoLimiter<ord> const &limiter      ,
+                                         int                           ind          ) {
       // Reconstruct values
       SArray<real,1,ord> wenoCoefs;
       limiter.compute_limited_coefs( stencil , wenoCoefs );
-      // Transform ord weno coefficients into 2 GLL points
-      for (int ii=0; ii<2; ii++) {
-        real tmp = 0;
-        for (int s=0; s < ord; s++) {
-          tmp += coefs_to_gll(s,ii) * wenoCoefs(s);
-        }
-        gll(ii) = tmp;
-      }
+      real tmp = 0;
+      for (int s=0; s < ord; s++) { tmp += coefs_to_gll(s,ind) * wenoCoefs(s); }
+      return tmp;
     }
 
 
@@ -897,287 +813,6 @@ namespace modules {
         }
       }
 
-    }
-
-
-    void edge_exchange(core::Coupler const &coupler , real6d const &state_limits_x    ,
-                                                      real6d const &tracers_limits_x  ,
-                                                      real5d const &pressure_limits_x ,
-                                                      real6d const &state_limits_y    ,
-                                                      real6d const &tracers_limits_y  ,
-                                                      real5d const &pressure_limits_y ,
-                                                      real6d const &state_limits_z    ,
-                                                      real6d const &tracers_limits_z  ,
-                                                      real5d const &pressure_limits_z ) const {
-      using yakl::c::parallel_for;
-      using yakl::c::Bounds;
-
-      auto nens        = coupler.get_nens();
-      auto nx          = coupler.get_nx();
-      auto ny          = coupler.get_ny();
-      auto nz          = coupler.get_nz();
-      auto num_tracers = coupler.get_num_tracers();
-      auto sim2d       = coupler.is_sim2d();
-      auto px          = coupler.get_px();
-      auto py          = coupler.get_py();
-      auto nproc_x     = coupler.get_nproc_x();
-      auto nproc_y     = coupler.get_nproc_y();
-      auto bc_x        = coupler.get_option<int>("bc_x");
-      auto bc_y        = coupler.get_option<int>("bc_y");
-      auto bc_z        = coupler.get_option<int>("bc_z");
-
-      int npack = num_state + num_tracers + 1;
-
-      realHost4d edge_send_buf_S_host("edge_send_buf_S_host",npack,nz,nx,nens);
-      realHost4d edge_send_buf_N_host("edge_send_buf_N_host",npack,nz,nx,nens);
-      realHost4d edge_send_buf_W_host("edge_send_buf_W_host",npack,nz,ny,nens);
-      realHost4d edge_send_buf_E_host("edge_send_buf_E_host",npack,nz,ny,nens);
-      realHost4d edge_recv_buf_S_host("edge_recv_buf_S_host",npack,nz,nx,nens);
-      realHost4d edge_recv_buf_N_host("edge_recv_buf_N_host",npack,nz,nx,nens);
-      realHost4d edge_recv_buf_W_host("edge_recv_buf_W_host",npack,nz,ny,nens);
-      realHost4d edge_recv_buf_E_host("edge_recv_buf_E_host",npack,nz,ny,nens);
-
-      real4d edge_send_buf_W("edge_send_buf_W",npack,nz,ny,nens);
-      real4d edge_send_buf_E("edge_send_buf_E",npack,nz,ny,nens);
-
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(npack,nz,ny,nens) , YAKL_LAMBDA (int v, int k, int j, int iens) {
-        if (v < num_state) {
-          edge_send_buf_W(v,k,j,iens) = state_limits_x  (v          ,1,k,j,0 ,iens);
-          edge_send_buf_E(v,k,j,iens) = state_limits_x  (v          ,0,k,j,nx,iens);
-        } else if (v < num_state + num_tracers) {
-          edge_send_buf_W(v,k,j,iens) = tracers_limits_x(v-num_state,1,k,j,0 ,iens);
-          edge_send_buf_E(v,k,j,iens) = tracers_limits_x(v-num_state,0,k,j,nx,iens);
-        } else {
-          edge_send_buf_W(v,k,j,iens) = pressure_limits_x(1,k,j,0 ,iens);
-          edge_send_buf_E(v,k,j,iens) = pressure_limits_x(0,k,j,nx,iens);
-        }
-      });
-
-      real4d edge_send_buf_S("edge_send_buf_S",npack,nz,nx,nens);
-      real4d edge_send_buf_N("edge_send_buf_N",npack,nz,nx,nens);
-
-      if (!sim2d) {
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(npack,nz,nx,nens) , YAKL_LAMBDA (int v, int k, int i, int iens) {
-          if (v < num_state) {
-            edge_send_buf_S(v,k,i,iens) = state_limits_y  (v          ,1,k,0 ,i,iens);
-            edge_send_buf_N(v,k,i,iens) = state_limits_y  (v          ,0,k,ny,i,iens);
-          } else if (v < num_state + num_tracers) {
-            edge_send_buf_S(v,k,i,iens) = tracers_limits_y(v-num_state,1,k,0 ,i,iens);
-            edge_send_buf_N(v,k,i,iens) = tracers_limits_y(v-num_state,0,k,ny,i,iens);
-          } else {
-            edge_send_buf_S(v,k,i,iens) = pressure_limits_y(1,k,0 ,i,iens);
-            edge_send_buf_N(v,k,i,iens) = pressure_limits_y(0,k,ny,i,iens);
-          }
-        });
-      }
-
-      yakl::fence();
-      yakl::timer_start("edge_exchange_mpi");
-
-      real4d edge_recv_buf_W("edge_recv_buf_W",npack,nz,ny,nens);
-      real4d edge_recv_buf_E("edge_recv_buf_E",npack,nz,ny,nens);
-      real4d edge_recv_buf_S("edge_recv_buf_S",npack,nz,nx,nens);
-      real4d edge_recv_buf_N("edge_recv_buf_N",npack,nz,nx,nens);
-
-      MPI_Request sReq[4];
-      MPI_Request rReq[4];
-
-      auto &neigh = coupler.get_neighbor_rankid_matrix();
-      auto mpi_data_type = coupler.get_mpi_data_type();
-
-      #ifdef MW_GPU_AWARE_MPI
-        yakl::fence();
-
-        //Pre-post the receives
-        MPI_Irecv( edge_recv_buf_W.data() , edge_recv_buf_W.size() , mpi_data_type , neigh(1,0) , 4 , MPI_COMM_WORLD , &rReq[0] );
-        MPI_Irecv( edge_recv_buf_E.data() , edge_recv_buf_E.size() , mpi_data_type , neigh(1,2) , 5 , MPI_COMM_WORLD , &rReq[1] );
-        if (!sim2d) {
-          MPI_Irecv( edge_recv_buf_S.data() , edge_recv_buf_S.size() , mpi_data_type , neigh(0,1) , 6 , MPI_COMM_WORLD , &rReq[2] );
-          MPI_Irecv( edge_recv_buf_N.data() , edge_recv_buf_N.size() , mpi_data_type , neigh(2,1) , 7 , MPI_COMM_WORLD , &rReq[3] );
-        }
-
-        //Send the data
-        MPI_Isend( edge_send_buf_W.data() , edge_send_buf_W.size() , mpi_data_type , neigh(1,0) , 5 , MPI_COMM_WORLD , &sReq[0] );
-        MPI_Isend( edge_send_buf_E.data() , edge_send_buf_E.size() , mpi_data_type , neigh(1,2) , 4 , MPI_COMM_WORLD , &sReq[1] );
-        if (!sim2d) {
-          MPI_Isend( edge_send_buf_S.data() , edge_send_buf_S.size() , mpi_data_type , neigh(0,1) , 7 , MPI_COMM_WORLD , &sReq[2] );
-          MPI_Isend( edge_send_buf_N.data() , edge_send_buf_N.size() , mpi_data_type , neigh(2,1) , 6 , MPI_COMM_WORLD , &sReq[3] );
-        }
-
-        MPI_Status  sStat[4];
-        MPI_Status  rStat[4];
-
-        //Wait for the sends and receives to finish
-        if (sim2d) {
-          MPI_Waitall(2, sReq, sStat);
-          MPI_Waitall(2, rReq, rStat);
-        } else {
-          MPI_Waitall(4, sReq, sStat);
-          MPI_Waitall(4, rReq, rStat);
-        }
-        yakl::timer_stop("edge_exchange_mpi");
-      #else
-        //Pre-post the receives
-        MPI_Irecv( edge_recv_buf_W_host.data() , edge_recv_buf_W_host.size() , mpi_data_type , neigh(1,0) , 4 , MPI_COMM_WORLD , &rReq[0] );
-        MPI_Irecv( edge_recv_buf_E_host.data() , edge_recv_buf_E_host.size() , mpi_data_type , neigh(1,2) , 5 , MPI_COMM_WORLD , &rReq[1] );
-        if (!sim2d) {
-          MPI_Irecv( edge_recv_buf_S_host.data() , edge_recv_buf_S_host.size() , mpi_data_type , neigh(0,1) , 6 , MPI_COMM_WORLD , &rReq[2] );
-          MPI_Irecv( edge_recv_buf_N_host.data() , edge_recv_buf_N_host.size() , mpi_data_type , neigh(2,1) , 7 , MPI_COMM_WORLD , &rReq[3] );
-        }
-
-        edge_send_buf_W.deep_copy_to(edge_send_buf_W_host);
-        edge_send_buf_E.deep_copy_to(edge_send_buf_E_host);
-        if (!sim2d) {
-          edge_send_buf_S.deep_copy_to(edge_send_buf_S_host);
-          edge_send_buf_N.deep_copy_to(edge_send_buf_N_host);
-        }
-
-        yakl::fence();
-
-        //Send the data
-        MPI_Isend( edge_send_buf_W_host.data() , edge_send_buf_W_host.size() , mpi_data_type , neigh(1,0) , 5 , MPI_COMM_WORLD , &sReq[0] );
-        MPI_Isend( edge_send_buf_E_host.data() , edge_send_buf_E_host.size() , mpi_data_type , neigh(1,2) , 4 , MPI_COMM_WORLD , &sReq[1] );
-        if (!sim2d) {
-          MPI_Isend( edge_send_buf_S_host.data() , edge_send_buf_S_host.size() , mpi_data_type , neigh(0,1) , 7 , MPI_COMM_WORLD , &sReq[2] );
-          MPI_Isend( edge_send_buf_N_host.data() , edge_send_buf_N_host.size() , mpi_data_type , neigh(2,1) , 6 , MPI_COMM_WORLD , &sReq[3] );
-        }
-
-        MPI_Status  sStat[4];
-        MPI_Status  rStat[4];
-
-        //Wait for the sends and receives to finish
-        if (sim2d) {
-          MPI_Waitall(2, sReq, sStat);
-          MPI_Waitall(2, rReq, rStat);
-        } else {
-          MPI_Waitall(4, sReq, sStat);
-          MPI_Waitall(4, rReq, rStat);
-        }
-        yakl::timer_stop("edge_exchange_mpi");
-
-        edge_recv_buf_W_host.deep_copy_to(edge_recv_buf_W);
-        edge_recv_buf_E_host.deep_copy_to(edge_recv_buf_E);
-        if (!sim2d) {
-          edge_recv_buf_S_host.deep_copy_to(edge_recv_buf_S);
-          edge_recv_buf_N_host.deep_copy_to(edge_recv_buf_N);
-        }
-      #endif
-
-      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(npack,nz,ny,nens) ,
-                                        YAKL_LAMBDA (int v, int k, int j, int iens) {
-        if (v < num_state) {
-          state_limits_x  (v          ,0,k,j,0 ,iens) = edge_recv_buf_W(v,k,j,iens);
-          state_limits_x  (v          ,1,k,j,nx,iens) = edge_recv_buf_E(v,k,j,iens);
-        } else if (v < num_state + num_tracers) {
-          tracers_limits_x(v-num_state,0,k,j,0 ,iens) = edge_recv_buf_W(v,k,j,iens);
-          tracers_limits_x(v-num_state,1,k,j,nx,iens) = edge_recv_buf_E(v,k,j,iens);
-        } else {
-          pressure_limits_x(0,k,j,0 ,iens) = edge_recv_buf_W(v,k,j,iens);
-          pressure_limits_x(1,k,j,nx,iens) = edge_recv_buf_E(v,k,j,iens);
-        }
-      });
-
-      if (!sim2d) {
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(npack,nz,nx,nens) ,
-                                          YAKL_LAMBDA (int v, int k, int i, int iens) {
-          if (v < num_state) {
-            state_limits_y  (v          ,0,k,0 ,i,iens) = edge_recv_buf_S(v,k,i,iens);
-            state_limits_y  (v          ,1,k,ny,i,iens) = edge_recv_buf_N(v,k,i,iens);
-          } else if (v < num_state + num_tracers) {
-            tracers_limits_y(v-num_state,0,k,0 ,i,iens) = edge_recv_buf_S(v,k,i,iens);
-            tracers_limits_y(v-num_state,1,k,ny,i,iens) = edge_recv_buf_N(v,k,i,iens);
-          } else {
-            pressure_limits_y(0,k,0 ,i,iens) = edge_recv_buf_S(v,k,i,iens);
-            pressure_limits_y(1,k,ny,i,iens) = edge_recv_buf_N(v,k,i,iens);
-          }
-        });
-      }
-
-      /////////////////////////////////
-      // Begin boundary conditions
-      /////////////////////////////////
-      if (bc_z == BC_PERIODIC) {
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(ny,nx,nens) ,
-                                          YAKL_LAMBDA (int j, int i, int iens) {
-          for (int l=0; l < num_state; l++) {
-            state_limits_z(l,0,0 ,j,i,iens) = state_limits_z(l,0,nz,j,i,iens);
-            state_limits_z(l,1,nz,j,i,iens) = state_limits_z(l,1,0 ,j,i,iens);
-          }
-          for (int l=0; l < num_tracers; l++) {
-            tracers_limits_z(l,0,0 ,j,i,iens) = tracers_limits_z(l,0,nz,j,i,iens);
-            tracers_limits_z(l,1,nz,j,i,iens) = tracers_limits_z(l,1,0 ,j,i,iens);
-          }
-          pressure_limits_z(0,0 ,j,i,iens) = pressure_limits_z(0,nz,j,i,iens);
-          pressure_limits_z(1,nz,j,i,iens) = pressure_limits_z(1,0 ,j,i,iens);
-        });
-      } else if (bc_z == BC_WALL || bc_z == BC_OPEN) {
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(ny,nx,nens) ,
-                                          YAKL_LAMBDA (int j, int i, int iens) {
-          for (int l=0; l < num_state; l++) {
-            if (l == idW && bc_z == BC_WALL) {
-              state_limits_z(l,0,0 ,j,i,iens) = 0;
-              state_limits_z(l,1,0 ,j,i,iens) = 0;
-              state_limits_z(l,0,nz,j,i,iens) = 0;
-              state_limits_z(l,1,nz,j,i,iens) = 0;
-            } else {
-              state_limits_z(l,0,0 ,j,i,iens) = state_limits_z(l,1,0 ,j,i,iens);
-              state_limits_z(l,1,nz,j,i,iens) = state_limits_z(l,0,nz,j,i,iens);
-            }
-          }
-          for (int l=0; l < num_tracers; l++) {
-            tracers_limits_z(l,0,0 ,j,i,iens) = tracers_limits_z(l,1,0 ,j,i,iens);
-            tracers_limits_z(l,1,nz,j,i,iens) = tracers_limits_z(l,0,nz,j,i,iens);
-          }
-          pressure_limits_z(0,0 ,j,i,iens) = pressure_limits_z(1,0 ,j,i,iens);
-          pressure_limits_z(1,nz,j,i,iens) = pressure_limits_z(0,nz,j,i,iens);
-        });
-      }
-      if (bc_x == BC_WALL || bc_x == BC_OPEN) {
-        if (px == 0) {
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nens) ,
-                                            YAKL_LAMBDA (int k, int j, int iens) {
-            for (int l=0; l < num_state; l++) {
-              if (l == idU && bc_x == BC_WALL) { state_limits_x(l,0,k,j,0,iens) = 0; state_limits_x(l,1,k,j,0,iens) = 0; }
-              else                             { state_limits_x(l,0,k,j,0,iens) = state_limits_x(l,1,k,j,0,iens); }
-            }
-            for (int l=0; l < num_tracers; l++) { tracers_limits_x(l,0,k,j,0,iens) = tracers_limits_x(l,1,k,j,0,iens); }
-            pressure_limits_x(0,k,j,0,iens) = pressure_limits_x(1,k,j,0,iens);
-          });
-        } else if (px == nproc_x-1) {
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,ny,nens) ,
-                                            YAKL_LAMBDA (int k, int j, int iens) {
-            for (int l=0; l < num_state; l++) {
-              if (l == idU && bc_x == BC_WALL) { state_limits_x(l,0,k,j,nx,iens) = 0; state_limits_x(l,1,k,j,nx,iens) = 0; }
-              else                             { state_limits_x(l,1,k,j,nx,iens) = state_limits_x(l,0,k,j,nx,iens); }
-            }
-            for (int l=0; l < num_tracers; l++) { tracers_limits_x(l,1,k,j,nx,iens) = tracers_limits_x(l,0,k,j,nx,iens); }
-            pressure_limits_x(1,k,j,nx,iens) = pressure_limits_x(0,k,j,nx,iens);
-          });
-        }
-      }
-      if (bc_y == BC_WALL || bc_y == BC_OPEN) {
-        if (py == 0) {
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,nx,nens) ,
-                                            YAKL_LAMBDA (int k, int i, int iens) {
-            for (int l=0; l < num_state; l++) {
-              if (l == idV && bc_y == BC_WALL) { state_limits_y(l,0,k,0,i,iens) = 0; state_limits_y(l,1,k,0,i,iens) = 0; }
-              else                             { state_limits_y(l,0,k,0,i,iens) = state_limits_y(l,1,k,0,i,iens); }
-            }
-            for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,0,k,0,i,iens) = tracers_limits_y(l,1,k,0,i,iens); }
-            pressure_limits_y(0,k,0,i,iens) = pressure_limits_y(1,k,0,i,iens);
-          });
-        } else if (py == nproc_y-1) {
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,nx,nens) ,
-                                            YAKL_LAMBDA (int k, int i, int iens) {
-            for (int l=0; l < num_state; l++) {
-              if (l == idV && bc_y == BC_WALL) { state_limits_y(l,0,k,ny,i,iens) = 0; state_limits_y(l,1,k,ny,i,iens) = 0; }
-              else                             { state_limits_y(l,1,k,ny,i,iens) = state_limits_y(l,0,k,ny,i,iens); }
-            }
-            for (int l=0; l < num_tracers; l++) { tracers_limits_y(l,1,k,ny,i,iens) = tracers_limits_y(l,0,k,ny,i,iens); }
-            pressure_limits_y(1,k,ny,i,iens) = pressure_limits_y(0,k,ny,i,iens);
-          });
-        }
-      }
     }
 
 
