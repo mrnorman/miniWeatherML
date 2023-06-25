@@ -271,28 +271,44 @@ namespace modules {
           // ACOUSTIC
           real ru, pp;
           {
-            // rho*u (left estimate)
-            int i_upw = 0;
-            for (int s=0; s < ord; s++) { stencil(s) = state(idR,hs+k,hs+j,i+i_upw+s,iens)*state(idU,hs+k,hs+j,i+i_upw+s,iens); }
-            real ru_L = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
-            // rho*u (right estimate)
-            i_upw = 1;
-            for (int s=0; s < ord; s++) { stencil(s) = state(idR,hs+k,hs+j,i+i_upw+s,iens)*state(idU,hs+k,hs+j,i+i_upw+s,iens); }
-            real ru_R = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
-            // pressure perturbation (left estimate)
+            // w1 (-cs)
+            int i_upw = 1;
+            for (int s=0; s < ord; s++) { stencil(s) = 0.5_fp * ( pressure(hs+k,hs+j,i+i_upw+s,iens)+hy_pressure_cells(k,iens) -
+                                                                  cs * state(idR,hs+k,hs+j,i+i_upw+s,iens)*
+                                                                       state(idU,hs+k,hs+j,i+i_upw+s,iens) ); }
+            real w1 = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
             i_upw = 0;
-            for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,hs+j,i+i_upw+s,iens); }
-            real pp_L = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
-            // pressure perturbation (right estimate)
-            i_upw = 1;
-            for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,hs+j,i+i_upw+s,iens); }
-            real pp_R = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
-            // Characteristics & upwind values
-            real w1 = 0.5_fp * (pp_R-cs*ru_R);
-            real w2 = 0.5_fp * (pp_L+cs*ru_L);
+            for (int s=0; s < ord; s++) { stencil(s) = 0.5_fp * ( pressure(hs+k,hs+j,i+i_upw+s,iens)+hy_pressure_cells(k,iens) +
+                                                                  cs * state(idR,hs+k,hs+j,i+i_upw+s,iens)*
+                                                                       state(idU,hs+k,hs+j,i+i_upw+s,iens) ); }
+            real w2 = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
             pp = w1+w2;
             ru = (w2-w1)/cs;
             state_flux_x(idR,k,j,i,iens) = ru;
+
+
+            // // rho*u (left estimate)
+            // int i_upw = 0;
+            // for (int s=0; s < ord; s++) { stencil(s) = state(idR,hs+k,hs+j,i+i_upw+s,iens)*state(idU,hs+k,hs+j,i+i_upw+s,iens); }
+            // real ru_L = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+            // // rho*u (right estimate)
+            // i_upw = 1;
+            // for (int s=0; s < ord; s++) { stencil(s) = state(idR,hs+k,hs+j,i+i_upw+s,iens)*state(idU,hs+k,hs+j,i+i_upw+s,iens); }
+            // real ru_R = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+            // // pressure perturbation (left estimate)
+            // i_upw = 0;
+            // for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,hs+j,i+i_upw+s,iens); }
+            // real pp_L = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+            // // pressure perturbation (right estimate)
+            // i_upw = 1;
+            // for (int s=0; s < ord; s++) { stencil(s) = pressure(hs+k,hs+j,i+i_upw+s,iens); }
+            // real pp_R = reconstruct(stencil,coefs_to_gll,limiter,1-i_upw);
+            // // Characteristics & upwind values
+            // real w1 = 0.5_fp * (pp_R-cs*ru_R);
+            // real w2 = 0.5_fp * (pp_L+cs*ru_L);
+            // pp = w1+w2;
+            // ru = (w2-w1)/cs;
+            // state_flux_x(idR,k,j,i,iens) = ru;
           }
           // ADVECTIVE
           int i_upw = ru > 0 ? 0 : 1;

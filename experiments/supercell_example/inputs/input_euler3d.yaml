@@ -1,19 +1,19 @@
 ---
 # Simulation time in seconds
-sim_time: 7200.  # 86400
+sim_time: 1000.  # 86400
 
 # Number of cells to use in the CRMs
 nens   : 1
-nx_glob: 200
+nx_glob: 100
 ny_glob: 1
-nz     : 40
+nz     : 100
 
 # Domain size of the CRMs
-xlen: 100000
-ylen: 100000
+xlen: 20000
+ylen: 20000
 zlen: 20000
 
-init_data: supercell
+init_data: thermal
 
 # Output filename
 out_prefix: test
