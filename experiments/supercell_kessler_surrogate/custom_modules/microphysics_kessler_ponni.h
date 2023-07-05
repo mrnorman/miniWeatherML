@@ -37,7 +37,11 @@ namespace custom_modules {
     real2d scl_out;
     real2d scl_in ;
 
-    typedef decltype(ponni::create_inference_model(Matvec(),Bias(),Relu(),Matvec(),Bias())) MODEL;
+    typedef decltype(ponni::create_inference_model(Matvec<float>(),
+                                                   Bias  <float>(),
+                                                   Relu  <float>(),
+                                                   Matvec<float>(),
+                                                   Bias  <float>())) MODEL;
     MODEL model;
 
 
@@ -96,16 +100,15 @@ namespace custom_modules {
       auto nn_input_scaling  = config["nn_input_scaling" ].as<std::string>();
       auto nn_output_scaling = config["nn_output_scaling"].as<std::string>();
 
-      ponni::Matvec matvec_1( ponni::load_h5_weights<2>( keras_weights_h5 , "/dense_6/dense_6" , "kernel:0" ) );
-      ponni::Bias   bias_1  ( ponni::load_h5_weights<1>( keras_weights_h5 , "/dense_6/dense_6" , "bias:0"   ) );
-      ponni::Relu   relu_1  ( bias_1.get_num_outputs() , 0.1 );  // LeakyReLU with negative slope of 0.1
-      ponni::Matvec matvec_2( ponni::load_h5_weights<2>( keras_weights_h5 , "/dense_7/dense_7" , "kernel:0" ) );
-      ponni::Bias   bias_2  ( ponni::load_h5_weights<1>( keras_weights_h5 , "/dense_7/dense_7" , "bias:0"   ) );
+      ponni::Matvec<float> matvec_1( ponni::load_h5_weights<2>( keras_weights_h5 , "/dense_6/dense_6" , "kernel:0" ) );
+      ponni::Bias  <float> bias_1  ( ponni::load_h5_weights<1>( keras_weights_h5 , "/dense_6/dense_6" , "bias:0"   ) );
+      ponni::Relu  <float> relu_1  ( bias_1.get_num_outputs() , 0.1 );  // LeakyReLU with negative slope of 0.1
+      ponni::Matvec<float> matvec_2( ponni::load_h5_weights<2>( keras_weights_h5 , "/dense_7/dense_7" , "kernel:0" ) );
+      ponni::Bias  <float> bias_2  ( ponni::load_h5_weights<1>( keras_weights_h5 , "/dense_7/dense_7" , "bias:0"   ) );
 
       this->model = ponni::create_inference_model(matvec_1, bias_1, relu_1, matvec_2, bias_2);
       model.validate();
       model.print();
-      model.print_verbose();
 
       // Load the data scaling arrays
       scl_out = real2d("scl_out",4,2);
@@ -143,7 +146,7 @@ namespace custom_modules {
 
 
 
-    void time_step( core::Coupler &coupler , real dt ) const {
+    void time_step( core::Coupler &coupler , real dt ) {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
@@ -172,7 +175,7 @@ namespace custom_modules {
       /////////////////////////////////////////////////////////////////////////
       // Build inputs
       int constexpr num_in = 5;
-      Array<float,2,memDevice,styleC> ponni_in("ponni_in",num_in,nz*ncol);
+      float2d ponni_in("ponni_in",num_in,nz*ncol);
 
       parallel_for( Bounds<2>(nz,ncol) , YAKL_LAMBDA (int k, int i) {
         int iglob = k*ncol+i;
@@ -183,7 +186,7 @@ namespace custom_modules {
         ponni_in( 4 , iglob ) = ( rho_r(k,i) - scl_in(4,0) ) / ( scl_in(4,1) - scl_in(4,0) );
       });
 
-      auto ponni_out = model.batch_parallel( ponni_in );
+      auto ponni_out = model.forward_batch_parallel( ponni_in );
 
       real2d temp_tmp  = temp .createDeviceCopy();
       real2d rho_v_tmp = rho_v.createDeviceCopy();

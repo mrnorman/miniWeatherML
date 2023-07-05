@@ -6,6 +6,7 @@ sim_time: 86400
 nx_glob: 250
 ny_glob: 1
 nz     : 50
+nens   : 1
 
 # Domain size of the CRMs
 xlen: 100000
@@ -15,7 +16,7 @@ zlen: 20000
 init_data: supercell
 
 # Output filename
-out_prefix: test.nc
+out_prefix: test
 
 # GCM time step
 dt_gcm: 900
