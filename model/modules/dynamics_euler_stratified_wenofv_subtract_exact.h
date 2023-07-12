@@ -22,7 +22,7 @@ namespace modules {
 
     // Order of accuracy (numerical convergence for smooth flows) for the dynamical core
     #ifndef MW_ORD
-      int  static constexpr ord = 5;
+      int  static constexpr ord = 9;
     #else
       int  static constexpr ord = MW_ORD;
     #endif
@@ -545,11 +545,11 @@ namespace modules {
           real imm_tend_idT = -std::min(1._fp,dt/tau)*state(idT,hs+k,hs+j,hs+i,iens)/dt;
           // immersed proportion has immersed tendnecies. Other proportion has free tendencies
           real prop = immersed_proportion(k,j,i,iens);
-          state_tend(idR,k,j,i,iens) = prop*imm_tend_idR + (1-prop)*state_tend(idR,k,j,i,iens);
+          // state_tend(idR,k,j,i,iens) = prop*imm_tend_idR + (1-prop)*state_tend(idR,k,j,i,iens);
           state_tend(idU,k,j,i,iens) = prop*imm_tend_idU + (1-prop)*state_tend(idU,k,j,i,iens);
           state_tend(idV,k,j,i,iens) = prop*imm_tend_idV + (1-prop)*state_tend(idV,k,j,i,iens);
           state_tend(idW,k,j,i,iens) = prop*imm_tend_idW + (1-prop)*state_tend(idW,k,j,i,iens);
-          state_tend(idT,k,j,i,iens) = prop*imm_tend_idT + (1-prop)*state_tend(idT,k,j,i,iens);
+          // state_tend(idT,k,j,i,iens) = prop*imm_tend_idT + (1-prop)*state_tend(idT,k,j,i,iens);
         }
       });
     }
@@ -1336,14 +1336,6 @@ namespace modules {
               hy_dens_cells    (k,iens) += hr                       * qweights(kk);
               hy_pressure_cells(k,iens) += C0*std::pow(hr*ht,gamma) * qweights(kk);
             }
-          });
-
-          // Compute hydrostatic background cell edge values
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz+1,nens) , YAKL_LAMBDA (int k, int iens) {
-            real z = k*dz;
-            real hr, ht;
-
-            hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
           });
         } else {
           hy_dens_cells = 1.15;
