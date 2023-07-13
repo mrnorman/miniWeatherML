@@ -393,52 +393,67 @@ namespace modules {
 
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        real constexpr cs  = 350;
+        real constexpr cs2 = cs*cs;
+        real constexpr cfl = 0.8;
+        real constexpr beta_acoust = 1;  // 0.07 seems to be the realistic min in 3-D ;  0.6 in 2-D
+        real constexpr beta_advect = 1;  // 0.07 seems to be the realistic min in 3-D ;  0.6 in 2-D
         // X-direction
         if (j < ny && k < nz) {
-          // Acoustically upwind mass flux and pressure
-          real ru_L = state_limits_x(idU,0,k,j,i,iens);   real ru_R = state_limits_x(idU,1,k,j,i,iens);
-          real rt_L = state_limits_x(idT,0,k,j,i,iens);   real rt_R = state_limits_x(idT,1,k,j,i,iens);
-          real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
-          real constexpr cs = 350;
-          real w1 = 0.5_fp * (p_R-cs*ru_R);
-          real w2 = 0.5_fp * (p_L+cs*ru_L);
-          real p_upw  = w1 + w2;
-          real ru_upw = (w2-w1)/cs;
-          // Advectively upwind everything else
-          int ind = ru_L+ru_R > 0 ? 0 : 1;
-          real r_upw = state_limits_x(idR,ind,k,j,i,iens);
-          state_flux_x(idR,k,j,i,iens) = ru_upw;
-          state_flux_x(idU,k,j,i,iens) = ru_upw*state_limits_x(idU,ind,k,j,i,iens)/r_upw + p_upw;
-          state_flux_x(idV,k,j,i,iens) = ru_upw*state_limits_x(idV,ind,k,j,i,iens)/r_upw;
-          state_flux_x(idW,k,j,i,iens) = ru_upw*state_limits_x(idW,ind,k,j,i,iens)/r_upw;
-          state_flux_x(idT,k,j,i,iens) = ru_upw*state_limits_x(idT,ind,k,j,i,iens)/r_upw;
+          real mx = cs;  // cfl*dx/dt
+          // Acoustic
+          real ru_L = state_limits_x(idU,0,k,j,i,iens);    real ru_R = state_limits_x(idU,1,k,j,i,iens);
+          real rt_L = state_limits_x(idT,0,k,j,i,iens);    real rt_R = state_limits_x(idT,1,k,j,i,iens);
+          real p_L  = C0 * std::pow(rt_L,gamma);           real p_R  = C0 * std::pow(rt_R,gamma);
+          // Tunable Lax-Friedrichs
+          real ru = 0.5_fp*(ru_R+ru_L - beta_acoust*mx/cs2*(p_R -p_L ));
+          real p  = 0.5_fp*(p_R +p_L  - beta_acoust*mx    *(ru_R-ru_L));
+          // Advective
+          real r_L = state_limits_x(idR,0,k,j,i,iens)    ;    real r_R = state_limits_x(idR,1,k,j,i,iens);
+          real u_L = ru_L                            /r_L;    real u_R = ru_R                            /r_R;
+          real v_L = state_limits_x(idV,0,k,j,i,iens)/r_L;    real v_R = state_limits_x(idV,1,k,j,i,iens)/r_R;
+          real w_L = state_limits_x(idW,0,k,j,i,iens)/r_L;    real w_R = state_limits_x(idW,1,k,j,i,iens)/r_R;
+          real t_L = rt_L                            /r_L;    real t_R = rt_R                            /r_R;
+          mx = std::abs(ru/(0.5_fp*(r_L+r_R)));
+          state_flux_x(idR,k,j,i,iens) = ru;
+          state_flux_x(idU,k,j,i,iens) = 0.5_fp*(ru*(u_R+u_L) - beta_advect*mx*(u_R-u_L)) + p;
+          state_flux_x(idV,k,j,i,iens) = 0.5_fp*(ru*(v_R+v_L) - beta_advect*mx*(v_R-v_L));
+          state_flux_x(idW,k,j,i,iens) = 0.5_fp*(ru*(w_R+w_L) - beta_advect*mx*(w_R-w_L));
+          state_flux_x(idT,k,j,i,iens) = 0.5_fp*(ru*(t_R+t_L) - beta_advect*mx*(t_R-t_L));
           for (int tr=0; tr < num_tracers; tr++) {
-            tracers_flux_x(tr,k,j,i,iens) = ru_upw*tracers_limits_x(tr,ind,k,j,i,iens)/r_upw;
+            real tr_L = tracers_limits_x(tr,0,k,j,i,iens)/r_L;
+            real tr_R = tracers_limits_x(tr,1,k,j,i,iens)/r_R;    
+            tracers_flux_x(tr,k,j,i,iens) = 0.5_fp*(ru*(tr_R+tr_L) - beta_advect*mx*(tr_R-tr_L));
           }
         }
 
         // Y-direction
         // If we are simulating in 2-D, then do not do Riemann in the y-direction
         if ( (! sim2d) && i < nx && k < nz) {
-          // Acoustically upwind mass flux and pressure
-          real rv_L = state_limits_y(idV,0,k,j,i,iens);   real rv_R = state_limits_y(idV,1,k,j,i,iens);
-          real rt_L = state_limits_y(idT,0,k,j,i,iens);   real rt_R = state_limits_y(idT,1,k,j,i,iens);
-          real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
-          real constexpr cs = 350;
-          real w1 = 0.5_fp * (p_R-cs*rv_R);
-          real w2 = 0.5_fp * (p_L+cs*rv_L);
-          real p_upw  = w1 + w2;
-          real rv_upw = (w2-w1)/cs;
-          // Advectively upwind everything else
-          int ind = rv_L+rv_R > 0 ? 0 : 1;
-          real r_upw = state_limits_y(idR,ind,k,j,i,iens);
-          state_flux_y(idR,k,j,i,iens) = rv_upw;
-          state_flux_y(idU,k,j,i,iens) = rv_upw*state_limits_y(idU,ind,k,j,i,iens)/r_upw;
-          state_flux_y(idV,k,j,i,iens) = rv_upw*state_limits_y(idV,ind,k,j,i,iens)/r_upw + p_upw;
-          state_flux_y(idW,k,j,i,iens) = rv_upw*state_limits_y(idW,ind,k,j,i,iens)/r_upw;
-          state_flux_y(idT,k,j,i,iens) = rv_upw*state_limits_y(idT,ind,k,j,i,iens)/r_upw;
+          real mx = cs;  // cfl*dy/dt
+          // Acoustic
+          real rv_L = state_limits_y(idV,0,k,j,i,iens);    real rv_R = state_limits_y(idV,1,k,j,i,iens);
+          real rt_L = state_limits_y(idT,0,k,j,i,iens);    real rt_R = state_limits_y(idT,1,k,j,i,iens);
+          real p_L  = C0 * std::pow(rt_L,gamma);           real p_R  = C0 * std::pow(rt_R,gamma);
+          // Tunable Lax-Friedrichs
+          real rv = 0.5_fp*(rv_R+rv_L - beta_acoust*mx/cs2*(p_R -p_L ));
+          real p  = 0.5_fp*(p_R +p_L  - beta_acoust*mx    *(rv_R-rv_L));
+          // Advective
+          real r_L = state_limits_y(idR,0,k,j,i,iens)    ;    real r_R = state_limits_y(idR,1,k,j,i,iens);
+          real u_L = state_limits_y(idU,0,k,j,i,iens)/r_L;    real u_R = state_limits_y(idU,1,k,j,i,iens)/r_R;
+          real v_L = rv_L                            /r_L;    real v_R = rv_R                            /r_R;
+          real w_L = state_limits_y(idW,0,k,j,i,iens)/r_L;    real w_R = state_limits_y(idW,1,k,j,i,iens)/r_R;
+          real t_L = rt_L                            /r_L;    real t_R = rt_R                            /r_R;
+          mx = std::abs(rv/(0.5_fp*(r_L+r_R)));
+          state_flux_y(idR,k,j,i,iens) = rv;
+          state_flux_y(idU,k,j,i,iens) = 0.5_fp*(rv*(u_R+u_L) - beta_advect*mx*(u_R-u_L));
+          state_flux_y(idV,k,j,i,iens) = 0.5_fp*(rv*(v_R+v_L) - beta_advect*mx*(v_R-v_L)) + p;
+          state_flux_y(idW,k,j,i,iens) = 0.5_fp*(rv*(w_R+w_L) - beta_advect*mx*(w_R-w_L));
+          state_flux_y(idT,k,j,i,iens) = 0.5_fp*(rv*(t_R+t_L) - beta_advect*mx*(t_R-t_L));
           for (int tr=0; tr < num_tracers; tr++) {
-            tracers_flux_y(tr,k,j,i,iens) = rv_upw*tracers_limits_y(tr,ind,k,j,i,iens)/r_upw;
+            real tr_L = tracers_limits_y(tr,0,k,j,i,iens)/r_L;
+            real tr_R = tracers_limits_y(tr,1,k,j,i,iens)/r_R;    
+            tracers_flux_y(tr,k,j,i,iens) = 0.5_fp*(rv*(tr_R+tr_L) - beta_advect*mx*(tr_R-tr_L));
           }
         } else if (i < nx && k < nz) {
           state_flux_y(idR,k,j,i,iens) = 0;
@@ -451,25 +466,30 @@ namespace modules {
 
         // Z-direction
         if (i < nx && j < ny) {
-          // Acoustically upwind mass flux and pressure
-          real rw_L = state_limits_z(idW,0,k,j,i,iens);   real rw_R = state_limits_z(idW,1,k,j,i,iens);
-          real rt_L = state_limits_z(idT,0,k,j,i,iens);   real rt_R = state_limits_z(idT,1,k,j,i,iens);
-          real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
-          real constexpr cs = 350;
-          real w1 = 0.5_fp * (p_R-cs*rw_R);
-          real w2 = 0.5_fp * (p_L+cs*rw_L);
-          real p_upw  = w1 + w2;
-          real rw_upw = (w2-w1)/cs;
-          // Advectively upwind everything else
-          int ind = rw_L+rw_R > 0 ? 0 : 1;
-          real r_upw = state_limits_z(idR,ind,k,j,i,iens);
-          state_flux_z(idR,k,j,i,iens) = rw_upw;
-          state_flux_z(idU,k,j,i,iens) = rw_upw*state_limits_z(idU,ind,k,j,i,iens)/r_upw;
-          state_flux_z(idV,k,j,i,iens) = rw_upw*state_limits_z(idV,ind,k,j,i,iens)/r_upw;
-          state_flux_z(idW,k,j,i,iens) = rw_upw*state_limits_z(idW,ind,k,j,i,iens)/r_upw + p_upw;
-          state_flux_z(idT,k,j,i,iens) = rw_upw*state_limits_z(idT,ind,k,j,i,iens)/r_upw;
+          real mx = cs;  // cfl*dz/dt
+          // Acoustic
+          real rw_L = state_limits_z(idW,0,k,j,i,iens);    real rw_R = state_limits_z(idW,1,k,j,i,iens);
+          real rt_L = state_limits_z(idT,0,k,j,i,iens);    real rt_R = state_limits_z(idT,1,k,j,i,iens);
+          real p_L  = C0 * std::pow(rt_L,gamma);           real p_R  = C0 * std::pow(rt_R,gamma);
+          // Tunable Lax-Friedrichs
+          real rw = 0.5_fp*(rw_R+rw_L - beta_acoust*mx/cs2*(p_R -p_L ));
+          real p  = 0.5_fp*(p_R +p_L  - beta_acoust*mx    *(rw_R-rw_L));
+          // Advective
+          real r_L = state_limits_z(idR,0,k,j,i,iens)    ;    real r_R = state_limits_z(idR,1,k,j,i,iens);
+          real u_L = state_limits_z(idU,0,k,j,i,iens)/r_L;    real u_R = state_limits_z(idU,1,k,j,i,iens)/r_R;
+          real v_L = state_limits_z(idV,0,k,j,i,iens)/r_L;    real v_R = state_limits_z(idV,1,k,j,i,iens)/r_R;
+          real w_L = rw_L                            /r_L;    real w_R = rw_R                            /r_R;
+          real t_L = rt_L                            /r_L;    real t_R = rt_R                            /r_R;
+          mx = std::abs(rw/(0.5_fp*(r_L+r_R)));
+          state_flux_z(idR,k,j,i,iens) = rw;
+          state_flux_z(idU,k,j,i,iens) = 0.5_fp*(rw*(u_R+u_L) - beta_advect*mx*(u_R-u_L));
+          state_flux_z(idV,k,j,i,iens) = 0.5_fp*(rw*(v_R+v_L) - beta_advect*mx*(v_R-v_L));
+          state_flux_z(idW,k,j,i,iens) = 0.5_fp*(rw*(w_R+w_L) - beta_advect*mx*(w_R-w_L)) + p;
+          state_flux_z(idT,k,j,i,iens) = 0.5_fp*(rw*(t_R+t_L) - beta_advect*mx*(t_R-t_L));
           for (int tr=0; tr < num_tracers; tr++) {
-            tracers_flux_z(tr,k,j,i,iens) = rw_upw*tracers_limits_z(tr,ind,k,j,i,iens)/r_upw;
+            real tr_L = tracers_limits_z(tr,0,k,j,i,iens)/r_L;
+            real tr_R = tracers_limits_z(tr,1,k,j,i,iens)/r_R;    
+            tracers_flux_z(tr,k,j,i,iens) = 0.5_fp*(rw*(tr_R+tr_L) - beta_advect*mx*(tr_R-tr_L));
           }
         }
 
