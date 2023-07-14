@@ -6,6 +6,7 @@
 #include "perturb_temperature.h"
 #include "column_nudging.h"
 #include "Experiment_Manager.h"
+#include "ponni_Trainer_GD_Adam_FD.h"
 
 int main(int argc, char** argv) {
   MPI_Init( &argc , &argv );
@@ -48,9 +49,16 @@ int main(int argc, char** argv) {
     coupler_hi.set_option<real       >( "out_freq"   , config["out_freq"  ].as<real       >() );
     coupler_hi.set_option<std::string>( "standalone_input_file" , inFile );
 
+    // Create the trainer
+    int num_trainable_parameters = 2;
+    real1d trainable_parameters("trainable_parameters",num_trainable_parameters);
+    trainable_parameters = 0.5;
+    ponni::Trainer_GD_Adam_FD<real> trainer( trainable_parameters );
+    int nens_lo = trainer.get_num_ensembles();
+    auto &dm_lo = coupler_lo.get_data_manager_readwrite();
+    dm_lo.register_and_allocate<real>("trainable_parameters","",{num_trainable_parameters,nens_lo});
+
     // Create lo-res coupler state
-    // TODO: Change this to match the number of experiments needed by the SGD+FD trainer
-    int nens_lo = 1;
     coupler_lo.distribute_mpi_and_allocate_coupled_state(nz, ny_glob, nx_glob, nens_lo);
     // Create hi-res coupler state to share the lo-res's exact physical domain for each MPI task
     int refine_factor_y = coupler_lo.is_sim2d() ? 1 : refine_factor;
@@ -104,10 +112,14 @@ int main(int argc, char** argv) {
 
       // Run the dycore
       exp_manager.overwrite_lo( coupler_lo , coupler_hi );
-      dycore_hi.time_step             ( coupler_hi , dtphys );  // Flow forward according to the Euler equations
-      dycore_lo.time_step             ( coupler_lo , dtphys );  // Flow forward according to the Euler equations
+      dycore_hi.time_step( coupler_hi , dtphys );  // Flow forward according to the Euler equations
+      auto ensemble = trainer.get_ensemble();
+      ensemble.get_parameters().deep_copy_to(dm_lo.get<real,2>("trainable_parameters"));
+      dycore_lo.time_step( coupler_lo , dtphys );  // Flow forward according to the Euler equations
       // TODO: Add ponni trainer to the argument list to penalize beta values out of physical range
-      auto loss = exp_manager.compute_loss_and_overwrite_lo( coupler_lo , coupler_hi );
+      exp_manager.compute_loss_and_overwrite_lo( coupler_lo , coupler_hi , ensemble.get_loss() );
+      trainer.update_from_ensemble( ensemble );
+      trainer.increment_epoch();
 
       // Run hi-res modules
       micro_hi .time_step             ( coupler_hi , dtphys );  // Phase changes for water + precipitation / falling

@@ -71,7 +71,9 @@ namespace custom_modules {
     }
 
 
-    real1d compute_loss_and_overwrite_lo(core::Coupler &coupler_lo, core::Coupler const &coupler_hi) {
+    void compute_loss_and_overwrite_lo( core::Coupler       &coupler_lo ,
+                                        core::Coupler const &coupler_hi ,
+                                        real1d        const &loss       ) {
       using yakl::c::parallel_for;
       using yakl::c::SimpleBounds;
       auto nx_lo           = coupler_lo.get_nx();
@@ -107,10 +109,6 @@ namespace custom_modules {
 
       // Coarsen hi-res data to lo-res grid, and calculate min and max for each column
       real4d fields_hi_coarsened("fields_hi_coarsened",num_fields,nz_lo,ny_lo,nx_lo);
-      real2d col_min("col_min",num_fields,nz_lo);
-      real2d col_max("col_max",num_fields,nz_lo);
-      col_min = std::numeric_limits<real>::max();
-      col_max = std::numeric_limits<real>::lowest();
       parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(num_fields,nz_lo,ny_lo,nx_lo) ,
                                         YAKL_LAMBDA (int l, int k_lo, int j_lo, int i_lo) {
         int constexpr iens_hi = 0;
@@ -126,21 +124,45 @@ namespace custom_modules {
           }
         }
         fields_hi_coarsened(l,k_lo,j_lo,i_lo) = tmp / (refine_factor * refine_factor_y * refine_factor);
-        yakl::atomicMin( col_min(l,k_lo) , fields_hi_coarsened(l,k_lo,j_lo,i_lo) );
-        yakl::atomicMax( col_max(l,k_lo) , fields_hi_coarsened(l,k_lo,j_lo,i_lo) );
       });
+      realHost1d var_min_host("var_min",num_fields);
+      realHost1d var_max_host("var_max",num_fields);
+      for (int l=0; l < num_fields; l++) {
+        var_min_host(l) = yakl::intrinsics::minval( fields_hi_coarsened.slice<3>(l,0,0,0) );
+        var_max_host(l) = yakl::intrinsics::maxval( fields_hi_coarsened.slice<3>(l,0,0,0) );
+      }
+      auto var_min = var_min_host.createDeviceCopy();
+      auto var_max = var_max_host.createDeviceCopy();
+
+      auto params = dm_lo.get<real const,2>("trainable_parameters").createHostCopy();
+
+      real5d loss5d("loss5d",nens_lo,num_fields,nz_lo,ny_lo,nx_lo);
 
       // Compute loss for each lo-res ensemble, and overwrite the solution for the lo-res ensemble
-      real1d loss("loss",nens_lo);
       parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<5>(num_fields,nz_lo,ny_lo,nx_lo,nens_lo) ,
                                         YAKL_LAMBDA (int l, int k, int j, int i, int iens) {
-        real normalizer = std::max(1.e-10 , col_max(l,k)-col_min(l,k));
+        real normalizer = std::max(1.e-10 , var_max(l)-var_min(l));
         real diff = (fields_hi_coarsened(l,k,j,i) - fields_lo(l,k,j,i,iens)) / normalizer;
-        yakl::atomicAdd( loss(iens) , diff*diff );
+        loss5d(iens,l,k,j,i) = diff*diff;
         fields_lo(l,k,j,i,iens) = fields_hi_coarsened(l,k,j,i);
       });
 
-      return loss;
+      real constexpr beta_min = 0;
+      real constexpr beta_max = 1;
+      realHost1d loss_host("loss_host",nens_lo);
+      for (int iens=0; iens < nens_lo; iens++) {
+        auto slice = loss5d.slice<4>(iens,0,0,0,0);
+        loss_host(iens) = yakl::intrinsics::sum( slice ) / slice.size();
+        if (params(0,iens) < beta_min) loss_host(iens) += (beta_min-params(0,iens)) * 1.e2;
+        if (params(1,iens) < beta_min) loss_host(iens) += (beta_min-params(1,iens)) * 1.e2;
+        if (params(0,iens) > beta_max) loss_host(iens) += (params(0,iens)-beta_max) * 1.e2;
+        if (params(1,iens) > beta_max) loss_host(iens) += (params(1,iens)-beta_max) * 1.e2;
+      }
+
+      loss_host.deep_copy_to(loss);
+      std::cout << "acoust,advect,loss: " << params (0,nens_lo-1) << " , "
+                                          << params (1,nens_lo-1) << " , " 
+                                          << loss_host(nens_lo-1) << std::endl;
     }
   };
 
