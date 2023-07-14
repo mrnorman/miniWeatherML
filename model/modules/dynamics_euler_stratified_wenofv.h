@@ -17,53 +17,42 @@ namespace modules {
   // Since the coupler state is dry density, u-, v-, and w-velocity, and temperature, we need to convert to and from
   // the coupler state.
 
+  template <int ord>
   class Dynamics_Euler_Stratified_WenoFV {
     public:
-
-    // Order of accuracy (numerical convergence for smooth flows) for the dynamical core
-    #ifndef MW_ORD
-      int  static constexpr ord = 5;
-    #else
-      int  static constexpr ord = MW_ORD;
-    #endif
     int  static constexpr hs  = (ord-1)/2; // Number of halo cells ("hs" == "halo size")
-
     int  static constexpr num_state = 5;
-
     // IDs for the variables in the state vector
     int  static constexpr idR = 0;  // Density
     int  static constexpr idU = 1;  // u-momentum
     int  static constexpr idV = 2;  // v-momentum
     int  static constexpr idW = 3;  // w-momentum
     int  static constexpr idT = 4;  // Density * potential temperature
-
     // IDs for the test cases
     int  static constexpr DATA_THERMAL   = 0;
     int  static constexpr DATA_SUPERCELL = 1;
     int  static constexpr DATA_CITY      = 2;
     int  static constexpr DATA_BUILDING  = 3;
-
+    // Boundary Condition IDs
     int  static constexpr BC_PERIODIC = 0;
     int  static constexpr BC_OPEN     = 1;
     int  static constexpr BC_WALL     = 2;
 
     // Hydrostatic background profiles for density and potential temperature as cell averages and cell edge values
-    real2d      hy_dens_cells;
-    real2d      hy_dens_theta_cells;
-    real2d      hy_dens_edges;
-    real2d      hy_dens_theta_edges;
-    real        etime;         // Elapsed time
-    real        out_freq;      // Frequency out file output
-    int         num_out;       // Number of outputs produced thus far
-    int         init_data_int; // Integer representation of the type of initial data to use (test case)
-
-    int         idWV;              // Index number for water vapor in the tracers array
-    bool1d      tracer_adds_mass;  // Whether a tracer adds mass to the full density
-    bool1d      tracer_positive;   // Whether a tracer needs to remain non-negative
-
-    SArray<real,1,ord>            gll_pts;          // GLL point locations in domain [-0.5 , 0.5]
-    SArray<real,1,ord>            gll_wts;          // GLL weights normalized to sum to 1
-    SArray<real,2,ord,2  >        coefs_to_gll;     // Matrix to convert ord poly coefs to two GLL points
+    real2d               hy_dens_cells;
+    real2d               hy_dens_theta_cells;
+    real2d               hy_dens_edges;
+    real2d               hy_dens_theta_edges;
+    real                 etime;             // Elapsed time
+    real                 out_freq;          // Frequency out file output
+    int                  num_out;           // Number of outputs produced thus far
+    int                  init_data_int;     // Integer representation of the type of initial data to use (test case)
+    int                  idWV;              // Index number for water vapor in the tracers array
+    bool1d               tracer_adds_mass;  // Whether a tracer adds mass to the full density
+    bool1d               tracer_positive;   // Whether a tracer needs to remain non-negative
+    SArray<real,1,ord>   gll_pts;           // GLL point locations in domain [-0.5 , 0.5]
+    SArray<real,1,ord>   gll_wts;           // GLL weights normalized to sum to 1
+    SArray<real,2,ord,2> coefs_to_gll;      // Matrix to convert ord poly coefs to two GLL points
 
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
@@ -395,12 +384,11 @@ namespace modules {
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
         real constexpr cs  = 350;
         real constexpr cs2 = cs*cs;
-        real constexpr cfl = 0.8;
         real constexpr beta_acoust = 1;  // 0.07 seems to be the realistic min in 3-D ;  0.6 in 2-D
         real constexpr beta_advect = 1;  // 0.07 seems to be the realistic min in 3-D ;  0.6 in 2-D
         // X-direction
         if (j < ny && k < nz) {
-          real mx = cs;  // cfl*dx/dt
+          real mx = cs;
           // Acoustic
           real ru_L = state_limits_x(idU,0,k,j,i,iens);    real ru_R = state_limits_x(idU,1,k,j,i,iens);
           real rt_L = state_limits_x(idT,0,k,j,i,iens);    real rt_R = state_limits_x(idT,1,k,j,i,iens);
@@ -430,7 +418,7 @@ namespace modules {
         // Y-direction
         // If we are simulating in 2-D, then do not do Riemann in the y-direction
         if ( (! sim2d) && i < nx && k < nz) {
-          real mx = cs;  // cfl*dy/dt
+          real mx = cs;
           // Acoustic
           real rv_L = state_limits_y(idV,0,k,j,i,iens);    real rv_R = state_limits_y(idV,1,k,j,i,iens);
           real rt_L = state_limits_y(idT,0,k,j,i,iens);    real rt_R = state_limits_y(idT,1,k,j,i,iens);
@@ -466,7 +454,7 @@ namespace modules {
 
         // Z-direction
         if (i < nx && j < ny) {
-          real mx = cs;  // cfl*dz/dt
+          real mx = cs;
           // Acoustic
           real rw_L = state_limits_z(idW,0,k,j,i,iens);    real rw_R = state_limits_z(idW,1,k,j,i,iens);
           real rt_L = state_limits_z(idT,0,k,j,i,iens);    real rt_R = state_limits_z(idT,1,k,j,i,iens);
