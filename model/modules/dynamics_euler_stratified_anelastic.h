@@ -66,12 +66,28 @@ namespace modules {
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
     real compute_time_step( core::Coupler const &coupler ) const {
+      using yakl::c::parallel_for;
+      using yakl::c::SimpleBounds;
       auto dx = coupler.get_dx();
       auto dy = coupler.get_dy();
       auto dz = coupler.get_dz();
-      real constexpr maxwave = 350 + 80;
-      real cfl = 0.6;
-      return cfl * std::min( std::min( dx , dy ) , dz ) / maxwave;
+      auto &dm = coupler.get_data_manager_readonly();
+      auto uvel = dm.get<real,4>("uvel");
+      auto vvel = dm.get<real,4>("vvel");
+      auto wvel = dm.get<real,4>("wvel");
+      real constexpr cfl     = 0.6;
+      real constexpr vel_min = 10.;
+      real4d dt4d("dt4d",nz,ny,nx,nens);
+      parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        real dt_x = dx / std::max( vel_min , std::abs(uvel(k,j,i,iens)) );
+        real dt_y = dy / std::max( vel_min , std::abs(vvel(k,j,i,iens)) );
+        real dt_z = dz / std::max( vel_min , std::abs(wvel(k,j,i,iens)) );
+        dt4d(k,j,i,iens) = std::min( std::min( dt_x , dt_y ) , dt_z );
+      });
+      real dt_loc = cfl * yakl::intrinsics::minval( dt4d );
+      real dt_glob;
+      MPI_Allreduce( &dt_loc , &dt_glob , 1 , coupler.get_mpi_data_type() , MPI_MIN , MPI_COMM_WORLD );
+      return dt_glob;
     }
 
 
@@ -120,8 +136,8 @@ namespace modules {
           real4d ru_div0("ru_div0",nz,ny,nx+1,nens);
           real4d rv_div0("rv_div0",nz,ny+1,nx,nens);
           real4d rw_div0("rw_div0",nz+1,ny,nx,nens);
-          project_to_div0_mass_fluxes       ( coupler , state , tracers , ru_div0 , rv_div0 , rw_div0 );
-          interpolate_mass_fluxes_to_momenta( coupler , state , tracers , ru_div0 , rv_div0 , rw_div0 );
+          project_to_div0_mass_fluxes       ( coupler , state           , ru_div0 , rv_div0 , rw_div0 );
+          interpolate_mass_fluxes_to_momenta( coupler , state           , ru_div0 , rv_div0 , rw_div0 );
           apply_advective_tendencies        ( coupler , state , tracers , ru_div0 , rv_div0 , rw_div0 , dt_dyn );
           using yakl::componentwise::operator-;
           state_tend   = state   - state_tend  ;
@@ -151,8 +167,8 @@ namespace modules {
           real4d ru_div0("ru_div0",nz,ny,nx+1,nens);
           real4d rv_div0("rv_div0",nz,ny+1,nx,nens);
           real4d rw_div0("rw_div0",nz+1,ny,nx,nens);
-          project_to_div0_mass_fluxes       ( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 );
-          interpolate_mass_fluxes_to_momenta( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 );
+          project_to_div0_mass_fluxes       ( coupler , state_tmp               , ru_div0 , rv_div0 , rw_div0 );
+          interpolate_mass_fluxes_to_momenta( coupler , state_tmp               , ru_div0 , rv_div0 , rw_div0 );
           apply_advective_tendencies        ( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 , dt_dyn );
           using yakl::componentwise::operator-;
           state_tend   = state_tmp   - state_tend  ;
@@ -183,8 +199,8 @@ namespace modules {
           real4d ru_div0("ru_div0",nz,ny,nx+1,nens);
           real4d rv_div0("rv_div0",nz,ny+1,nx,nens);
           real4d rw_div0("rw_div0",nz+1,ny,nx,nens);
-          project_to_div0_mass_fluxes       ( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 );
-          interpolate_mass_fluxes_to_momenta( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 );
+          project_to_div0_mass_fluxes       ( coupler , state_tmp               , ru_div0 , rv_div0 , rw_div0 );
+          interpolate_mass_fluxes_to_momenta( coupler , state_tmp               , ru_div0 , rv_div0 , rw_div0 );
           apply_advective_tendencies        ( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 , dt_dyn );
           using yakl::componentwise::operator-;
           state_tend   = state_tmp   - state_tend  ;
