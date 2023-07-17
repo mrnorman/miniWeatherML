@@ -114,62 +114,98 @@ namespace modules {
         //////////////
         // Stage 1
         //////////////
-        compute_tendencies( coupler , state     , state_tend , tracers     , tracers_tend , dt_dyn );
-        // Apply tendencies
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-          for (int l = 0; l < num_state  ; l++) {
-            state_tmp  (l,hs+k,hs+j,hs+i,iens) = state  (l,hs+k,hs+j,hs+i,iens) + dt_dyn * state_tend  (l,k,j,i,iens);
-          }
-          for (int l = 0; l < num_tracers; l++) {
-            tracers_tmp(l,hs+k,hs+j,hs+i,iens) = tracers(l,hs+k,hs+j,hs+i,iens) + dt_dyn * tracers_tend(l,k,j,i,iens);
-            // For machine precision negative values after FCT-enforced positivity application
-            if (tracer_positive(l)) {
-              tracers_tmp(l,hs+k,hs+j,hs+i,iens) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i,iens) );
+        {
+          auto state_tend   = state  .createDeviceCopy();
+          auto tracers_tend = tracers.createDeviceCopy();
+          real4d ru_div0("ru_div0",nz,ny,nx+1,nens);
+          real4d rv_div0("rv_div0",nz,ny+1,nx,nens);
+          real4d rw_div0("rw_div0",nz+1,ny,nx,nens);
+          project_to_div0_mass_fluxes       ( coupler , state , tracers , ru_div0 , rv_div0 , rw_div0 );
+          interpolate_mass_fluxes_to_momenta( coupler , state , tracers , ru_div0 , rv_div0 , rw_div0 );
+          apply_advective_tendencies        ( coupler , state , tracers , ru_div0 , rv_div0 , rw_div0 , dt_dyn );
+          using yakl::componentwise::operator-;
+          state_tend   = state   - state_tend  ;
+          tracers_tend = tracers - tracers_tend;
+          // Apply tendencies
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+            for (int l = 0; l < num_state  ; l++) {
+              state_tmp  (l,hs+k,hs+j,hs+i,iens) = state  (l,hs+k,hs+j,hs+i,iens) +
+                                                   dt_dyn * state_tend  (l,hs+k,hs+j,hs+i,iens);
             }
-          }
-        });
+            for (int l = 0; l < num_tracers; l++) {
+              tracers_tmp(l,hs+k,hs+j,hs+i,iens) = tracers(l,hs+k,hs+j,hs+i,iens) +
+                                                   dt_dyn * tracers_tend(l,hs+k,hs+j,hs+i,iens);
+              // For machine precision negative values after FCT-enforced positivity application
+              if (tracer_positive(l)) {
+                tracers_tmp(l,hs+k,hs+j,hs+i,iens) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i,iens) );
+              }
+            }
+          });
+        }
         //////////////
         // Stage 2
         //////////////
-        compute_tendencies( coupler , state_tmp , state_tend , tracers_tmp , tracers_tend , (1._fp/4._fp) * dt_dyn );
-        // Apply tendencies
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-          for (int l = 0; l < num_state  ; l++) {
-            state_tmp  (l,hs+k,hs+j,hs+i,iens) = (3._fp/4._fp) * state      (l,hs+k,hs+j,hs+i,iens) + 
-                                                 (1._fp/4._fp) * state_tmp  (l,hs+k,hs+j,hs+i,iens) +
-                                                 (1._fp/4._fp) * dt_dyn * state_tend  (l,k,j,i,iens);
-          }
-          for (int l = 0; l < num_tracers; l++) {
-            tracers_tmp(l,hs+k,hs+j,hs+i,iens) = (3._fp/4._fp) * tracers    (l,hs+k,hs+j,hs+i,iens) + 
-                                                 (1._fp/4._fp) * tracers_tmp(l,hs+k,hs+j,hs+i,iens) +
-                                                 (1._fp/4._fp) * dt_dyn * tracers_tend(l,k,j,i,iens);
-            // For machine precision negative values after FCT-enforced positivity application
-            if (tracer_positive(l)) {
-              tracers_tmp(l,hs+k,hs+j,hs+i,iens) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i,iens) );
+        {
+          auto state_tend   = state_tmp  .createDeviceCopy();
+          auto tracers_tend = tracers_tmp.createDeviceCopy();
+          real4d ru_div0("ru_div0",nz,ny,nx+1,nens);
+          real4d rv_div0("rv_div0",nz,ny+1,nx,nens);
+          real4d rw_div0("rw_div0",nz+1,ny,nx,nens);
+          project_to_div0_mass_fluxes       ( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 );
+          interpolate_mass_fluxes_to_momenta( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 );
+          apply_advective_tendencies        ( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 , dt_dyn );
+          using yakl::componentwise::operator-;
+          state_tend   = state_tmp   - state_tend  ;
+          tracers_tend = tracers_tmp - tracers_tend;
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+            for (int l = 0; l < num_state  ; l++) {
+              state_tmp  (l,hs+k,hs+j,hs+i,iens) = (3._fp/4._fp) * state      (l,hs+k,hs+j,hs+i,iens) + 
+                                                   (1._fp/4._fp) * state_tmp  (l,hs+k,hs+j,hs+i,iens) +
+                                                   (1._fp/4._fp) * dt_dyn * state_tend  (l,hs+k,hs+j,hs+i,iens);
             }
-          }
-        });
+            for (int l = 0; l < num_tracers; l++) {
+              tracers_tmp(l,hs+k,hs+j,hs+i,iens) = (3._fp/4._fp) * tracers    (l,hs+k,hs+j,hs+i,iens) + 
+                                                   (1._fp/4._fp) * tracers_tmp(l,hs+k,hs+j,hs+i,iens) +
+                                                   (1._fp/4._fp) * dt_dyn * tracers_tend(l,hs+k,hs+j,hs+i,iens);
+              // For machine precision negative values after FCT-enforced positivity application
+              if (tracer_positive(l)) {
+                tracers_tmp(l,hs+k,hs+j,hs+i,iens) = std::max( 0._fp , tracers_tmp(l,hs+k,hs+j,hs+i,iens) );
+              }
+            }
+          });
+        }
         //////////////
         // Stage 3
         //////////////
-        compute_tendencies( coupler , state_tmp , state_tend , tracers_tmp , tracers_tend , (2._fp/3._fp) * dt_dyn );
-        // Apply tendencies
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-          for (int l = 0; l < num_state  ; l++) {
-            state      (l,hs+k,hs+j,hs+i,iens) = (1._fp/3._fp) * state      (l,hs+k,hs+j,hs+i,iens) +
-                                                 (2._fp/3._fp) * state_tmp  (l,hs+k,hs+j,hs+i,iens) +
-                                                 (2._fp/3._fp) * dt_dyn * state_tend  (l,k,j,i,iens);
-          }
-          for (int l = 0; l < num_tracers; l++) {
-            tracers    (l,hs+k,hs+j,hs+i,iens) = (1._fp/3._fp) * tracers    (l,hs+k,hs+j,hs+i,iens) +
-                                                 (2._fp/3._fp) * tracers_tmp(l,hs+k,hs+j,hs+i,iens) +
-                                                 (2._fp/3._fp) * dt_dyn * tracers_tend(l,k,j,i,iens);
-            // For machine precision negative values after FCT-enforced positivity application
-            if (tracer_positive(l)) {
-              tracers    (l,hs+k,hs+j,hs+i,iens) = std::max( 0._fp , tracers    (l,hs+k,hs+j,hs+i,iens) );
+        {
+          auto state_tend   = state_tmp  .createDeviceCopy();
+          auto tracers_tend = tracers_tmp.createDeviceCopy();
+          real4d ru_div0("ru_div0",nz,ny,nx+1,nens);
+          real4d rv_div0("rv_div0",nz,ny+1,nx,nens);
+          real4d rw_div0("rw_div0",nz+1,ny,nx,nens);
+          project_to_div0_mass_fluxes       ( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 );
+          interpolate_mass_fluxes_to_momenta( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 );
+          apply_advective_tendencies        ( coupler , state_tmp , tracers_tmp , ru_div0 , rv_div0 , rw_div0 , dt_dyn );
+          using yakl::componentwise::operator-;
+          state_tend   = state_tmp   - state_tend  ;
+          tracers_tend = tracers_tmp - tracers_tend;
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+            for (int l = 0; l < num_state  ; l++) {
+              state      (l,hs+k,hs+j,hs+i,iens) = (1._fp/3._fp) * state      (l,hs+k,hs+j,hs+i,iens) +
+                                                   (2._fp/3._fp) * state_tmp  (l,hs+k,hs+j,hs+i,iens) +
+                                                   (2._fp/3._fp) * dt_dyn * state_tend  (l,hs+k,hs+j,hs+i,iens);
             }
-          }
-        });
+            for (int l = 0; l < num_tracers; l++) {
+              tracers    (l,hs+k,hs+j,hs+i,iens) = (1._fp/3._fp) * tracers    (l,hs+k,hs+j,hs+i,iens) +
+                                                   (2._fp/3._fp) * tracers_tmp(l,hs+k,hs+j,hs+i,iens) +
+                                                   (2._fp/3._fp) * dt_dyn * tracers_tend(l,hs+k,hs+j,hs+i,iens);
+              // For machine precision negative values after FCT-enforced positivity application
+              if (tracer_positive(l)) {
+                tracers    (l,hs+k,hs+j,hs+i,iens) = std::max( 0._fp , tracers    (l,hs+k,hs+j,hs+i,iens) );
+              }
+            }
+          });
+        }
       }
 
       // Convert the dycore's state back to the coupler's state
