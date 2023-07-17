@@ -51,6 +51,85 @@ int main(int argc, char** argv) {
     coupler_hi.set_option<real       >( "out_freq"   , config["out_freq"  ].as<real       >() );
     coupler_hi.set_option<std::string>( "standalone_input_file" , inFile );
 
+    ////////////////////////////////////////
+    // MODEL TEMPLATES
+    ////////////////////////////////////////
+    int  num_outputs         = 2;     // Interface flux values
+    int  num_neurons         = 10;    // Number of neurons per hidden layer
+    int  num_ensembles       = 1;     // Number of ensembles (1 for now, but that'll change)
+    real relu_negative_slope = 0.3;   // Negative slope for ReLU
+    int  num_inputs          = 7;    // 7 cells in reduced 3-D stencil
+    // Density model
+    auto model_rho = create_inference_model( Matvec<real>      ( num_inputs,num_neurons,num_ensembles  ) ,
+                                             Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                             Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                             Save_State<0,real>( num_neurons                           ) ,
+                                             Matvec<real>      ( num_neurons,num_neurons,num_ensembles ) ,
+                                             Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                             Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                             Binop_Add<0,real> ( num_neurons                           ) ,
+                                             Matvec<real>      ( num_neurons,num_outputs,num_ensembles ) ,
+                                             Bias  <real>      ( num_outputs,num_ensembles             ) );
+    num_inputs = 3*7;  // 3 wind velocity components * 7 cells in redeced 3-D stencil
+    // Momentum model (applied equally in each direction for isotropy)
+    auto model_mom = create_inference_model( Matvec<real>      ( num_inputs,num_neurons,num_ensembles  ) ,
+                                             Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                             Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                             Save_State<0,real>( num_neurons                           ) ,
+                                             Matvec<real>      ( num_neurons,num_neurons,num_ensembles ) ,
+                                             Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                             Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                             Binop_Add<0,real> ( num_neurons                           ) ,
+                                             Matvec<real>      ( num_neurons,num_outputs,num_ensembles ) ,
+                                             Bias  <real>      ( num_outputs,num_ensembles             ) );
+    num_inputs = 7;  // 7 cells in redeced 3-D stencil
+    // density*potential temperature model
+    auto model_rhot = create_inference_model( Matvec<real>      ( num_inputs,num_neurons,num_ensembles  ) ,
+                                              Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                              Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                              Save_State<0,real>( num_neurons                           ) ,
+                                              Matvec<real>      ( num_neurons,num_neurons,num_ensembles ) ,
+                                              Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                              Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                              Binop_Add<0,real> ( num_neurons                           ) ,
+                                              Matvec<real>      ( num_neurons,num_outputs,num_ensembles ) ,
+                                              Bias  <real>      ( num_outputs,num_ensembles             ) );
+    num_inputs = 7;  // 7 cells in redeced 3-D stencil
+    // Tracer transport model
+    auto model_trac = create_inference_model( Matvec<real>      ( num_inputs,num_neurons,num_ensembles  ) ,
+                                              Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                              Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                              Save_State<0,real>( num_neurons                           ) ,
+                                              Matvec<real>      ( num_neurons,num_neurons,num_ensembles ) ,
+                                              Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                              Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                              Binop_Add<0,real> ( num_neurons                           ) ,
+                                              Matvec<real>      ( num_neurons,num_outputs,num_ensembles ) ,
+                                              Bias  <real>      ( num_outputs,num_ensembles             ) );
+    // Create the trainer
+    auto num_parameters = model_rho .get_num_trainable_parameters() +
+                          model_mom .get_num_trainable_parameters() +
+                          model_rhot.get_num_trainable_parameters() +
+                          model_trac.get_num_trainable_parameters();
+    ponni::Trainer_GD_Adam_FD<real> trainer( test.get_trainable_parameters().reshape(num_parameters) );
+
+    // Initialize the model with the correct number of batches and ensembles
+    num_ensembles = trainer.get_num_ensembles();
+
+    // Create model with ensembles
+    auto model = create_inference_model( Matvec<real>      ( num_inputs,num_neurons,num_ensembles  ) ,
+                                         Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                         Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                         Save_State<0,real>( num_neurons                           ) ,
+                                         Matvec<real>      ( num_neurons,num_neurons,num_ensembles ) ,
+                                         Bias  <real>      ( num_neurons,num_ensembles             ) ,
+                                         Relu  <real>      ( num_neurons,relu_negative_slope       ) ,
+                                         Binop_Add<0,real> ( num_neurons                           ) ,
+                                         Matvec<real>      ( num_neurons,num_outputs,num_ensembles ) ,
+                                         Bias  <real>      ( num_outputs,num_ensembles             ) );
+    model.init( batch_size , num_ensembles );
+    model.print();
+
     // Create the trainer
     int num_trainable_parameters = 2;
     real1d trainable_parameters("trainable_parameters",num_trainable_parameters);

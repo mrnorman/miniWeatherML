@@ -388,7 +388,7 @@ namespace modules {
         params.slice<1>(1,0).deep_copy_to(beta_advect);
       } else {
         beta_acoust = 1;
-        beta_advect = 1;
+        beta_advect = 0.05;
       }
 
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
