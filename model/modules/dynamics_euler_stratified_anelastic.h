@@ -264,15 +264,6 @@ namespace modules {
       auto dy          = coupler.get_dy();
       auto dz          = coupler.get_dz();
       auto sim2d       = coupler.is_sim2d();
-      auto C0          = coupler.get_option<real>("C0"     );
-      auto gamma_d     = coupler.get_option<real>("gamma_d");
-      auto R_d         = coupler.get_option<real>("R_d"    );
-      auto cp_d        = coupler.get_option<real>("cp_d"   );
-      auto R_v         = coupler.get_option<real>("R_v"    );
-      auto cp_v        = coupler.get_option<real>("cp_v"   );
-      auto p0          = coupler.get_option<real>("p0"     );
-      auto grav        = coupler.get_option<real>("grav"   );
-      auto num_tracers = coupler.get_num_tracers();
 
       YAKL_SCOPE( ref_density_cells  , this->ref_density_cells  );
       YAKL_SCOPE( ref_theta_cells    , this->ref_theta_cells    );
@@ -348,6 +339,7 @@ namespace modules {
         }
         if (i < nx && j < ny) {
           rw0(k,j,i,iens) = 0.5_fp * (rw_limits(1,k,j,i,iens)+rw_limits(0,k,j,i,iens) - cs*(p_limits_z(1,k,j,i,iens)-p_limits_z(0,k,j,i,iens)));
+          if (k == 0 || k == nz) rw0(k,j,i,iens) = 0;
         }
       });
 
@@ -369,9 +361,10 @@ namespace modules {
         if (!sim2d) {
           div(k,j,i,iens) += (rv0(k,j+1,i,iens)-rv0(k,j,i,iens))/dz;
         }
-        p(1+k,1+j,1+i,iens) = gamma*ref_pressure_cells(hs+k,hs+j,hs+i,iens)/ref_theta_cells(hs+k,hs+j,hs+i,iens) *
-                              ( state(idT,hs+k,hs+j,hs+i,iens)/ref_density_cells(hs+k,iens) -
-                                ref_theta_cells(hs+k,iens) );
+        // p(1+k,1+j,1+i,iens) = gamma*ref_pressure_cells(hs+k,hs+j,hs+i,iens)/ref_theta_cells(hs+k,hs+j,hs+i,iens) *
+        //                       ( state(idT,hs+k,hs+j,hs+i,iens)/ref_density_cells(hs+k,iens) -
+        //                         ref_theta_cells(hs+k,iens) );
+        p(1+k,1+j,1+i,iens) = 0;
       });
 
       real4d p_diff("p_diff",nz,ny,nx,nens);
@@ -403,9 +396,250 @@ namespace modules {
         max_adiff = max_adiff_glob / diff_norm;
         num_iters++;
       }
+      DEBUG_PRINT_MAIN_VAL(num_iters);
 
       // Compute divergence-free mass flux
+      parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        if (j < ny && k < nz)           ru_div0(k,j,i,iens) = ru0(k,j,i,iens) - p(1+k,1+j,1+i) + p(1+k  ,1+j  ,1+i-1);
+        if (!sim2d && i < nx && k < nz) rv_div0(k,j,i,iens) = rv0(k,j,i,iens) - p(1+k,1+j,1+i) + p(1+k  ,1+j-1,1+i  );
+        if (i < nx && j < ny)           rw_div0(k,j,i,iens) = rw0(k,j,i,iens) - p(1+k,1+j,1+i) + p(1+k-1,1+j  ,1+i  );
+      });
       parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        div(k,j,i,iens) = (ru_div0(k,j,i+1,iens)-ru_div0(k,j,i,iens))/dx +
+                          (rw_div0(k+1,j,i,iens)-rw_div0(k,j,i,iens))/dz;
+        if (!sim2d) {
+          div(k,j,i,iens) += (rv_div0(k,j+1,i,iens)-rv_div0(k,j,i,iens))/dz;
+        }
+      });
+      real sum_div_loc = yakl::intrinsics::sum(div);
+      real sum_div_glob;
+      MPI_Allreduce( &sum_div_loc , &sum_div_glob , 1 , coupler.get_mpi_data_type() , MPI_MAX , MPI_COMM_WORLD );
+      real mean_div = sum_div_glob / coupler.get_nx_glob() / coupler.get_ny_glob() / coupler.get_nz() / coupler.get_nens();
+      DEBUG_PRINT_MAIN_VAL(mean_div);
+    }
+
+
+    void interpolate_mass_fluxes_to_momenta( core::Coupler const &coupler ,
+                                             real5d const &state          ,
+                                             realConst4d ru_div0_in       , 
+                                             realConst4d rv_div0_in       ,
+                                             realConst4d rw_div0_in       ) {
+      using yakl::c::parallel_for;
+      using yakl::c::SimpleBounds;
+      real4d ru_div0("ru_div0",nz+1+2*hs,ny+1+2*hs,nx+1+2*hs,nens);
+      real4d rv_div0("rv_div0",nz+1+2*hs,ny+1+2*hs,nx+1+2*hs,nens);
+      real4d rw_div0("rw_div0",nz+1+2*hs,ny+1+2*hs,nx+1+2*hs,nens);
+      parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        ru_div0(hs+k,hs+j,hs+i,iens) = ru_div0_in(k,j,i,iens);
+        rv_div0(hs+k,hs+j,hs+i,iens) = rv_div0_in(k,j,i,iens);
+        rw_div0(hs+k,hs+j,hs+i,iens) = rw_div0_in(k,j,i,iens);
+      });
+      halo_exchange(coupler , ru_div0 , rv_div0 , rw_div0 );
+      parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        if (ord == 3) {
+          // ( -s0 + 13*s1 + 13*s2 - s3 )/24
+          state(idU,hs+k,hs+j,hs+i,iens) = ( -    ru_div0(hs+k,hs+j,hs+i-1)  
+                                             + 13*ru_div0(hs+k,hs+j,hs+i  )  
+                                             + 13*ru_div0(hs+k,hs+j,hs+i+1)  
+                                             -    ru_div0(hs+k,hs+j,hs+i+2) ) / 24;
+          if (!sim2d) {
+            state(idV,hs+k,hs+j,hs+i,iens) = ( -    rv_div0(hs+k,hs+j-1,hs+i)  
+                                               + 13*rv_div0(hs+k,hs+j  ,hs+i)  
+                                               + 13*rv_div0(hs+k,hs+j+1,hs+i)  
+                                               -    rv_div0(hs+k,hs+j+2,hs+i) ) / 24;
+          }
+          state(idW,hs+k,hs+j,hs+i,iens) = ( -    rw_div0(hs+k-1,hs+j,hs+i)  
+                                             + 13*rw_div0(hs+k  ,hs+j,hs+i)  
+                                             + 13*rw_div0(hs+k+1,hs+j,hs+i)  
+                                             -    rw_div0(hs+k+2,hs+j,hs+i) ) / 24;
+        } else if (ord == 5) {
+          // ( 11*s0 - 93*s1 + 802*s2 + 802*s3 - 93*s4 + 11*s5 )/1440
+          state(idU,hs+k,hs+j,hs+i,iens) = ( +  11*ru_div0(hs+k,hs+j,hs+i-2)  
+                                             -  93*ru_div0(hs+k,hs+j,hs+i-1)  
+                                             + 802*ru_div0(hs+k,hs+j,hs+i  )  
+                                             + 802*ru_div0(hs+k,hs+j,hs+i+1)  
+                                             -  93*ru_div0(hs+k,hs+j,hs+i+2)  
+                                             +  11*ru_div0(hs+k,hs+j,hs+i+3) ) / 1440;
+          if (!sim2d) {
+          state(idV,hs+k,hs+j,hs+i,iens) = ( +  11*rv_div0(hs+k,hs+j-2,hs+i)  
+                                             -  93*rv_div0(hs+k,hs+j-1,hs+i)  
+                                             + 802*rv_div0(hs+k,hs+j  ,hs+i)  
+                                             + 802*rv_div0(hs+k,hs+j+1,hs+i)  
+                                             -  93*rv_div0(hs+k,hs+j+2,hs+i)  
+                                             +  11*rv_div0(hs+k,hs+j+3,hs+i) ) / 1440;
+          }
+          state(idW,hs+k,hs+j,hs+i,iens) = ( +  11*rw_div0(hs+k-2,hs+j,hs+i)  
+                                             -  93*rw_div0(hs+k-1,hs+j,hs+i)  
+                                             + 802*rw_div0(hs+k  ,hs+j,hs+i)  
+                                             + 802*rw_div0(hs+k+1,hs+j,hs+i)  
+                                             -  93*rw_div0(hs+k+2,hs+j,hs+i)  
+                                             +  11*rw_div0(hs+k+3,hs+j,hs+i) ) / 1440;
+        } else if (ord == 7) {
+          // ( -191*s0 + 1879*s1 - 9531*s2 + 68323*s3 + 68323*s4 - 9531*s5 + 1879*s6 - 191*s7 )/120960
+          state(idU,hs+k,hs+j,hs+i,iens) = ( -   191*ru_div0(hs+k,hs+j,hs+i-3)  
+                                             +  1879*ru_div0(hs+k,hs+j,hs+i-2)  
+                                             -  9531*ru_div0(hs+k,hs+j,hs+i-1)  
+                                             + 68323*ru_div0(hs+k,hs+j,hs+i  )  
+                                             + 68323*ru_div0(hs+k,hs+j,hs+i+1)  
+                                             -  9531*ru_div0(hs+k,hs+j,hs+i+2)  
+                                             +  1879*ru_div0(hs+k,hs+j,hs+i+3)  
+                                             -   191*ru_div0(hs+k,hs+j,hs+i+4) ) / 120960;
+          if (!sim2d) {
+            state(idV,hs+k,hs+j,hs+i,iens) = ( -   191*rv_div0(hs+k,hs+j-3,hs+i)  
+                                               +  1879*rv_div0(hs+k,hs+j-2,hs+i)  
+                                               -  9531*rv_div0(hs+k,hs+j-1,hs+i)  
+                                               + 68323*rv_div0(hs+k,hs+j  ,hs+i)  
+                                               + 68323*rv_div0(hs+k,hs+j+1,hs+i)  
+                                               -  9531*rv_div0(hs+k,hs+j+2,hs+i)  
+                                               +  1879*rv_div0(hs+k,hs+j+3,hs+i)  
+                                               -   191*rv_div0(hs+k,hs+j+4,hs+i) ) / 120960;
+          }
+          state(idW,hs+k,hs+j,hs+i,iens) = ( -   191*rw_div0(hs+k-3,hs+j,hs+i)  
+                                             +  1879*rw_div0(hs+k-2,hs+j,hs+i)  
+                                             -  9531*rw_div0(hs+k-1,hs+j,hs+i)  
+                                             + 68323*rw_div0(hs+k  ,hs+j,hs+i)  
+                                             + 68323*rw_div0(hs+k+1,hs+j,hs+i)  
+                                             -  9531*rw_div0(hs+k+2,hs+j,hs+i)  
+                                             +  1879*rw_div0(hs+k+3,hs+j,hs+i)  
+                                             -   191*rw_div0(hs+k+4,hs+j,hs+i) ) / 120960;
+        } else if (ord == 9) {
+          // ( 2497*s0 - 28939*s1 + 162680*s2 - 641776*s3 + 4134338*s4 + 4134338*s5 - 641776*s6 + 162680*s7 - 28939*s8 + 2497*s9 )/7257600
+          state(idU,hs+k,hs+j,hs+i,iens) = ( +    2497*ru_div0(hs+k,hs+j,hs+i-4)  
+                                             -   28939*ru_div0(hs+k,hs+j,hs+i-3)  
+                                             +  162680*ru_div0(hs+k,hs+j,hs+i-2)  
+                                             -  641776*ru_div0(hs+k,hs+j,hs+i-1)  
+                                             + 4134338*ru_div0(hs+k,hs+j,hs+i  )  
+                                             + 4134338*ru_div0(hs+k,hs+j,hs+i+1)  
+                                             -  641776*ru_div0(hs+k,hs+j,hs+i+2)  
+                                             +  162680*ru_div0(hs+k,hs+j,hs+i+3)  
+                                             -   28939*ru_div0(hs+k,hs+j,hs+i+4)  
+                                             +    2497*ru_div0(hs+k,hs+j,hs+i+5) ) / 7257600;
+          if (!sim2d) {
+            state(idV,hs+k,hs+j,hs+i,iens) = ( +    2497*rv_div0(hs+k,hs+j-4,hs+i)  
+                                               -   28939*rv_div0(hs+k,hs+j-3,hs+i)  
+                                               +  162680*rv_div0(hs+k,hs+j-2,hs+i)  
+                                               -  641776*rv_div0(hs+k,hs+j-1,hs+i)  
+                                               + 4134338*rv_div0(hs+k,hs+j  ,hs+i)  
+                                               + 4134338*rv_div0(hs+k,hs+j+1,hs+i)  
+                                               -  641776*rv_div0(hs+k,hs+j+2,hs+i)  
+                                               +  162680*rv_div0(hs+k,hs+j+3,hs+i)  
+                                               -   28939*rv_div0(hs+k,hs+j+4,hs+i)  
+                                               +    2497*rv_div0(hs+k,hs+j+5,hs+i) ) / 7257600;
+          }
+          state(idW,hs+k,hs+j,hs+i,iens) = ( +    2497*rw_div0(hs+k-4,hs+j,hs+i)  
+                                             -   28939*rw_div0(hs+k-3,hs+j,hs+i)  
+                                             +  162680*rw_div0(hs+k-2,hs+j,hs+i)  
+                                             -  641776*rw_div0(hs+k-1,hs+j,hs+i)  
+                                             + 4134338*rw_div0(hs+k  ,hs+j,hs+i)  
+                                             + 4134338*rw_div0(hs+k+1,hs+j,hs+i)  
+                                             -  641776*rw_div0(hs+k+2,hs+j,hs+i)  
+                                             +  162680*rw_div0(hs+k+3,hs+j,hs+i)  
+                                             -   28939*rw_div0(hs+k+4,hs+j,hs+i)  
+                                             +    2497*rw_div0(hs+k+5,hs+j,hs+i) ) / 7257600;
+        }
+      });
+    }
+
+
+    void apply_advective_tendencies( core::Coupler const &coupler ,
+                                     real5d const &state          ,
+                                     real5d const &tracers        ,
+                                     realConst4d ru_div0          ,
+                                     realConst4d rv_div0          ,
+                                     realConst4d rw_div0          ,
+                                     real dt_dyn                  ) {
+      using yakl::c::parallel_for;
+      using yakl::c::SimpleBounds;
+      auto nens        = coupler.get_nens();
+      auto nx          = coupler.get_nx();
+      auto ny          = coupler.get_ny();
+      auto nz          = coupler.get_nz();
+      auto dx          = coupler.get_dx();
+      auto dy          = coupler.get_dy();
+      auto dz          = coupler.get_dz();
+      auto sim2d       = coupler.is_sim2d();
+      auto C0          = coupler.get_option<real>("C0"     );
+      auto gamma       = coupler.get_option<real>("gamma_d");
+      auto grav        = coupler.get_option<real>("grav"   );
+      auto num_tracers = coupler.get_num_tracers();
+
+      // First, divide state and tracers by reference density
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        for (int l=0; l < num_state  ; l++) { state  (l,hs+k,hs+j,hs+i,iens) /= ref_density(hs+k,iens); }
+        for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+j,hs+i,iens) /= ref_density(hs+k,iens); }
+      });
+
+      halo_exchange( coupler , state , tracers , true );
+
+      // Compute fluxes
+      real6d state_limits_x  ("state_limits_x"  ,2,num_state  ,nz  ,ny  ,nx+1,nens);
+      real6d state_limits_y  ("state_limits_y"  ,2,num_state  ,nz  ,ny+1,nx  ,nens);
+      real6d state_limits_z  ("state_limits_z"  ,2,num_state  ,nz+1,ny  ,nx  ,nens);
+      real6d tracers_limits_x("tracers_limits_x",2,num_tracers,nz  ,ny  ,nx+1,nens);
+      real6d tracers_limits_y("tracers_limits_y",2,num_tracers,nz  ,ny+1,nx  ,nens);
+      real6d tracers_limits_z("tracers_limits_z",2,num_tracers,nz+1,ny  ,nx  ,nens);
+      weno::WenoLimiter<ord> limiter;
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        yakl::SArray<real,1,ord> stencil;
+        yakl::SArray<real,1,2  > gll;
+        for (int l=0; l < num_state; l++) {
+          for (int ii=0; ii < ord; ii++) { stencil(ii) = state(l,hs+k,hs+j,i+ii,iens); }
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
+          state_limits_x(l,1,k,j,i  ,iens) = gll(0);
+          state_limits_x(l,0,k,j,i+1,iens) = gll(1);
+        }
+        for (int l=0; l < num_tracers; l++) {
+          for (int ii=0; ii < ord; ii++) { stencil(ii) = tracers(l,hs+k,hs+j,i+ii,iens); }
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
+          tracers_limits_x(l,1,k,j,i  ,iens) = gll(0);
+          tracers_limits_x(l,0,k,j,i+1,iens) = gll(1);
+        }
+        if (sim2d) {
+          for (int l=0; l < num_state; l++) {
+            for (int ii=0; ii < ord; ii++) { stencil(ii) = state(l,hs+k,j+jj,hs+i,iens); }
+            reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
+            state_limits_y(l,1,k,j  ,i,iens) = gll(0);
+            state_limits_y(l,0,k,j+1,i,iens) = gll(1);
+          }
+          for (int l=0; l < num_tracers; l++) {
+            for (int ii=0; ii < ord; ii++) { stencil(ii) = tracers(l,hs+k,j+jj,hs+i,iens); }
+            reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
+            tracers_limits_y(l,1,k,j  ,i,iens) = gll(0);
+            tracers_limits_y(l,0,k,j+1,i,iens) = gll(1);
+          }
+        }
+        for (int l=0; l < num_state; l++) {
+          for (int ii=0; ii < ord; ii++) { stencil(ii) = state(l,k+kk,hs+j,hs+i,iens); }
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
+          state_limits_z(l,1,k  ,j,i,iens) = gll(0);
+          state_limits_z(l,0,k+1,j,i,iens) = gll(1);
+        }
+        for (int l=0; l < num_tracers; l++) {
+          for (int ii=0; ii < ord; ii++) { stencil(ii) = tracers(l,k+kk,hs+j,hs+i,iens); }
+          reconstruct_gll_values(stencil,gll,coefs_to_gll,limiter);
+          tracers_limits_z(l,1,k  ,j,i,iens) = gll(0);
+          tracers_limits_z(l,0,k+1,j,i,iens) = gll(1);
+        }
+      });
+
+      edge_exchange( coupler , state_limits_x , tracers_limits_x ,
+                               state_limits_y , tracers_limits_y ,
+                               state_limits_z , tracers_limits_z );
+
+      real5d state_flux_x  ("state_flux_x"  ,num_state  ,nz  ,ny  ,nx+1,nens);
+      real5d state_flux_y  ("state_flux_y"  ,num_state  ,nz  ,ny+1,nx  ,nens);
+      real5d state_flux_z  ("state_flux_z"  ,num_state  ,nz+1,ny  ,nx  ,nens);
+      real5d tracers_flux_x("tracers_flux_x",num_tracers,nz  ,ny  ,nx+1,nens);
+      real5d tracers_flux_y("tracers_flux_y",num_tracers,nz  ,ny+1,nx  ,nens);
+      real5d tracers_flux_z("tracers_flux_z",num_tracers,nz+1,ny  ,nx  ,nens);
+
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+        if (j < ny && k < nz) {
+        }
+        if (sim2d && i < nx && k < nz) {
+        }
+        if (i < nx && j < ny) {
+        }
     }
 
 
@@ -962,6 +1196,239 @@ namespace modules {
         if (py == nproc_y-1) {
           parallel_for( YAKL_AUTO_LABEL() , Bounds<3>(nz,nx,nens) , YAKL_LAMBDA (int k, int i, int iens) {
             pressure(1+k,1+ny+jj,1+i,iens) = pressure(1+k,1+ny-1,1+i,iens);
+          });
+        }
+      }
+    }
+
+
+    void halo_exchange(core::Coupler const &coupler ,
+                       real4d const &ru_div0        ,
+                       real4d const &rv_div0        ,
+                       real4d const &rw_div0        ) const {
+      using yakl::c::parallel_for;
+      using yakl::c::Bounds;
+
+      auto nens        = coupler.get_nens();
+      auto nx          = coupler.get_nx() + 1;
+      auto ny          = coupler.get_ny() + 1;
+      auto nz          = coupler.get_nz() + 1;
+      auto sim2d       = coupler.is_sim2d();
+      auto px          = coupler.get_px();
+      auto py          = coupler.get_py();
+      auto nproc_x     = coupler.get_nproc_x();
+      auto nproc_y     = coupler.get_nproc_y();
+      auto bc_x        = coupler.get_option<int>("bc_x");
+      auto bc_y        = coupler.get_option<int>("bc_y");
+      auto bc_z        = coupler.get_option<int>("bc_z");
+
+      int npack = 3;
+
+      realHost5d halo_send_buf_W_host("halo_send_buf_W_host",npack,nz,ny,hs,nens);
+      realHost5d halo_send_buf_E_host("halo_send_buf_E_host",npack,nz,ny,hs,nens);
+      realHost5d halo_send_buf_S_host("halo_send_buf_S_host",npack,nz,hs,nx,nens);
+      realHost5d halo_send_buf_N_host("halo_send_buf_N_host",npack,nz,hs,nx,nens);
+      realHost5d halo_recv_buf_S_host("halo_recv_buf_S_host",npack,nz,hs,nx,nens);
+      realHost5d halo_recv_buf_N_host("halo_recv_buf_N_host",npack,nz,hs,nx,nens);
+      realHost5d halo_recv_buf_W_host("halo_recv_buf_W_host",npack,nz,ny,hs,nens);
+      realHost5d halo_recv_buf_E_host("halo_recv_buf_E_host",npack,nz,ny,hs,nens);
+      real5d halo_send_buf_W("halo_send_buf_W",npack,nz,ny,hs,nens);
+      real5d halo_send_buf_E("halo_send_buf_E",npack,nz,ny,hs,nens);
+      real5d halo_send_buf_S("halo_send_buf_S",npack,nz,hs,nx,nens);
+      real5d halo_send_buf_N("halo_send_buf_N",npack,nz,hs,nx,nens);
+      real5d halo_recv_buf_W("halo_recv_buf_W",npack,nz,ny,hs,nens);
+      real5d halo_recv_buf_E("halo_recv_buf_E",npack,nz,ny,hs,nens);
+      real5d halo_recv_buf_S("halo_recv_buf_S",npack,nz,hs,nx,nens);
+      real5d halo_recv_buf_N("halo_recv_buf_N",npack,nz,hs,nx,nens);
+
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,hs,nens) ,
+                                        YAKL_LAMBDA (int k, int j, int ii, int iens) {
+        halo_send_buf_W(0,k,j,ii,iens) = ru_div0(hs+k,hs+j,hs+ii,iens);
+        halo_send_buf_E(0,k,j,ii,iens) = ru_div0(hs+k,hs+j,nx+ii,iens);
+        halo_send_buf_W(1,k,j,ii,iens) = rv_div0(hs+k,hs+j,hs+ii,iens);
+        halo_send_buf_E(1,k,j,ii,iens) = rv_div0(hs+k,hs+j,nx+ii,iens);
+        halo_send_buf_W(2,k,j,ii,iens) = rw_div0(hs+k,hs+j,hs+ii,iens);
+        halo_send_buf_E(2,k,j,ii,iens) = rw_div0(hs+k,hs+j,nx+ii,iens);
+      });
+
+      if (!sim2d) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,hs,nx,nens) ,
+                                          YAKL_LAMBDA (int k, int jj, int i, int iens) {
+          halo_send_buf_S(0,k,jj,i,iens) = ru_div0(hs+k,hs+jj,hs+i,iens);
+          halo_send_buf_N(0,k,jj,i,iens) = ru_div0(hs+k,ny+jj,hs+i,iens);
+          halo_send_buf_S(1,k,jj,i,iens) = rv_div0(hs+k,hs+jj,hs+i,iens);
+          halo_send_buf_N(1,k,jj,i,iens) = rv_div0(hs+k,ny+jj,hs+i,iens);
+          halo_send_buf_S(2,k,jj,i,iens) = rw_div0(hs+k,hs+jj,hs+i,iens);
+          halo_send_buf_N(2,k,jj,i,iens) = rw_div0(hs+k,ny+jj,hs+i,iens);
+        });
+      }
+
+      yakl::fence();
+      yakl::timer_start("halo_exchange_mpi");
+
+      MPI_Request sReq[4];
+      MPI_Request rReq[4];
+
+      auto &neigh = coupler.get_neighbor_rankid_matrix();
+      auto mpi_data_type = coupler.get_mpi_data_type();
+
+      #ifdef MW_GPU_AWARE_MPI
+        yakl::fence();
+
+        //Pre-post the receives
+        MPI_Irecv( halo_recv_buf_W.data() , halo_recv_buf_W.size() , mpi_data_type , neigh(1,0) , 0 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_E.data() , halo_recv_buf_E.size() , mpi_data_type , neigh(1,2) , 1 , MPI_COMM_WORLD , &rReq[1] );
+        if (!sim2d) {
+          MPI_Irecv( halo_recv_buf_S.data() , halo_recv_buf_S.size() , mpi_data_type , neigh(0,1) , 2 , MPI_COMM_WORLD , &rReq[2] );
+          MPI_Irecv( halo_recv_buf_N.data() , halo_recv_buf_N.size() , mpi_data_type , neigh(2,1) , 3 , MPI_COMM_WORLD , &rReq[3] );
+        }
+
+        //Send the data
+        MPI_Isend( halo_send_buf_W.data() , halo_send_buf_W.size() , mpi_data_type , neigh(1,0) , 1 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_E.data() , halo_send_buf_E.size() , mpi_data_type , neigh(1,2) , 0 , MPI_COMM_WORLD , &sReq[1] );
+        if (!sim2d) {
+          MPI_Isend( halo_send_buf_S.data() , halo_send_buf_S.size() , mpi_data_type , neigh(0,1) , 3 , MPI_COMM_WORLD , &sReq[2] );
+          MPI_Isend( halo_send_buf_N.data() , halo_send_buf_N.size() , mpi_data_type , neigh(2,1) , 2 , MPI_COMM_WORLD , &sReq[3] );
+        }
+
+        MPI_Status  sStat[4];
+        MPI_Status  rStat[4];
+
+        //Wait for the sends and receives to finish
+        if (sim2d) {
+          MPI_Waitall(2, sReq, sStat);
+          MPI_Waitall(2, rReq, rStat);
+        } else {
+          MPI_Waitall(4, sReq, sStat);
+          MPI_Waitall(4, rReq, rStat);
+        }
+        yakl::timer_stop("halo_exchange_mpi");
+      #else
+        //Pre-post the receives
+        MPI_Irecv( halo_recv_buf_W_host.data() , halo_recv_buf_W_host.size() , mpi_data_type , neigh(1,0) , 0 , MPI_COMM_WORLD , &rReq[0] );
+        MPI_Irecv( halo_recv_buf_E_host.data() , halo_recv_buf_E_host.size() , mpi_data_type , neigh(1,2) , 1 , MPI_COMM_WORLD , &rReq[1] );
+        if (!sim2d) {
+          MPI_Irecv( halo_recv_buf_S_host.data() , halo_recv_buf_S_host.size() , mpi_data_type , neigh(0,1) , 2 , MPI_COMM_WORLD , &rReq[2] );
+          MPI_Irecv( halo_recv_buf_N_host.data() , halo_recv_buf_N_host.size() , mpi_data_type , neigh(2,1) , 3 , MPI_COMM_WORLD , &rReq[3] );
+        }
+
+        halo_send_buf_W.deep_copy_to(halo_send_buf_W_host);
+        halo_send_buf_E.deep_copy_to(halo_send_buf_E_host);
+        if (!sim2d) {
+          halo_send_buf_S.deep_copy_to(halo_send_buf_S_host);
+          halo_send_buf_N.deep_copy_to(halo_send_buf_N_host);
+        }
+
+        yakl::fence();
+
+        //Send the data
+        MPI_Isend( halo_send_buf_W_host.data() , halo_send_buf_W_host.size() , mpi_data_type , neigh(1,0) , 1 , MPI_COMM_WORLD , &sReq[0] );
+        MPI_Isend( halo_send_buf_E_host.data() , halo_send_buf_E_host.size() , mpi_data_type , neigh(1,2) , 0 , MPI_COMM_WORLD , &sReq[1] );
+        if (!sim2d) {
+          MPI_Isend( halo_send_buf_S_host.data() , halo_send_buf_S_host.size() , mpi_data_type , neigh(0,1) , 3 , MPI_COMM_WORLD , &sReq[2] );
+          MPI_Isend( halo_send_buf_N_host.data() , halo_send_buf_N_host.size() , mpi_data_type , neigh(2,1) , 2 , MPI_COMM_WORLD , &sReq[3] );
+        }
+
+        MPI_Status  sStat[4];
+        MPI_Status  rStat[4];
+
+        //Wait for the sends and receives to finish
+        if (sim2d) {
+          MPI_Waitall(2, sReq, sStat);
+          MPI_Waitall(2, rReq, rStat);
+        } else {
+          MPI_Waitall(4, sReq, sStat);
+          MPI_Waitall(4, rReq, rStat);
+        }
+        yakl::timer_stop("halo_exchange_mpi");
+
+        halo_recv_buf_W_host.deep_copy_to(halo_recv_buf_W);
+        halo_recv_buf_E_host.deep_copy_to(halo_recv_buf_E);
+        if (!sim2d) {
+          halo_recv_buf_S_host.deep_copy_to(halo_recv_buf_S);
+          halo_recv_buf_N_host.deep_copy_to(halo_recv_buf_N);
+        }
+      #endif
+
+      parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,hs,nens) ,
+                                        YAKL_LAMBDA (int k, int j, int ii, int iens) {
+        ru_div0(hs+k,hs+j,      ii,iens) = halo_recv_buf_W(0,k,j,ii,iens);
+        ru_div0(hs+k,hs+j,nx+hs+ii,iens) = halo_recv_buf_E(0,k,j,ii,iens);
+        rv_div0(hs+k,hs+j,      ii,iens) = halo_recv_buf_W(1,k,j,ii,iens);
+        rv_div0(hs+k,hs+j,nx+hs+ii,iens) = halo_recv_buf_E(1,k,j,ii,iens);
+        rw_div0(hs+k,hs+j,      ii,iens) = halo_recv_buf_W(2,k,j,ii,iens);
+        rw_div0(hs+k,hs+j,nx+hs+ii,iens) = halo_recv_buf_E(2,k,j,ii,iens);
+      });
+
+      if (!sim2d) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,hs,nx,nens) ,
+                                          YAKL_LAMBDA (int k, int jj, int i, int iens) {
+          ru_div0(hs+k,      jj,hs+i,iens) = halo_recv_buf_S(0,k,jj,i,iens);
+          ru_div0(hs+k,ny+hs+jj,hs+i,iens) = halo_recv_buf_N(0,k,jj,i,iens);
+          rv_div0(hs+k,      jj,hs+i,iens) = halo_recv_buf_S(1,k,jj,i,iens);
+          rv_div0(hs+k,ny+hs+jj,hs+i,iens) = halo_recv_buf_N(1,k,jj,i,iens);
+          rw_div0(hs+k,      jj,hs+i,iens) = halo_recv_buf_S(2,k,jj,i,iens);
+          rw_div0(hs+k,ny+hs+jj,hs+i,iens) = halo_recv_buf_N(2,k,jj,i,iens);
+        });
+      }
+
+      ////////////////////////////////////
+      // Begin boundary conditions
+      ////////////////////////////////////
+      if (bc_z == BC_PERIODIC) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(hs,ny,nx,nens) ,
+                                          YAKL_LAMBDA (int kk, int j, int i, int iens) {
+          ru_div0(      kk,hs+j,hs+i,iens) = ru_div0(      kk+nz,hs+j,hs+i,iens);
+          ru_div0(hs+nz+kk,hs+j,hs+i,iens) = ru_div0(hs+nz+kk-nz,hs+j,hs+i,iens);
+          rv_div0(      kk,hs+j,hs+i,iens) = rv_div0(      kk+nz,hs+j,hs+i,iens);
+          rv_div0(hs+nz+kk,hs+j,hs+i,iens) = rv_div0(hs+nz+kk-nz,hs+j,hs+i,iens);
+          rw_div0(      kk,hs+j,hs+i,iens) = rw_div0(      kk+nz,hs+j,hs+i,iens);
+          rw_div0(hs+nz+kk,hs+j,hs+i,iens) = rw_div0(hs+nz+kk-nz,hs+j,hs+i,iens);
+        });
+      } else if (bc_z == BC_WALL || bc_z == BC_OPEN) {
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(hs,ny,nx,nens) ,
+                                          YAKL_LAMBDA (int kk, int j, int i, int iens) {
+          ru_div0(      kk,hs+j,hs+i,iens) = ru_div0(hs+0   ,hs+j,hs+i,iens)/ref_density_cells(hs+0   ,iens)*ref_density_cells(      kk,iens);
+          ru_div0(hs+nz+kk,hs+j,hs+i,iens) = ru_div0(hs+nz-1,hs+j,hs+i,iens)/ref_density_cells(hs+nz-1,iens)*ref_density_cells(hs+nz+kk,iens);
+          rv_div0(      kk,hs+j,hs+i,iens) = rv_div0(hs+0   ,hs+j,hs+i,iens)/ref_density_cells(hs+0   ,iens)*ref_density_cells(      kk,iens);
+          rv_div0(hs+nz+kk,hs+j,hs+i,iens) = rv_div0(hs+nz-1,hs+j,hs+i,iens)/ref_density_cells(hs+nz-1,iens)*ref_density_cells(hs+nz+kk,iens);
+          rw_div0(      kk,hs+j,hs+i,iens) = rw_div0(hs+0   ,hs+j,hs+i,iens)/ref_density_cells(hs+0   ,iens)*ref_density_cells(      kk,iens);
+          rw_div0(hs+nz+kk,hs+j,hs+i,iens) = rw_div0(hs+nz-1,hs+j,hs+i,iens)/ref_density_cells(hs+nz-1,iens)*ref_density_cells(hs+nz+kk,iens);
+        });
+      }
+      if (bc_x == BC_WALL || bc_x == BC_OPEN) {
+        if (px == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,hs,nens) ,
+                                            YAKL_LAMBDA (int k, int j, int ii, int iens) {
+            ru_div0(hs+k,hs+j,ii,iens) = ru_div0(hs+k,hs+j,hs+0,iens);
+            rv_div0(hs+k,hs+j,ii,iens) = rv_div0(hs+k,hs+j,hs+0,iens);
+            rw_div0(hs+k,hs+j,ii,iens) = rw_div0(hs+k,hs+j,hs+0,iens);
+          });
+        }
+        if (px == nproc_x-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,hs,nens) ,
+                                            YAKL_LAMBDA (int k, int j, int ii, int iens) {
+            ru_div0(hs+k,hs+j,hs+nx+ii,iens) = ru_div0(,hs+k,hs+j,hs+nx-1,iens);
+            rv_div0(hs+k,hs+j,hs+nx+ii,iens) = rv_div0(,hs+k,hs+j,hs+nx-1,iens);
+            rw_div0(hs+k,hs+j,hs+nx+ii,iens) = rw_div0(,hs+k,hs+j,hs+nx-1,iens);
+          });
+        }
+      }
+      if (bc_y == BC_WALL || bc_y == BC_OPEN) {
+        if (py == 0) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,hs,nx,nens) ,
+                                            YAKL_LAMBDA (int k, int jj, int i, int iens) {
+            ru_div0(hs+k,jj,hs+i,iens) = ru_div0(hs+k,hs+0,hs+i,iens);
+            rv_div0(hs+k,jj,hs+i,iens) = rv_div0(hs+k,hs+0,hs+i,iens);
+            rw_div0(hs+k,jj,hs+i,iens) = rw_div0(hs+k,hs+0,hs+i,iens);
+          });
+        }
+        if (py == nproc_y-1) {
+          parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,hs,nx,nens) ,
+                                            YAKL_LAMBDA (int k, int jj, int i, int iens) {
+            ru_div0(hs+k,hs+ny+jj,hs+i,iens) = ru_div0(hs+k,hs+ny-1,hs+i,iens);
+            rv_div0(hs+k,hs+ny+jj,hs+i,iens) = rv_div0(hs+k,hs+ny-1,hs+i,iens);
+            rw_div0(hs+k,hs+ny+jj,hs+i,iens) = rw_div0(hs+k,hs+ny-1,hs+i,iens);
           });
         }
       }
