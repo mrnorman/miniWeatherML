@@ -1,6 +1,6 @@
 
 #include "coupler.h"
-#include "dynamics_euler_stratified_wenofv.h"
+#include "dynamics_euler_stratified_energy.h"
 #include "horizontal_sponge.h"
 #include "time_averager.h"
 #include "sponge_layer.h"

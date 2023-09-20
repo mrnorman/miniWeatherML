@@ -48,10 +48,6 @@ namespace modules {
     int  static constexpr BC_WALL     = 2;
 
     // Hydrostatic background profiles for density and potential temperature as cell averages and cell edge values
-    real2d               hy_dens_cells;
-    real2d               hy_dens_theta_cells;
-    real2d               hy_dens_edges;
-    real2d               hy_dens_theta_edges;
     real                 etime;         // Elapsed time
     real                 out_freq;      // Frequency out file output
     int                  num_out;       // Number of outputs produced thus far
@@ -234,22 +230,17 @@ namespace modules {
       auto immersed_proportion = dm.get<real,4>("immersed_proportion");
 
       // A slew of things to bring from class scope into local scope so that lambdas copy them by value to the GPU
-      YAKL_SCOPE( hy_dens_cells              , this->hy_dens_cells              );
-      YAKL_SCOPE( hy_dens_theta_cells        , this->hy_dens_theta_cells        );
-      YAKL_SCOPE( hy_dens_edges              , this->hy_dens_edges              );
-      YAKL_SCOPE( hy_dens_theta_edges        , this->hy_dens_theta_edges        );
       YAKL_SCOPE( tracer_positive            , this->tracer_positive            );
       YAKL_SCOPE( coefs_to_gll               , this->coefs_to_gll               );
 
       // Since tracers are full mass, it's helpful before reconstruction to remove the background density for potentially
       // more accurate reconstructions of tracer concentrations
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-        state(idU,hs+k,hs+j,hs+i,iens) /= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
-        state(idV,hs+k,hs+j,hs+i,iens) /= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
-        state(idW,hs+k,hs+j,hs+i,iens) /= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
-        for (int tr=0; tr < num_tracers; tr++) {
-          tracers(tr,hs+k,hs+j,hs+i,iens) /= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
-        }
+        state(idU,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens);
+        state(idV,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens);
+        state(idW,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens);
+        state(idT,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens);
+        for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i,iens) /= state(idR,hs+k,hs+j,hs+i,iens); }
       });
 
       halo_exchange( coupler , state , tracers );
@@ -281,16 +272,14 @@ namespace modules {
           state_limits_x(l,0,k,j,i+1,iens) = gll(1);
         }
         // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-        state_limits_x(idR,1,k,j,i  ,iens) += hy_dens_cells(k,iens);
-        state_limits_x(idR,0,k,j,i+1,iens) += hy_dens_cells(k,iens);
         state_limits_x(idU,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
         state_limits_x(idU,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
         state_limits_x(idV,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
         state_limits_x(idV,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
         state_limits_x(idW,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
         state_limits_x(idW,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
-        state_limits_x(idT,1,k,j,i  ,iens) += hy_dens_theta_cells(k,iens);
-        state_limits_x(idT,0,k,j,i+1,iens) += hy_dens_theta_cells(k,iens);
+        state_limits_x(idT,1,k,j,i  ,iens) *= state_limits_x(idR,1,k,j,i  ,iens);
+        state_limits_x(idT,0,k,j,i+1,iens) *= state_limits_x(idR,0,k,j,i+1,iens);
         // Tracers
         for (int l=0; l < num_tracers; l++) {
           // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
@@ -318,16 +307,14 @@ namespace modules {
             state_limits_y(l,0,k,j+1,i,iens) = gll(1);
           }
           // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-          state_limits_y(idR,1,k,j  ,i,iens) += hy_dens_cells(k,iens);
-          state_limits_y(idR,0,k,j+1,i,iens) += hy_dens_cells(k,iens);
           state_limits_y(idU,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
           state_limits_y(idU,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
           state_limits_y(idV,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
           state_limits_y(idV,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
           state_limits_y(idW,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
           state_limits_y(idW,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
-          state_limits_y(idT,1,k,j  ,i,iens) += hy_dens_theta_cells(k,iens);
-          state_limits_y(idT,0,k,j+1,i,iens) += hy_dens_theta_cells(k,iens);
+          state_limits_y(idT,1,k,j  ,i,iens) *= state_limits_y(idR,1,k,j  ,i,iens);
+          state_limits_y(idT,0,k,j+1,i,iens) *= state_limits_y(idR,0,k,j+1,i,iens);
           // Tracers
           for (int l=0; l < num_tracers; l++) {
             // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
@@ -363,16 +350,14 @@ namespace modules {
           state_limits_z(l,0,k+1,j,i,iens) = gll(1);
         }
         // Add back hydrostatic backgrounds to density and density*theta because only perturbations were reconstructed
-        state_limits_z(idR,1,k  ,j,i,iens) += hy_dens_edges(k  ,iens);
-        state_limits_z(idR,0,k+1,j,i,iens) += hy_dens_edges(k+1,iens);
         state_limits_z(idU,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
         state_limits_z(idU,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
         state_limits_z(idV,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
         state_limits_z(idV,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
         state_limits_z(idW,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
         state_limits_z(idW,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
-        state_limits_z(idT,1,k  ,j,i,iens) += hy_dens_theta_edges(k  ,iens);
-        state_limits_z(idT,0,k+1,j,i,iens) += hy_dens_theta_edges(k+1,iens);
+        state_limits_z(idT,1,k  ,j,i,iens) *= state_limits_z(idR,1,k  ,j,i,iens);
+        state_limits_z(idT,0,k+1,j,i,iens) *= state_limits_z(idR,0,k+1,j,i,iens);
         // Tracers
         for (int l=0; l < num_tracers; l++) {
           // Gather the stencil of cell averages, and use WENO to compute values at the cell edges (i.e., 2 GLL points)
@@ -473,12 +458,11 @@ namespace modules {
 
         // Multiply density back to other variables
         if (i < nx && j < ny && k < nz) {
-          state(idU,hs+k,hs+j,hs+i,iens) *= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
-          state(idV,hs+k,hs+j,hs+i,iens) *= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
-          state(idW,hs+k,hs+j,hs+i,iens) *= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
-          for (int tr=0; tr < num_tracers; tr++) {
-            tracers(tr,hs+k,hs+j,hs+i,iens) *= ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
-          }
+          state(idU,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
+          state(idV,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
+          state(idW,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
+          state(idT,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens);
+          for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i,iens) *= state(idR,hs+k,hs+j,hs+i,iens); }
         }
       });
 
@@ -519,7 +503,7 @@ namespace modules {
           state_tend  (l,k,j,i,iens) = -( state_flux_x  (l,k  ,j  ,i+1,iens) - state_flux_x  (l,k,j,i,iens) ) / dx
                                        -( state_flux_y  (l,k  ,j+1,i  ,iens) - state_flux_y  (l,k,j,i,iens) ) / dy
                                        -( state_flux_z  (l,k+1,j  ,i  ,iens) - state_flux_z  (l,k,j,i,iens) ) / dz;
-          if (l == idW && enable_gravity) state_tend(l,k,j,i,iens) += -grav * ( state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens) );
+          if (l == idW && enable_gravity) state_tend(l,k,j,i,iens) += -grav * state(idR,hs+k,hs+j,hs+i,iens);
           if (l == idU) state_tend(l,k,j,i,iens) += fcor*state(idV,hs+k,hs+j,hs+i,iens);
           if (l == idV) state_tend(l,k,j,i,iens) -= fcor*state(idU,hs+k,hs+j,hs+i,iens);
           if (l == idV && sim2d) state_tend(l,k,j,i,iens) = 0;
@@ -531,7 +515,7 @@ namespace modules {
         }
         if (use_immersed_boundaries) {
           // Determine the time scale of damping
-          real tau = 1.e3*dt;
+          real tau = dt;
           // Compute immersed material tendencies (zero velocity, reference density & temperature)
           real imm_tend_idR = -std::min(1._fp,dt/tau)*state(idR,hs+k,hs+j,hs+i,iens)/dt;
           real imm_tend_idU = -std::min(1._fp,dt/tau)*state(idU,hs+k,hs+j,hs+i,iens)/dt;
@@ -540,11 +524,9 @@ namespace modules {
           real imm_tend_idT = -std::min(1._fp,dt/tau)*state(idT,hs+k,hs+j,hs+i,iens)/dt;
           // immersed proportion has immersed tendnecies. Other proportion has free tendencies
           real prop = immersed_proportion(k,j,i,iens);
-          state_tend(idR,k,j,i,iens) = prop*imm_tend_idR + (1-prop)*state_tend(idR,k,j,i,iens);
           state_tend(idU,k,j,i,iens) = prop*imm_tend_idU + (1-prop)*state_tend(idU,k,j,i,iens);
           state_tend(idV,k,j,i,iens) = prop*imm_tend_idV + (1-prop)*state_tend(idV,k,j,i,iens);
           state_tend(idW,k,j,i,iens) = prop*imm_tend_idW + (1-prop)*state_tend(idW,k,j,i,iens);
-          state_tend(idT,k,j,i,iens) = prop*imm_tend_idT + (1-prop)*state_tend(idT,k,j,i,iens);
         }
       });
     }
@@ -1197,10 +1179,6 @@ namespace modules {
       using yakl::c::Bounds;
 
       YAKL_SCOPE( init_data_int       , this->init_data_int       );
-      YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-      YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
-      YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
-      YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
       YAKL_SCOPE( idWV                , this->idWV                );
 
       // Set class data from # grid points, grid spacing, domain sizes, whether it's 2-D, and physical constants
@@ -1319,12 +1297,6 @@ namespace modules {
       real5d state  ("state"  ,num_state  ,nz+2*hs,ny+2*hs,nx+2*hs,nens);
       real5d tracers("tracers",num_tracers,nz+2*hs,ny+2*hs,nx+2*hs,nens);
 
-      // Allocate arrays for hydrostatic background states
-      hy_dens_cells       = real2d("hy_dens_cells"      ,nz  ,nens);
-      hy_dens_theta_cells = real2d("hy_dens_theta_cells",nz  ,nens);
-      hy_dens_edges       = real2d("hy_dens_edges"      ,nz+1,nens);
-      hy_dens_theta_edges = real2d("hy_dens_theta_edges",nz+1,nens);
-
       if (init_data_int == DATA_SUPERCELL) {
 
         coupler.add_option<int>("bc_x",BC_PERIODIC);
@@ -1375,11 +1347,11 @@ namespace modules {
                 if (sim2d) v = 0;
 
                 real wt = qweights(ii)*qweights(jj)*qweights(kk);
-                state(idR,hs+k,hs+j,hs+i,iens) += ( rho - hr )          * wt;
-                state(idU,hs+k,hs+j,hs+i,iens) += rho*u                 * wt;
-                state(idV,hs+k,hs+j,hs+i,iens) += rho*v                 * wt;
-                state(idW,hs+k,hs+j,hs+i,iens) += rho*w                 * wt;
-                state(idT,hs+k,hs+j,hs+i,iens) += ( rho*theta - hr*ht ) * wt;
+                state(idR,hs+k,hs+j,hs+i,iens) += rho       * wt;
+                state(idU,hs+k,hs+j,hs+i,iens) += rho*u     * wt;
+                state(idV,hs+k,hs+j,hs+i,iens) += rho*v     * wt;
+                state(idW,hs+k,hs+j,hs+i,iens) += rho*w     * wt;
+                state(idT,hs+k,hs+j,hs+i,iens) += rho*theta * wt;
                 for (int tr=0; tr < num_tracers; tr++) {
                   if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i,iens) += rho_v * wt; }
                   else            { tracers(tr,hs+k,hs+j,hs+i,iens) += 0     * wt; }
@@ -1387,33 +1359,6 @@ namespace modules {
               }
             }
           }
-        });
-
-
-        // Compute hydrostatic background cell averages using quadrature
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nens) , YAKL_LAMBDA (int k, int iens) {
-          hy_dens_cells      (k,iens) = 0.;
-          hy_dens_theta_cells(k,iens) = 0.;
-          for (int kk=0; kk<nqpoints; kk++) {
-            real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
-            real hr, ht;
-
-            if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
-
-            hy_dens_cells      (k,iens) += hr    * qweights(kk);
-            hy_dens_theta_cells(k,iens) += hr*ht * qweights(kk);
-          }
-        });
-
-        // Compute hydrostatic background cell edge values
-        parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz+1,nens) , YAKL_LAMBDA (int k, int iens) {
-          real z = k*dz;
-          real hr, ht;
-
-          if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
-
-          hy_dens_edges      (k,iens) = hr   ;
-          hy_dens_theta_edges(k,iens) = hr*ht;
         });
 
       } else if (init_data_int == DATA_CITY) {
@@ -1487,11 +1432,11 @@ namespace modules {
                 if (sim2d) v = 0;
 
                 real wt = qweights(ii)*qweights(jj)*qweights(kk);
-                state(idR,hs+k,hs+j,hs+i,iens) += ( rho - hr )          * wt;
-                state(idU,hs+k,hs+j,hs+i,iens) += rho*u                 * wt;
-                state(idV,hs+k,hs+j,hs+i,iens) += rho*v                 * wt;
-                state(idW,hs+k,hs+j,hs+i,iens) += rho*w                 * wt;
-                state(idT,hs+k,hs+j,hs+i,iens) += ( rho*theta - hr*ht ) * wt;
+                state(idR,hs+k,hs+j,hs+i,iens) += rho       * wt;
+                state(idU,hs+k,hs+j,hs+i,iens) += rho*u     * wt;
+                state(idV,hs+k,hs+j,hs+i,iens) += rho*v     * wt;
+                state(idW,hs+k,hs+j,hs+i,iens) += rho*w     * wt;
+                state(idT,hs+k,hs+j,hs+i,iens) += rho*theta * wt;
                 for (int tr=0; tr < num_tracers; tr++) {
                   if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i,iens) += rho_v * wt; }
                   else            { tracers(tr,hs+k,hs+j,hs+i,iens) += 0     * wt; }
@@ -1505,44 +1450,12 @@ namespace modules {
                ( jnorm >= 0 && jnorm < nblocks_y*9 && jnorm%9 < 8 ) ) {
             if ( k <= std::ceil( building_heights(jnorm,inorm) / dz ) ) {
               immersed_proportion(k,j,i,iens) = 1;
-              // state(idU,hs+k,hs+j,hs+i,iens) = 0;
-              // state(idV,hs+k,hs+j,hs+i,iens) = 0;
-              // state(idW,hs+k,hs+j,hs+i,iens) = 0;
+              state(idU,hs+k,hs+j,hs+i,iens) = 0;
+              state(idV,hs+k,hs+j,hs+i,iens) = 0;
+              state(idW,hs+k,hs+j,hs+i,iens) = 0;
             }
           }
         });
-        if (enable_gravity) {
-          // Compute hydrostatic background cell averages using quadrature
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nens) , YAKL_LAMBDA (int k, int iens) {
-            hy_dens_cells      (k,iens) = 0.;
-            hy_dens_theta_cells(k,iens) = 0.;
-            for (int kk=0; kk<nqpoints; kk++) {
-              real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
-              real hr, ht;
-
-              hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
-
-              hy_dens_cells      (k,iens) += hr    * qweights(kk);
-              hy_dens_theta_cells(k,iens) += hr*ht * qweights(kk);
-            }
-          });
-
-          // Compute hydrostatic background cell edge values
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz+1,nens) , YAKL_LAMBDA (int k, int iens) {
-            real z = k*dz;
-            real hr, ht;
-
-            hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
-
-            hy_dens_edges      (k,iens) = hr   ;
-            hy_dens_theta_edges(k,iens) = hr*ht;
-          });
-        } else {
-          hy_dens_cells = 1.15;
-          hy_dens_edges = 1.15;
-          hy_dens_theta_cells = 1.15*300;
-          hy_dens_theta_edges = 1.15*300;
-        }
 
       } else if (init_data_int == DATA_BUILDING) {
 
@@ -1591,11 +1504,11 @@ namespace modules {
                 if (sim2d) v = 0;
 
                 real wt = qweights(ii)*qweights(jj)*qweights(kk);
-                state(idR,hs+k,hs+j,hs+i,iens) += ( rho - hr )          * wt;
-                state(idU,hs+k,hs+j,hs+i,iens) += rho*u                 * wt;
-                state(idV,hs+k,hs+j,hs+i,iens) += rho*v                 * wt;
-                state(idW,hs+k,hs+j,hs+i,iens) += rho*w                 * wt;
-                state(idT,hs+k,hs+j,hs+i,iens) += ( rho*theta - hr*ht ) * wt;
+                state(idR,hs+k,hs+j,hs+i,iens) += rho       * wt;
+                state(idU,hs+k,hs+j,hs+i,iens) += rho*u     * wt;
+                state(idV,hs+k,hs+j,hs+i,iens) += rho*v     * wt;
+                state(idW,hs+k,hs+j,hs+i,iens) += rho*w     * wt;
+                state(idT,hs+k,hs+j,hs+i,iens) += rho*theta * wt;
                 for (int tr=0; tr < num_tracers; tr++) {
                   if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i,iens) += rho_v * wt; }
                   else            { tracers(tr,hs+k,hs+j,hs+i,iens) += 0     * wt; }
@@ -1609,44 +1522,11 @@ namespace modules {
           real yr = 0.05*ny_glob;
           if ( std::abs(i_beg+i-x0) <= xr && std::abs(j_beg+j-y0) <= yr && k <= 0.2*nz ) {
             immersed_proportion(k,j,i,iens) = 1;
-            // state(idU,hs+k,hs+j,hs+i,iens) = 0;
-            // state(idV,hs+k,hs+j,hs+i,iens) = 0;
-            // state(idW,hs+k,hs+j,hs+i,iens) = 0;
+            state(idU,hs+k,hs+j,hs+i,iens) = 0;
+            state(idV,hs+k,hs+j,hs+i,iens) = 0;
+            state(idW,hs+k,hs+j,hs+i,iens) = 0;
           }
         });
-
-        if (enable_gravity) {
-          // Compute hydrostatic background cell averages using quadrature
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz,nens) , YAKL_LAMBDA (int k, int iens) {
-            hy_dens_cells      (k,iens) = 0.;
-            hy_dens_theta_cells(k,iens) = 0.;
-            for (int kk=0; kk<nqpoints; kk++) {
-              real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
-              real hr, ht;
-
-              hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
-
-              hy_dens_cells      (k,iens) += hr    * qweights(kk);
-              hy_dens_theta_cells(k,iens) += hr*ht * qweights(kk);
-            }
-          });
-
-          // Compute hydrostatic background cell edge values
-          parallel_for( YAKL_AUTO_LABEL() , Bounds<2>(nz+1,nens) , YAKL_LAMBDA (int k, int iens) {
-            real z = k*dz;
-            real hr, ht;
-
-            hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
-
-            hy_dens_edges      (k,iens) = hr   ;
-            hy_dens_theta_edges(k,iens) = hr*ht;
-          });
-        } else {
-          hy_dens_cells = 1.15;
-          hy_dens_edges = 1.15;
-          hy_dens_theta_cells = 1.15*300;
-          hy_dens_theta_edges = 1.15*300;
-        }
 
       }
 
@@ -1655,15 +1535,6 @@ namespace modules {
 
       // Output the initial state
       if (out_freq >= 0. ) output( coupler , etime );
-
-      // Some modules might need to use hydrostasis to project values into material boundaries
-      // So let's put it into the coupler's data manager just in case
-      dm.register_and_allocate<real>("hy_dens_cells"      ,"hydrostatic density cell averages"      ,{nz,nens});
-      dm.register_and_allocate<real>("hy_dens_theta_cells","hydrostatic density*theta cell averages",{nz,nens});
-      auto dm_hy_dens_cells       = dm.get<real,2>("hy_dens_cells"      );
-      auto dm_hy_dens_theta_cells = dm.get<real,2>("hy_dens_theta_cells");
-      hy_dens_cells      .deep_copy_to( dm_hy_dens_cells      );
-      hy_dens_theta_cells.deep_copy_to( dm_hy_dens_theta_cells);
 
       // Register the tracers in the coupler so the user has access if they want (and init to zero)
       dm.register_and_allocate<real>("state_flux_x"  ,"state_flux_x"  ,{num_state  ,nz  ,ny  ,nx+1,nens},{"num_state"  ,"z"  ,"y"  ,"xp1","nens"});
@@ -1692,10 +1563,6 @@ namespace modules {
       real constexpr T_top  = 213;
       real constexpr p_0    = 100000;
 
-      YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-      YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
-      YAKL_SCOPE( hy_dens_edges       , this->hy_dens_edges       );
-      YAKL_SCOPE( hy_dens_theta_edges , this->hy_dens_theta_edges );
       YAKL_SCOPE( idWV                , this->idWV                );
       YAKL_SCOPE( gll_pts             , this->gll_pts             );
       YAKL_SCOPE( gll_wts             , this->gll_wts             );
@@ -1718,6 +1585,11 @@ namespace modules {
       auto num_tracers = coupler.get_num_tracers();
       auto i_beg       = coupler.get_i_beg();
       auto j_beg       = coupler.get_j_beg();
+
+      real2d hy_dens_cells      ("hy_dens_cells      ",nz  ,nens);
+      real2d hy_dens_theta_cells("hy_dens_theta_cells",nz  ,nens);
+      real2d hy_dens_edges      ("hy_dens_edges      ",nz+1,nens);
+      real2d hy_dens_theta_edges("hy_dens_theta_edges",nz+1,nens);
 
       // Temporary arrays used to compute the initial state for high-CAPE supercell conditions
       real3d quad_temp       ("quad_temp"       ,nz,ord-1,ord);
@@ -1872,12 +1744,12 @@ namespace modules {
               real dens_theta = hyDensThetaGLL(k,kk);
 
               real factor = gll_wts(ii) * gll_wts(jj) * gll_wts(kk);
-              state  (idR ,hs+k,hs+j,hs+i,iens) += (dens - hyDensGLL(k,kk))            * factor;
-              state  (idU ,hs+k,hs+j,hs+i,iens) += dens * uvel                         * factor;
-              state  (idV ,hs+k,hs+j,hs+i,iens) += dens * vvel                         * factor;
-              state  (idW ,hs+k,hs+j,hs+i,iens) += dens * wvel                         * factor;
-              state  (idT ,hs+k,hs+j,hs+i,iens) += (dens_theta - hyDensThetaGLL(k,kk)) * factor;
-              tracers(idWV,hs+k,hs+j,hs+i,iens) += dens_vap                            * factor;
+              state  (idR ,hs+k,hs+j,hs+i,iens) += dens        * factor;
+              state  (idU ,hs+k,hs+j,hs+i,iens) += dens * uvel * factor;
+              state  (idV ,hs+k,hs+j,hs+i,iens) += dens * vvel * factor;
+              state  (idW ,hs+k,hs+j,hs+i,iens) += dens * wvel * factor;
+              state  (idT ,hs+k,hs+j,hs+i,iens) += dens_theta  * factor;
+              tracers(idWV,hs+k,hs+j,hs+i,iens) += dens_vap    * factor;
             }
           }
         }
@@ -1890,8 +1762,6 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-      YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
       YAKL_SCOPE( idWV                , this->idWV                );
       YAKL_SCOPE( tracer_adds_mass    , this->tracer_adds_mass    );
 
@@ -1917,24 +1787,20 @@ namespace modules {
       // Get tracers from the coupler
       core::MultiField<real,4> dm_tracers;
       auto tracer_names = coupler.get_tracer_names();
-      for (int tr=0; tr < num_tracers; tr++) {
-        dm_tracers.add_field( dm.get<real,4>(tracer_names[tr]) );
-      }
+      for (int tr=0; tr < num_tracers; tr++) { dm_tracers.add_field( dm.get<real,4>(tracer_names[tr]) ); }
 
       // Convert from state and tracers arrays to the coupler's data
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-        real rho   = state(idR,hs+k,hs+j,hs+i,iens) + hy_dens_cells(k,iens);
+        real rho   = state(idR,hs+k,hs+j,hs+i,iens);
         real u     = state(idU,hs+k,hs+j,hs+i,iens) / rho;
         real v     = state(idV,hs+k,hs+j,hs+i,iens) / rho;
         real w     = state(idW,hs+k,hs+j,hs+i,iens) / rho;
-        real theta = ( state(idT,hs+k,hs+j,hs+i,iens) + hy_dens_theta_cells(k,iens) ) / rho;
+        real theta = state(idT,hs+k,hs+j,hs+i,iens) / rho;
         real press = C0 * pow( rho*theta , gamma );
 
         real rho_v = tracers(idWV,hs+k,hs+j,hs+i,iens);
         real rho_d = rho;
-        for (int tr=0; tr < num_tracers; tr++) {
-          if (tracer_adds_mass(tr)) rho_d -= tracers(tr,hs+k,hs+j,hs+i,iens);
-        }
+        for (int tr=0; tr < num_tracers; tr++) { if (tracer_adds_mass(tr)) rho_d -= tracers(tr,hs+k,hs+j,hs+i,iens); }
         real temp = press / ( rho_d * R_d + rho_v * R_v );
 
         dm_rho_d(k,j,i,iens) = rho_d;
@@ -1942,9 +1808,7 @@ namespace modules {
         dm_vvel (k,j,i,iens) = v;
         dm_wvel (k,j,i,iens) = w;
         dm_temp (k,j,i,iens) = temp;
-        for (int tr=0; tr < num_tracers; tr++) {
-          dm_tracers(tr,k,j,i,iens) = tracers(tr,hs+k,hs+j,hs+i,iens);
-        }
+        for (int tr=0; tr < num_tracers; tr++) { dm_tracers(tr,k,j,i,iens) = tracers(tr,hs+k,hs+j,hs+i,iens); }
       });
     }
 
@@ -1954,8 +1818,6 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      YAKL_SCOPE( hy_dens_cells       , this->hy_dens_cells       );
-      YAKL_SCOPE( hy_dens_theta_cells , this->hy_dens_theta_cells );
       YAKL_SCOPE( idWV                , this->idWV                );
       YAKL_SCOPE( tracer_adds_mass    , this->tracer_adds_mass    );
 
@@ -1981,9 +1843,7 @@ namespace modules {
       // Get the coupler's tracers (as const because it's read-only)
       core::MultiField<real const,4> dm_tracers;
       auto tracer_names = coupler.get_tracer_names();
-      for (int tr=0; tr < num_tracers; tr++) {
-        dm_tracers.add_field( dm.get<real const,4>(tracer_names[tr]) );
-      }
+      for (int tr=0; tr < num_tracers; tr++) { dm_tracers.add_field( dm.get<real const,4>(tracer_names[tr]) ); }
 
       // Convert from the coupler's state to the dycore's state and tracers arrays
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
@@ -1996,19 +1856,15 @@ namespace modules {
         real press = rho_d * R_d * temp + rho_v * R_v * temp;
 
         real rho = rho_d;
-        for (int tr=0; tr < num_tracers; tr++) {
-          if (tracer_adds_mass(tr)) rho += dm_tracers(tr,k,j,i,iens);
-        }
+        for (int tr=0; tr < num_tracers; tr++) { if (tracer_adds_mass(tr)) rho += dm_tracers(tr,k,j,i,iens); }
         real theta = pow( press/C0 , 1._fp / gamma ) / rho;
 
-        state(idR,hs+k,hs+j,hs+i,iens) = rho - hy_dens_cells(k,iens);
+        state(idR,hs+k,hs+j,hs+i,iens) = rho;
         state(idU,hs+k,hs+j,hs+i,iens) = rho * u;
         state(idV,hs+k,hs+j,hs+i,iens) = rho * v;
         state(idW,hs+k,hs+j,hs+i,iens) = rho * w;
-        state(idT,hs+k,hs+j,hs+i,iens) = rho * theta - hy_dens_theta_cells(k,iens);
-        for (int tr=0; tr < num_tracers; tr++) {
-          tracers(tr,hs+k,hs+j,hs+i,iens) = dm_tracers(tr,k,j,i,iens);
-        }
+        state(idT,hs+k,hs+j,hs+i,iens) = rho * theta;
+        for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i,iens) = dm_tracers(tr,k,j,i,iens); }
       });
     }
 
