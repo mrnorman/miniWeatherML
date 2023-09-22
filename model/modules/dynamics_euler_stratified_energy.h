@@ -35,7 +35,7 @@ namespace modules {
     int  static constexpr idU = 1;  // u-momentum
     int  static constexpr idV = 2;  // v-momentum
     int  static constexpr idW = 3;  // w-momentum
-    int  static constexpr idT = 4;  // Density * potential temperature
+    int  static constexpr idT = 4;  // Total energy
 
     // IDs for the test cases
     int  static constexpr DATA_THERMAL   = 0;
@@ -48,16 +48,9 @@ namespace modules {
     int  static constexpr BC_WALL     = 2;
 
     // Hydrostatic background profiles for density and potential temperature as cell averages and cell edge values
-    real                 etime;         // Elapsed time
-    real                 out_freq;      // Frequency out file output
-    int                  num_out;       // Number of outputs produced thus far
-    int                  init_data_int; // Integer representation of the type of initial data to use (test case)
-    int                  idWV;              // Index number for water vapor in the tracers array
-    bool1d               tracer_adds_mass;  // Whether a tracer adds mass to the full density
-    bool1d               tracer_positive;   // Whether a tracer needs to remain non-negative
-    SArray<real,1,ord>   gll_pts;          // GLL point locations in domain [-0.5 , 0.5]
-    SArray<real,1,ord>   gll_wts;          // GLL weights normalized to sum to 1
-    SArray<real,2,ord,2> coefs_to_gll;     // Matrix to convert ord poly coefs to two GLL points
+    real etime;    // Elapsed time
+    real out_freq; // Frequency out file output
+    int  num_out;  // Number of outputs produced thus far
 
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
@@ -78,13 +71,12 @@ namespace modules {
       using yakl::intrinsics::maxval;
       using yakl::intrinsics::abs;
 
-      YAKL_SCOPE( tracer_positive , this->tracer_positive );
-
-      auto num_tracers = coupler.get_num_tracers();
-      auto nens        = coupler.get_nens();
-      auto nx          = coupler.get_nx();
-      auto ny          = coupler.get_ny();
-      auto nz          = coupler.get_nz();
+      auto num_tracers     = coupler.get_num_tracers();
+      auto nens            = coupler.get_nens();
+      auto nx              = coupler.get_nx();
+      auto ny              = coupler.get_ny();
+      auto nz              = coupler.get_nz();
+      auto tracer_positive = coupler.get_data_manager_readonly().get<bool const,1>("tracer_positive");
 
       // Create arrays to hold state and tracers with halos on the left and right of the domain
       // Cells [0:hs-1] are the left halos, and cells [nx+hs:nx+2*hs-1] are the right halos
@@ -216,7 +208,7 @@ namespace modules {
       auto C0                      = coupler.get_option<real>("C0"     );
       auto gamma                   = coupler.get_option<real>("gamma_d");
       auto grav                    = coupler.get_option<real>("grav"   );
-      auto enable_gravity = coupler.get_option<bool>("enable_gravity",true);
+      auto enable_gravity          = coupler.get_option<bool>("enable_gravity",true);
       auto num_tracers             = coupler.get_num_tracers();
 
       // The store a single values flux at cell edges
@@ -228,10 +220,10 @@ namespace modules {
       auto tracers_flux_y      = dm.get<real,5>("tracers_flux_y");
       auto tracers_flux_z      = dm.get<real,5>("tracers_flux_z");
       auto immersed_proportion = dm.get<real,4>("immersed_proportion");
+      auto tracer_positive     = dm.get<bool const,1>("tracer_positive");
 
-      // A slew of things to bring from class scope into local scope so that lambdas copy them by value to the GPU
-      YAKL_SCOPE( tracer_positive            , this->tracer_positive            );
-      YAKL_SCOPE( coefs_to_gll               , this->coefs_to_gll               );
+      SArray<real,2,ord,2> coefs_to_gll;
+      TransformMatrices::coefs_to_gll_lower(coefs_to_gll);
 
       // Since tracers are full mass, it's helpful before reconstruction to remove the background density for potentially
       // more accurate reconstructions of tracer concentrations
@@ -1178,26 +1170,23 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      YAKL_SCOPE( init_data_int       , this->init_data_int       );
-      YAKL_SCOPE( idWV                , this->idWV                );
-
       // Set class data from # grid points, grid spacing, domain sizes, whether it's 2-D, and physical constants
-      auto nens        = coupler.get_nens();
-      auto nx          = coupler.get_nx();
-      auto ny          = coupler.get_ny();
-      auto nz          = coupler.get_nz();
-      auto dx          = coupler.get_dx();
-      auto dy          = coupler.get_dy();
-      auto dz          = coupler.get_dz();
-      auto xlen        = coupler.get_xlen();
-      auto ylen        = coupler.get_ylen();
-      auto zlen        = coupler.get_zlen();
-      auto i_beg       = coupler.get_i_beg();
-      auto j_beg       = coupler.get_j_beg();
-      auto nx_glob     = coupler.get_nx_glob();
-      auto ny_glob     = coupler.get_ny_glob();
-      auto sim2d       = coupler.is_sim2d();
-      auto num_tracers = coupler.get_num_tracers();
+      auto nens           = coupler.get_nens();
+      auto nx             = coupler.get_nx();
+      auto ny             = coupler.get_ny();
+      auto nz             = coupler.get_nz();
+      auto dx             = coupler.get_dx();
+      auto dy             = coupler.get_dy();
+      auto dz             = coupler.get_dz();
+      auto xlen           = coupler.get_xlen();
+      auto ylen           = coupler.get_ylen();
+      auto zlen           = coupler.get_zlen();
+      auto i_beg          = coupler.get_i_beg();
+      auto j_beg          = coupler.get_j_beg();
+      auto nx_glob        = coupler.get_nx_glob();
+      auto ny_glob        = coupler.get_ny_glob();
+      auto sim2d          = coupler.is_sim2d();
+      auto num_tracers    = coupler.get_num_tracers();
       auto enable_gravity = coupler.get_option<bool>("enable_gravity",true);
 
       if (! coupler.option_exists("R_d"     )) coupler.set_option<real>("R_d"     ,287.       );
@@ -1244,19 +1233,16 @@ namespace modules {
       gamma = coupler.get_option<real>("gamma_d");
       C0    = coupler.get_option<real>("C0"     );
 
-      // Use TransformMatrices class to create matrices & GLL points to convert degrees of freedom as needed
-      TransformMatrices::get_gll_points          (gll_pts         );
-      TransformMatrices::get_gll_weights         (gll_wts         );
-      TransformMatrices::coefs_to_gll_lower      (coefs_to_gll    );
-
       // Create arrays to determine whether we should add mass for a tracer or whether it should remain non-negative
       num_tracers = coupler.get_num_tracers();
-      tracer_adds_mass = bool1d("tracer_adds_mass",num_tracers);
-      tracer_positive  = bool1d("tracer_positive" ,num_tracers);
+      bool1d tracer_adds_mass("tracer_adds_mass",num_tracers);
+      bool1d tracer_positive ("tracer_positive" ,num_tracers);
 
       // Must assign on the host to avoid segfaults
       auto tracer_adds_mass_host = tracer_adds_mass.createHostCopy();
       auto tracer_positive_host  = tracer_positive .createHostCopy();
+
+      int idWV;
 
       auto tracer_names = coupler.get_tracer_names();  // Get a list of tracer names
       for (int tr=0; tr < num_tracers; tr++) {
@@ -1277,6 +1263,11 @@ namespace modules {
       dm.register_and_allocate<bool>("tracer_adds_mass","",{num_tracers});
       auto dm_tracer_adds_mass = dm.get<bool,1>("tracer_adds_mass");
       tracer_adds_mass.deep_copy_to(dm_tracer_adds_mass);
+      dm.register_and_allocate<bool>("tracer_positive","",{num_tracers});
+      auto dm_tracer_positive = dm.get<bool,1>("tracer_positive");
+      tracer_positive.deep_copy_to(dm_tracer_positive);
+
+      int init_data_int;
 
       // Set an integer version of the input_data so we can test it inside GPU kernels
       if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
@@ -1563,9 +1554,9 @@ namespace modules {
       real constexpr T_top  = 213;
       real constexpr p_0    = 100000;
 
-      YAKL_SCOPE( idWV                , this->idWV                );
-      YAKL_SCOPE( gll_pts             , this->gll_pts             );
-      YAKL_SCOPE( gll_wts             , this->gll_wts             );
+      SArray<real,1,ord> gll_pts, gll_wts;
+      TransformMatrices::get_gll_points (gll_pts);
+      TransformMatrices::get_gll_weights(gll_wts);
 
       auto nens        = coupler.get_nens();
       auto nx          = coupler.get_nx();
@@ -1585,6 +1576,7 @@ namespace modules {
       auto num_tracers = coupler.get_num_tracers();
       auto i_beg       = coupler.get_i_beg();
       auto j_beg       = coupler.get_j_beg();
+      auto idWV        = coupler.get_option<int>("idWV");
 
       real2d hy_dens_cells      ("hy_dens_cells      ",nz  ,nens);
       real2d hy_dens_theta_cells("hy_dens_theta_cells",nz  ,nens);
@@ -1762,9 +1754,6 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      YAKL_SCOPE( idWV                , this->idWV                );
-      YAKL_SCOPE( tracer_adds_mass    , this->tracer_adds_mass    );
-
       auto nens        = coupler.get_nens();
       auto nx          = coupler.get_nx();
       auto ny          = coupler.get_ny();
@@ -1774,6 +1763,7 @@ namespace modules {
       auto gamma       = coupler.get_option<real>("gamma_d");
       auto C0          = coupler.get_option<real>("C0"     );
       auto num_tracers = coupler.get_num_tracers();
+      auto idWV        = coupler.get_option<int>("idWV");
 
       auto &dm = coupler.get_data_manager_readwrite();
 
@@ -1783,6 +1773,7 @@ namespace modules {
       auto dm_vvel  = dm.get<real,4>("vvel"       );
       auto dm_wvel  = dm.get<real,4>("wvel"       );
       auto dm_temp  = dm.get<real,4>("temp"       );
+      auto tracer_adds_mass = dm.get<bool const,1>("tracer_adds_mass");
 
       // Get tracers from the coupler
       core::MultiField<real,4> dm_tracers;
@@ -1818,9 +1809,6 @@ namespace modules {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
 
-      YAKL_SCOPE( idWV                , this->idWV                );
-      YAKL_SCOPE( tracer_adds_mass    , this->tracer_adds_mass    );
-
       auto nens        = coupler.get_nens();
       auto nx          = coupler.get_nx();
       auto ny          = coupler.get_ny();
@@ -1830,6 +1818,7 @@ namespace modules {
       auto gamma       = coupler.get_option<real>("gamma_d");
       auto C0          = coupler.get_option<real>("C0"     );
       auto num_tracers = coupler.get_num_tracers();
+      auto idWV        = coupler.get_option<int>("idWV");
 
       auto &dm = coupler.get_data_manager_readonly();
 
@@ -1839,6 +1828,7 @@ namespace modules {
       auto dm_vvel  = dm.get<real const,4>("vvel"       );
       auto dm_wvel  = dm.get<real const,4>("wvel"       );
       auto dm_temp  = dm.get<real const,4>("temp"       );
+      auto tracer_adds_mass = dm.get<bool const,1>("tracer_adds_mass");
 
       // Get the coupler's tracers (as const because it's read-only)
       core::MultiField<real const,4> dm_tracers;
