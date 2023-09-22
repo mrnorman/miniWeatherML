@@ -1,0 +1,16 @@
+---
+sim_time        : 5.
+nens            : 1
+nx_glob         : 32
+ny_glob         : 32
+nz              : 32
+xlen            : 1
+ylen            : 1
+zlen            : 1
+init_data       : kelvin_helmholtz
+out_prefix      : test
+out_freq        : 0.25
+enable_gravity  : false
+file_per_process: false
+kh_alpha        : 0.25
+

@@ -38,10 +38,11 @@ namespace modules {
     int  static constexpr idT = 4;  // Total energy
 
     // IDs for the test cases
-    int  static constexpr DATA_THERMAL   = 0;
-    int  static constexpr DATA_SUPERCELL = 1;
-    int  static constexpr DATA_CITY      = 2;
-    int  static constexpr DATA_BUILDING  = 3;
+    int  static constexpr DATA_THERMAL          = 0;
+    int  static constexpr DATA_SUPERCELL        = 1;
+    int  static constexpr DATA_CITY             = 2;
+    int  static constexpr DATA_BUILDING         = 3;
+    int  static constexpr DATA_KELVIN_HELMHOLTZ = 4;
 
     int  static constexpr BC_PERIODIC = 0;
     int  static constexpr BC_OPEN     = 1;
@@ -55,12 +56,43 @@ namespace modules {
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
     real compute_time_step( core::Coupler const &coupler ) const {
-      auto dx = coupler.get_dx();
-      auto dy = coupler.get_dy();
-      auto dz = coupler.get_dz();
-      real constexpr maxwave = 350 + 80;
-      real cfl = 0.6;
-      return cfl * std::min( std::min( dx , dy ) , dz ) / maxwave;
+      using yakl::c::parallel_for;
+      using yakl::c::SimpleBounds;
+      auto dx       = coupler.get_dx();
+      auto dy       = coupler.get_dy();
+      auto dz       = coupler.get_dz();
+      auto nens     = coupler.get_nens();
+      auto nx       = coupler.get_nx();
+      auto ny       = coupler.get_ny();
+      auto nz       = coupler.get_nz();
+      auto &dm      = coupler.get_data_manager_readonly();
+      auto dm_rho_d = dm.get<real const,4>("density_dry");
+      auto dm_uvel  = dm.get<real const,4>("uvel"       );
+      auto dm_vvel  = dm.get<real const,4>("vvel"       );
+      auto dm_wvel  = dm.get<real const,4>("wvel"       );
+      auto dm_temp  = dm.get<real const,4>("temp"       );
+      auto gamma_d  = coupler.get_option<real>("gamma_d");
+      auto R_d      = coupler.get_option<real>("R_d"    );
+      real cfl      = 0.3;
+      real4d dt4d("dt4d",nz,ny,nx,nens);
+      parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(nz,ny,nx,nens) ,
+                                        YAKL_LAMBDA (int k, int j, int i, int iens) {
+        real rho_d = dm_rho_d(k,j,i,iens);
+        real u     = dm_uvel (k,j,i,iens);
+        real v     = dm_uvel (k,j,i,iens);
+        real w     = dm_wvel (k,j,i,iens);
+        real temp  = dm_temp (k,j,i,iens);
+        real p     = rho_d*R_d*temp;
+        real cs    = std::sqrt(gamma_d*p/rho_d);
+        real dt_x  = cfl * dx / std::max( std::abs(u-cs) , std::abs(u+cs) );
+        real dt_y  = cfl * dy / std::max( std::abs(v-cs) , std::abs(v+cs) );
+        real dt_z  = cfl * dz / std::max( std::abs(w-cs) , std::abs(w+cs) );
+        dt4d(k,j,i,iens) = std::min( std::min( dt_x , dt_y ) , dt_z );
+      });
+      real dtmin_loc = yakl::intrinsics::minval( dt4d );
+      real dtmin_glob;
+      MPI_Allreduce( &dtmin_loc , &dtmin_glob , 1 , coupler.get_mpi_data_type() , MPI_MIN , MPI_COMM_WORLD );
+      return dtmin_glob;
     }
 
 
@@ -1270,10 +1302,11 @@ namespace modules {
       int init_data_int;
 
       // Set an integer version of the input_data so we can test it inside GPU kernels
-      if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
-      else if (init_data == "supercell") { init_data_int = DATA_SUPERCELL; }
-      else if (init_data == "city"     ) { init_data_int = DATA_CITY;      }
-      else if (init_data == "building" ) { init_data_int = DATA_BUILDING;  }
+      if      (init_data == "thermal"          ) { init_data_int = DATA_THERMAL;           }
+      else if (init_data == "supercell"        ) { init_data_int = DATA_SUPERCELL;         }
+      else if (init_data == "city"             ) { init_data_int = DATA_CITY;              }
+      else if (init_data == "building"         ) { init_data_int = DATA_BUILDING;          }
+      else if (init_data == "kelvin_helmholtz" ) { init_data_int = DATA_KELVIN_HELMHOLTZ;  }
       else { endrun("ERROR: Invalid init_data in yaml input file"); }
 
       coupler.set_option<bool>("use_immersed_boundaries",false);
@@ -1295,6 +1328,118 @@ namespace modules {
         coupler.add_option<int>("bc_z",BC_WALL);
         coupler.add_option<real>("latitude",0);
         init_supercell( coupler , state , tracers );
+
+
+      } else if (init_data_int == DATA_KELVIN_HELMHOLTZ) {
+
+        coupler.add_option<int>("bc_x",BC_PERIODIC);
+        coupler.add_option<int>("bc_y",BC_PERIODIC);
+        coupler.add_option<int>("bc_z",BC_PERIODIC);
+        coupler.add_option<real>("latitude",0);
+        coupler.set_option<bool>("enable_gravity",false);
+        coupler.get_option<real>("grav",0._fp);
+        auto alpha = coupler.get_option<real>("kh_alpha",0.25);
+
+        int constexpr nqpoints = 9;
+        SArray<real,1,nqpoints> qpoints;
+        SArray<real,1,nqpoints> qweights;
+        TransformMatrices::get_gll_points (qpoints );
+        TransformMatrices::get_gll_weights(qweights);
+
+        auto i_beg = coupler.get_i_beg();
+        auto j_beg = coupler.get_j_beg();
+
+        // Use quadrature to initialize state data
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) ,
+                                          YAKL_LAMBDA (int k, int j, int i, int iens) {
+          for (int l=0; l < num_state  ; l++) { state  (l,hs+k,hs+j,hs+i,iens) = 0.; }
+          for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+j,hs+i,iens) = 0.; }
+          for (int kk=0; kk<nqpoints; kk++) {
+            for (int jj=0; jj<nqpoints; jj++) {
+              for (int ii=0; ii<nqpoints; ii++) {
+                real x      = (i+i_beg+0.5)*dx + (qpoints(ii)-0.5)*dx;
+                real y      = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
+                real z      = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
+                real lambda = 0.01;
+                int  n      = 2;
+                int  L      = 1;
+                real rho_d  = std::abs(z-zlen/2) >= zlen/4 ? 1 : 2;
+                real u      = std::abs(z-zlen/2) >= zlen/4 ? alpha : -alpha;
+                real w      =             lambda * sin(2*M_PI*n*(x-xlen/2)/L);
+                real v      = sim2d ? 0 : lambda * sin(2*M_PI*n*(y-ylen/2)/L);
+                real p      = 2.5;
+                real rho_v  = 0;
+                real rho    = rho_d + rho_v;
+                real temp   = p / rho_d / R_d;
+                real e      = cv_d*temp + (u*u + v*v + w*w)/2 + grav*z;
+
+                real wt = qweights(ii)*qweights(jj)*qweights(kk);
+                state(idR,hs+k,hs+j,hs+i,iens) += rho   * wt;
+                state(idU,hs+k,hs+j,hs+i,iens) += rho*u * wt;
+                state(idV,hs+k,hs+j,hs+i,iens) += rho*v * wt;
+                state(idW,hs+k,hs+j,hs+i,iens) += rho*w * wt;
+                state(idT,hs+k,hs+j,hs+i,iens) += rho*e * wt;
+              }
+            }
+          }
+        });
+
+
+      } else if (init_data_int == DATA_THERMAL) {
+
+        coupler.add_option<int>("bc_x",BC_PERIODIC);
+        coupler.add_option<int>("bc_y",BC_PERIODIC);
+        coupler.add_option<int>("bc_z",BC_WALL    );
+        coupler.add_option<real>("latitude",0);
+        // Define quadrature weights and points for 3-point rules
+        const int nqpoints = 3;
+        SArray<real,1,nqpoints> qpoints;
+        SArray<real,1,nqpoints> qweights;
+
+        qpoints(0) = 0.112701665379258311482073460022;
+        qpoints(1) = 0.500000000000000000000000000000;
+        qpoints(2) = 0.887298334620741688517926539980;
+
+        qweights(0) = 0.277777777777777777777777777779;
+        qweights(1) = 0.444444444444444444444444444444;
+        qweights(2) = 0.277777777777777777777777777779;
+
+        size_t i_beg = coupler.get_i_beg();
+        size_t j_beg = coupler.get_j_beg();
+
+        // Use quadrature to initialize state and tracer data
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
+          for (int l=0; l < num_state  ; l++) { state  (l,hs+k,hs+j,hs+i,iens) = 0.; }
+          for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+j,hs+i,iens) = 0.; }
+          //Use Gauss-Legendre quadrature
+          for (int kk=0; kk<nqpoints; kk++) {
+            for (int jj=0; jj<nqpoints; jj++) {
+              for (int ii=0; ii<nqpoints; ii++) {
+                real x = (i+i_beg+0.5)*dx + (qpoints(ii)-0.5)*dx;
+                real y = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
+                real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
+                real rho, u, v, w, theta, rho_v, hr, ht;
+
+                if (init_data_int == DATA_THERMAL) {
+                  thermal(x,y,z,xlen,ylen,grav,C0,gamma,cp_d,p0,R_d,R_v,rho,u,v,w,theta,rho_v,hr,ht);
+                }
+
+                if (sim2d) v = 0;
+
+                real wt = qweights(ii)*qweights(jj)*qweights(kk);
+                state(idR,hs+k,hs+j,hs+i,iens) += rho       * wt;
+                state(idU,hs+k,hs+j,hs+i,iens) += rho*u     * wt;
+                state(idV,hs+k,hs+j,hs+i,iens) += rho*v     * wt;
+                state(idW,hs+k,hs+j,hs+i,iens) += rho*w     * wt;
+                state(idT,hs+k,hs+j,hs+i,iens) += rho*theta * wt;
+                for (int tr=0; tr < num_tracers; tr++) {
+                  if (tr == idWV) { tracers(tr,hs+k,hs+j,hs+i,iens) += rho_v * wt; }
+                  else            { tracers(tr,hs+k,hs+j,hs+i,iens) += 0     * wt; }
+                }
+              }
+            }
+          }
+        });
 
       } else if (init_data_int == DATA_THERMAL) {
 
@@ -1753,20 +1898,19 @@ namespace modules {
     void convert_dynamics_to_coupler( core::Coupler &coupler , realConst5d state , realConst5d tracers ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
-
       auto nens        = coupler.get_nens();
       auto nx          = coupler.get_nx();
       auto ny          = coupler.get_ny();
       auto nz          = coupler.get_nz();
+      auto dz          = coupler.get_dz();
       auto R_d         = coupler.get_option<real>("R_d"    );
       auto R_v         = coupler.get_option<real>("R_v"    );
       auto gamma       = coupler.get_option<real>("gamma_d");
       auto C0          = coupler.get_option<real>("C0"     );
+      auto grav        = coupler.get_option<real>("grav"   );
       auto num_tracers = coupler.get_num_tracers();
       auto idWV        = coupler.get_option<int>("idWV");
-
       auto &dm = coupler.get_data_manager_readwrite();
-
       // Get state from the coupler
       auto dm_rho_d = dm.get<real,4>("density_dry");
       auto dm_uvel  = dm.get<real,4>("uvel"       );
@@ -1774,26 +1918,23 @@ namespace modules {
       auto dm_wvel  = dm.get<real,4>("wvel"       );
       auto dm_temp  = dm.get<real,4>("temp"       );
       auto tracer_adds_mass = dm.get<bool const,1>("tracer_adds_mass");
-
       // Get tracers from the coupler
       core::MultiField<real,4> dm_tracers;
       auto tracer_names = coupler.get_tracer_names();
       for (int tr=0; tr < num_tracers; tr++) { dm_tracers.add_field( dm.get<real,4>(tracer_names[tr]) ); }
-
       // Convert from state and tracers arrays to the coupler's data
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-        real rho   = state(idR,hs+k,hs+j,hs+i,iens);
-        real u     = state(idU,hs+k,hs+j,hs+i,iens) / rho;
-        real v     = state(idV,hs+k,hs+j,hs+i,iens) / rho;
-        real w     = state(idW,hs+k,hs+j,hs+i,iens) / rho;
-        real theta = state(idT,hs+k,hs+j,hs+i,iens) / rho;
-        real press = C0 * pow( rho*theta , gamma );
-
-        real rho_v = tracers(idWV,hs+k,hs+j,hs+i,iens);
-        real rho_d = rho;
+        real rho     = state(idR,hs+k,hs+j,hs+i,iens);
+        real u       = state(idU,hs+k,hs+j,hs+i,iens) / rho;
+        real v       = state(idV,hs+k,hs+j,hs+i,iens) / rho;
+        real w       = state(idW,hs+k,hs+j,hs+i,iens) / rho;
+        real e       = state(idT,hs+k,hs+j,hs+i,iens) / rho;
+        real rho_v   = tracers(idWV,hs+k,hs+j,hs+i,iens);
+        real rho_d   = rho;
         for (int tr=0; tr < num_tracers; tr++) { if (tracer_adds_mass(tr)) rho_d -= tracers(tr,hs+k,hs+j,hs+i,iens); }
-        real temp = press / ( rho_d * R_d + rho_v * R_v );
-
+        real cv_star = rho_d/(rho_d+rho_v)*R_d + rho_v/(rho_d+rho_v)*R_v;
+        real z       = (k+0.5_fp)*dz;
+        real temp    = ( e - (u*u + v*v + w*w)/2 - grav*z ) / cv_star;
         dm_rho_d(k,j,i,iens) = rho_d;
         dm_uvel (k,j,i,iens) = u;
         dm_vvel (k,j,i,iens) = v;
@@ -1808,20 +1949,19 @@ namespace modules {
     void convert_coupler_to_dynamics( core::Coupler const &coupler , real5d &state , real5d &tracers ) const {
       using yakl::c::parallel_for;
       using yakl::c::Bounds;
-
       auto nens        = coupler.get_nens();
       auto nx          = coupler.get_nx();
       auto ny          = coupler.get_ny();
       auto nz          = coupler.get_nz();
+      auto dz          = coupler.get_dz();
       auto R_d         = coupler.get_option<real>("R_d"    );
       auto R_v         = coupler.get_option<real>("R_v"    );
       auto gamma       = coupler.get_option<real>("gamma_d");
       auto C0          = coupler.get_option<real>("C0"     );
+      auto grav        = coupler.get_option<real>("grav"   );
       auto num_tracers = coupler.get_num_tracers();
       auto idWV        = coupler.get_option<int>("idWV");
-
       auto &dm = coupler.get_data_manager_readonly();
-
       // Get the coupler's state (as const because it's read-only)
       auto dm_rho_d = dm.get<real const,4>("density_dry");
       auto dm_uvel  = dm.get<real const,4>("uvel"       );
@@ -1829,31 +1969,28 @@ namespace modules {
       auto dm_wvel  = dm.get<real const,4>("wvel"       );
       auto dm_temp  = dm.get<real const,4>("temp"       );
       auto tracer_adds_mass = dm.get<bool const,1>("tracer_adds_mass");
-
       // Get the coupler's tracers (as const because it's read-only)
       core::MultiField<real const,4> dm_tracers;
       auto tracer_names = coupler.get_tracer_names();
       for (int tr=0; tr < num_tracers; tr++) { dm_tracers.add_field( dm.get<real const,4>(tracer_names[tr]) ); }
-
       // Convert from the coupler's state to the dycore's state and tracers arrays
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-        real rho_d = dm_rho_d(k,j,i,iens);
-        real u     = dm_uvel (k,j,i,iens);
-        real v     = dm_vvel (k,j,i,iens);
-        real w     = dm_wvel (k,j,i,iens);
-        real temp  = dm_temp (k,j,i,iens);
-        real rho_v = dm_tracers(idWV,k,j,i,iens);
-        real press = rho_d * R_d * temp + rho_v * R_v * temp;
-
-        real rho = rho_d;
+        real rho_d   = dm_rho_d(k,j,i,iens);
+        real u       = dm_uvel (k,j,i,iens);
+        real v       = dm_vvel (k,j,i,iens);
+        real w       = dm_wvel (k,j,i,iens);
+        real temp    = dm_temp (k,j,i,iens);
+        real rho_v   = dm_tracers(idWV,k,j,i,iens);
+        real rho     = rho_d;
         for (int tr=0; tr < num_tracers; tr++) { if (tracer_adds_mass(tr)) rho += dm_tracers(tr,k,j,i,iens); }
-        real theta = pow( press/C0 , 1._fp / gamma ) / rho;
-
+        real cv_star = rho_d/(rho_d+rho_v)*R_d + rho_v/(rho_d+rho_v)*R_v;
+        real z       = (k+0.5_fp)*dz;
+        real e       = cv_star*temp + (u*u + v*v + w*w)/2 + grav*z;
         state(idR,hs+k,hs+j,hs+i,iens) = rho;
         state(idU,hs+k,hs+j,hs+i,iens) = rho * u;
         state(idV,hs+k,hs+j,hs+i,iens) = rho * v;
         state(idW,hs+k,hs+j,hs+i,iens) = rho * w;
-        state(idT,hs+k,hs+j,hs+i,iens) = rho * theta;
+        state(idT,hs+k,hs+j,hs+i,iens) = rho * e;
         for (int tr=0; tr < num_tracers; tr++) { tracers(tr,hs+k,hs+j,hs+i,iens) = dm_tracers(tr,k,j,i,iens); }
       });
     }
