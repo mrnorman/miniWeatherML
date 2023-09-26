@@ -1461,9 +1461,9 @@ namespace modules {
           for (int kk=0; kk<nqpoints; kk++) {
             for (int jj=0; jj<nqpoints; jj++) {
               for (int ii=0; ii<nqpoints; ii++) {
-                real x = (i+i_beg+0.5)*dx + (qpoints(ii)-0.5)*dx;
-                real y = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
-                real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
+                real x = (i+i_beg+0.5)*dx + qpoints(ii)*dx;
+                real y = (j+j_beg+0.5)*dy + qpoints(jj)*dy;   if (sim2d) y = ylen/2;
+                real z = (k      +0.5)*dz + qpoints(kk)*dz;
                 real rho, u, v, w, theta, rho_v, hr, ht;
 
                 if (init_data_int == DATA_THERMAL) {
@@ -1493,7 +1493,7 @@ namespace modules {
           hy_dens_cells      (k,iens) = 0.;
           hy_dens_theta_cells(k,iens) = 0.;
           for (int kk=0; kk<nqpoints; kk++) {
-            real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+            real z = (k+0.5)*dz + qpoints(kk)*dz;
             real hr, ht;
 
             if (init_data_int == DATA_THERMAL) { hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht); }
@@ -1563,9 +1563,9 @@ namespace modules {
           for (int kk=0; kk<nqpoints; kk++) {
             for (int jj=0; jj<nqpoints; jj++) {
               for (int ii=0; ii<nqpoints; ii++) {
-                real x = (i+i_beg+0.5)*dx + (qpoints(ii)-0.5)*dx;
-                real y = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
-                real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
+                real x = (i+i_beg+0.5)*dx + qpoints(ii)*dx;
+                real y = (j+j_beg+0.5)*dy + qpoints(jj)*dy;   if (sim2d) y = ylen/2;
+                real z = (k      +0.5)*dz + qpoints(kk)*dz;
                 real rho, u, v, w, theta, rho_v, hr, ht;
 
                 if (enable_gravity) {
@@ -1615,7 +1615,7 @@ namespace modules {
             hy_dens_cells      (k,iens) = 0.;
             hy_dens_theta_cells(k,iens) = 0.;
             for (int kk=0; kk<nqpoints; kk++) {
-              real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+              real z = (k+0.5)*dz + qpoints(kk)*dz;
               real hr, ht;
 
               hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
@@ -1667,9 +1667,9 @@ namespace modules {
           for (int kk=0; kk<nqpoints; kk++) {
             for (int jj=0; jj<nqpoints; jj++) {
               for (int ii=0; ii<nqpoints; ii++) {
-                real x = (i+i_beg+0.5)*dx + (qpoints(ii)-0.5)*dx;
-                real y = (j+j_beg+0.5)*dy + (qpoints(jj)-0.5)*dy;   if (sim2d) y = ylen/2;
-                real z = (k      +0.5)*dz + (qpoints(kk)-0.5)*dz;
+                real x = (i+i_beg+0.5)*dx + qpoints(ii)*dx;
+                real y = (j+j_beg+0.5)*dy + qpoints(jj)*dy;   if (sim2d) y = ylen/2;
+                real z = (k      +0.5)*dz + qpoints(kk)*dz;
                 real rho, u, v, w, theta, rho_v, hr, ht;
 
                 if (enable_gravity) {
@@ -1719,7 +1719,7 @@ namespace modules {
             hy_dens_cells      (k,iens) = 0.;
             hy_dens_theta_cells(k,iens) = 0.;
             for (int kk=0; kk<nqpoints; kk++) {
-              real z = (k+0.5)*dz + (qpoints(kk)-0.5)*dz;
+              real z = (k+0.5)*dz + qpoints(kk)*dz;
               real hr, ht;
 
               hydro_const_theta(z,grav,C0,cp_d,p0,gamma,R_d,hr,ht);
