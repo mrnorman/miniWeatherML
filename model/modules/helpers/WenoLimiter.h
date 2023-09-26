@@ -11,6 +11,16 @@ namespace weno {
 
 
 
+  template <> struct WenoLimiter<1> {
+    YAKL_INLINE WenoLimiter() {}
+
+    YAKL_INLINE void compute_limited_coefs( SArray<real,1,1> const &s , SArray<real,1,1> &coefs_H ) const {
+      coefs_H(0) = s(0);
+    }
+  };
+
+
+
   template <> struct WenoLimiter<3> {
     real cutoff, idl_L, idl_R, idl_H;
 

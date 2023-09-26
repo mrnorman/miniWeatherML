@@ -215,14 +215,21 @@ namespace modules {
         num_out++;
         // Let the user know what the max vertical velocity is to ensure the model hasn't crashed
         auto &dm = coupler.get_data_manager_readonly();
-        real maxw_loc = maxval(abs(dm.get_collapsed<real const>("wvel")));
+        auto u = dm.get_collapsed<real const>("uvel");
+        auto v = dm.get_collapsed<real const>("vvel");
+        auto w = dm.get_collapsed<real const>("wvel");
+        auto mag = w.createDeviceObject();
+        parallel_for( YAKL_AUTO_LABEL() , u.size() , YAKL_LAMBDA (int i) {
+          mag(i) = std::sqrt( u(i)*u(i) + v(i)*v(i) + w(i)*w(i) );
+        });
+        real maxw_loc = maxval(mag);
         real maxw;
         auto mpi_data_type = coupler.get_mpi_data_type();
         MPI_Reduce( &maxw_loc , &maxw , 1 , mpi_data_type , MPI_MAX , 0 , MPI_COMM_WORLD );
         if (coupler.is_mainproc()) {
-          std::cout << "Etime , dtphys, maxw: " << std::scientific << std::setw(10) << etime   << " , " 
-                                                << std::scientific << std::setw(10) << dt_phys << " , "
-                                                << std::scientific << std::setw(10) << maxw    << std::endl;
+          std::cout << "Etime , dtphys, maxvel: " << std::scientific << std::setw(10) << etime   << " , " 
+                                                  << std::scientific << std::setw(10) << dt_phys << " , "
+                                                  << std::scientific << std::setw(10) << maxw    << std::endl;
         }
       }
     }
@@ -284,7 +291,7 @@ namespace modules {
         }
       });
 
-      halo_exchange( coupler , state , tracers );
+      if (ord > 1) halo_exchange( coupler , state , tracers );
 
       // These arrays store high-order-accurate samples of the state and tracers at cell edges after cell-centered recon
       real6d state_limits_x  ("state_limits_x"  ,num_state  ,2,nz  ,ny  ,nx+1,nens);
@@ -423,58 +430,112 @@ namespace modules {
 
       // Use upwind Riemann solver to reconcile discontinuous limits of state and tracers at each cell edges
       parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz+1,ny+1,nx+1,nens) , YAKL_LAMBDA (int k, int j, int i, int iens) {
-        // X-direction
+        // x-direction
         if (j < ny && k < nz) {
-          // Acoustically upwind mass flux and pressure
-          real r_L  = state_limits_x(idR,0,k,j,i,iens);   real r_R  = state_limits_x(idR,1,k,j,i,iens);
-          real ru_L = state_limits_x(idU,0,k,j,i,iens);   real ru_R = state_limits_x(idU,1,k,j,i,iens);
-          real rt_L = state_limits_x(idT,0,k,j,i,iens);   real rt_R = state_limits_x(idT,1,k,j,i,iens);
-          real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
-          real r = 0.5_fp * (r_L + r_R);
-          real p = 0.5_fp * (p_L + p_R);
-          real cs = std::sqrt(gamma*p/r);
-          real w1 = 0.5_fp * (p_R-cs*ru_R);
-          real w2 = 0.5_fp * (p_L+cs*ru_L);
-          real p_upw  = w1 + w2;
-          real ru_upw = (w2-w1)/cs;
-          // Advectively upwind everything else
-          int ind = ru_L+ru_R > 0 ? 0 : 1;
-          real r_upw = state_limits_x(idR,ind,k,j,i,iens);
-          state_flux_x(idR,k,j,i,iens) = ru_upw;
-          state_flux_x(idU,k,j,i,iens) = ru_upw*state_limits_x(idU,ind,k,j,i,iens)/r_upw + p_upw;
-          state_flux_x(idV,k,j,i,iens) = ru_upw*state_limits_x(idV,ind,k,j,i,iens)/r_upw;
-          state_flux_x(idW,k,j,i,iens) = ru_upw*state_limits_x(idW,ind,k,j,i,iens)/r_upw;
-          state_flux_x(idT,k,j,i,iens) = ru_upw*state_limits_x(idT,ind,k,j,i,iens)/r_upw;
-          for (int tr=0; tr < num_tracers; tr++) {
-            tracers_flux_x(tr,k,j,i,iens) = ru_upw*tracers_limits_x(tr,ind,k,j,i,iens)/r_upw;
+          real q1_L = state_limits_x(idR,0,k,j,i,iens);    real q1_R = state_limits_x(idR,1,k,j,i,iens);
+          real q2_L = state_limits_x(idU,0,k,j,i,iens);    real q2_R = state_limits_x(idU,1,k,j,i,iens);
+          real q3_L = state_limits_x(idV,0,k,j,i,iens);    real q3_R = state_limits_x(idV,1,k,j,i,iens);
+          real q4_L = state_limits_x(idW,0,k,j,i,iens);    real q4_R = state_limits_x(idW,1,k,j,i,iens);
+          real q5_L = state_limits_x(idT,0,k,j,i,iens);    real q5_R = state_limits_x(idT,1,k,j,i,iens);
+          real p_L  = C0*std::pow( q5_L , gamma );         real p_R  = C0*std::pow( q5_R , gamma );
+          real r  = 0.5_fp * (q1_L + q1_R);
+          real u  = 0.5_fp * (q2_L + q2_R) / r;
+          real v  = 0.5_fp * (q3_L + q3_R) / r;
+          real w  = 0.5_fp * (q4_L + q4_R) / r;
+          real t  = 0.5_fp * (q5_L + q5_R) / r;
+          real p  = 0.5_fp * (p_L  + p_R );
+          real cs = std::sqrt( gamma * p / r );
+          real w1_L = q1_L -   q5_L/t;
+          real w1_R = q1_R -   q5_R/t;
+          real w2_L = q3_L - v*q5_L/t;
+          real w2_R = q3_R - v*q5_R/t;
+          real w3_L = q4_L - w*q5_L/t;
+          real w3_R = q4_R - w*q5_R/t;
+          real w4_L =  u*q1_L/(2*cs) - q2_L/(2*cs) + q5_L/(2*t);
+          real w4_R =  u*q1_R/(2*cs) - q2_R/(2*cs) + q5_R/(2*t);
+          real w5_L = -u*q1_L/(2*cs) + q2_L/(2*cs) + q5_L/(2*t);
+          real w5_R = -u*q1_R/(2*cs) + q2_R/(2*cs) + q5_R/(2*t);
+          real w1, w2, w3, w4, w5;
+          if      (u > 0) { w1 = w1_L;                w2 = w2_L;                w3 = w3_L;               }
+          else if (u < 0) { w1 = w1_R;                w2 = w2_R;                w3 = w3_R;               }
+          else            { w1 = 0.5_fp*(w1_L+w1_R);  w2 = 0.5_fp*(w2_L+w2_R);  w3 = 0.5_fp*(w3_L+w3_R); }
+          if      (u-cs > 0) { w4 = w4_L;               }
+          else if (u-cs < 0) { w4 = w4_R;               }
+          else               { w4 = 0.5_fp*(w4_L+w4_R); }
+          if      (u+cs > 0) { w5 = w5_L;               }
+          else if (u+cs < 0) { w5 = w5_R;               }
+          else               { w5 = 0.5_fp*(w5_L+w5_R); }
+          real q1 =   w1 +        w4 +        w5;
+          real q2 = u*w1 + (u-cs)*w4 + (u+cs)*w5;
+          real q3 =   w2 +      v*w4 +      v*w5;
+          real q4 =   w3 +      w*w4 +      w*w5;
+          real q5 =             t*w4 +      t*w5;
+          state_flux_x(idR,k,j,i,iens) = q2;
+          state_flux_x(idU,k,j,i,iens) = q2*q2/q1 + C0*std::pow(q5,gamma);
+          state_flux_x(idV,k,j,i,iens) = q2*q3/q1;
+          state_flux_x(idW,k,j,i,iens) = q2*q4/q1;
+          state_flux_x(idT,k,j,i,iens) = q2*q5/q1;
+          for (int tr = 0; tr < num_tracers; tr++) {
+            real val;
+            if      (q2 > 0) { val = tracers_limits_x(tr,0,k,j,i,iens)/state_limits_x(idR,0,k,j,i,iens); }
+            else if (q2 < 0) { val = tracers_limits_x(tr,1,k,j,i,iens)/state_limits_x(idR,1,k,j,i,iens); }
+            else             { val = 0.5_fp*( tracers_limits_x(tr,0,k,j,i,iens)/state_limits_x(idR,0,k,j,i,iens) +
+                                              tracers_limits_x(tr,1,k,j,i,iens)/state_limits_x(idR,1,k,j,i,iens) ); }
+            tracers_flux_x(tr,k,j,i,iens) = q2*val;
           }
         }
-
-        // Y-direction
-        // If we are simulating in 2-D, then do not do Riemann in the y-direction
+        // y-direction
         if ( (! sim2d) && i < nx && k < nz) {
-          // Acoustically upwind mass flux and pressure
-          real r_L  = state_limits_y(idR,0,k,j,i,iens);   real r_R  = state_limits_y(idR,1,k,j,i,iens);
-          real rv_L = state_limits_y(idV,0,k,j,i,iens);   real rv_R = state_limits_y(idV,1,k,j,i,iens);
-          real rt_L = state_limits_y(idT,0,k,j,i,iens);   real rt_R = state_limits_y(idT,1,k,j,i,iens);
-          real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
-          real r = 0.5_fp * (r_L + r_R);
-          real p = 0.5_fp * (p_L + p_R);
-          real cs = std::sqrt(gamma*p/r);
-          real w1 = 0.5_fp * (p_R-cs*rv_R);
-          real w2 = 0.5_fp * (p_L+cs*rv_L);
-          real p_upw  = w1 + w2;
-          real rv_upw = (w2-w1)/cs;
-          // Advectively upwind everything else
-          int ind = rv_L+rv_R > 0 ? 0 : 1;
-          real r_upw = state_limits_y(idR,ind,k,j,i,iens);
-          state_flux_y(idR,k,j,i,iens) = rv_upw;
-          state_flux_y(idU,k,j,i,iens) = rv_upw*state_limits_y(idU,ind,k,j,i,iens)/r_upw;
-          state_flux_y(idV,k,j,i,iens) = rv_upw*state_limits_y(idV,ind,k,j,i,iens)/r_upw + p_upw;
-          state_flux_y(idW,k,j,i,iens) = rv_upw*state_limits_y(idW,ind,k,j,i,iens)/r_upw;
-          state_flux_y(idT,k,j,i,iens) = rv_upw*state_limits_y(idT,ind,k,j,i,iens)/r_upw;
-          for (int tr=0; tr < num_tracers; tr++) {
-            tracers_flux_y(tr,k,j,i,iens) = rv_upw*tracers_limits_y(tr,ind,k,j,i,iens)/r_upw;
+          real q1_L = state_limits_y(idR,0,k,j,i,iens);    real q1_R = state_limits_y(idR,1,k,j,i,iens);
+          real q2_L = state_limits_y(idU,0,k,j,i,iens);    real q2_R = state_limits_y(idU,1,k,j,i,iens);
+          real q3_L = state_limits_y(idV,0,k,j,i,iens);    real q3_R = state_limits_y(idV,1,k,j,i,iens);
+          real q4_L = state_limits_y(idW,0,k,j,i,iens);    real q4_R = state_limits_y(idW,1,k,j,i,iens);
+          real q5_L = state_limits_y(idT,0,k,j,i,iens);    real q5_R = state_limits_y(idT,1,k,j,i,iens);
+          real p_L  = C0*std::pow( q5_L , gamma );         real p_R  = C0*std::pow( q5_R , gamma );
+          real r  = 0.5_fp * (q1_L + q1_R);
+          real u  = 0.5_fp * (q2_L + q2_R) / r;
+          real v  = 0.5_fp * (q3_L + q3_R) / r;
+          real w  = 0.5_fp * (q4_L + q4_R) / r;
+          real t  = 0.5_fp * (q5_L + q5_R) / r;
+          real p  = 0.5_fp * (p_L  + p_R );
+          real cs = std::sqrt( gamma * p / r );
+          real w1_L = q1_L -   q5_L/t;
+          real w1_R = q1_R -   q5_R/t;
+          real w2_L = q2_L - u*q5_L/t;
+          real w2_R = q2_R - u*q5_R/t;
+          real w3_L = q4_L - w*q5_L/t;
+          real w3_R = q4_R - w*q5_R/t;
+          real w4_L =  v*q1_L/(2*cs) - q3_L/(2*cs) + q5_L/(2*t);
+          real w4_R =  v*q1_R/(2*cs) - q3_R/(2*cs) + q5_R/(2*t);
+          real w5_L = -v*q1_L/(2*cs) + q3_L/(2*cs) + q5_L/(2*t);
+          real w5_R = -v*q1_R/(2*cs) + q3_R/(2*cs) + q5_R/(2*t);
+          real w1, w2, w3, w4, w5;
+          if      (v > 0) { w1 = w1_L;                w2 = w2_L;                w3 = w3_L;               }
+          else if (v < 0) { w1 = w1_R;                w2 = w2_R;                w3 = w3_R;               }
+          else            { w1 = 0.5_fp*(w1_L+w1_R);  w2 = 0.5_fp*(w2_L+w2_R);  w3 = 0.5_fp*(w3_L+w3_R); }
+          if      (v-cs > 0) { w4 = w4_L;               }
+          else if (v-cs < 0) { w4 = w4_R;               }
+          else               { w4 = 0.5_fp*(w4_L+w4_R); }
+          if      (v+cs > 0) { w5 = w5_L;               }
+          else if (v+cs < 0) { w5 = w5_R;               }
+          else               { w5 = 0.5_fp*(w5_L+w5_R); }
+          real q1 =   w1 +        w4 +        w5;
+          real q2 =   w2 +      u*w4 +      u*w5;
+          real q3 = v*w1 + (v-cs)*w4 + (v+cs)*w5;
+          real q4 =   w3 +      w*w4 +      w*w5;
+          real q5 =             t*w4 +      t*w5;
+          state_flux_y(idR,k,j,i,iens) = q3;
+          state_flux_y(idU,k,j,i,iens) = q3*q2/q1;
+          state_flux_y(idV,k,j,i,iens) = q3*q3/q1 + C0*std::pow(q5,gamma);
+          state_flux_y(idW,k,j,i,iens) = q3*q4/q1;
+          state_flux_y(idT,k,j,i,iens) = q3*q5/q1;
+          for (int tr = 0; tr < num_tracers; tr++) {
+            real val;
+            if      (q3 > 0) { val = tracers_limits_y(tr,0,k,j,i,iens)/state_limits_y(idR,0,k,j,i,iens); }
+            else if (q3 < 0) { val = tracers_limits_y(tr,1,k,j,i,iens)/state_limits_y(idR,1,k,j,i,iens); }
+            else             { val = 0.5_fp*( tracers_limits_y(tr,0,k,j,i,iens)/state_limits_y(idR,0,k,j,i,iens) +
+                                              tracers_limits_y(tr,1,k,j,i,iens)/state_limits_y(idR,1,k,j,i,iens) ); }
+            tracers_flux_y(tr,k,j,i,iens) = q3*val;
           }
         } else if (i < nx && k < nz) {
           state_flux_y(idR,k,j,i,iens) = 0;
@@ -484,33 +545,148 @@ namespace modules {
           state_flux_y(idT,k,j,i,iens) = 0;
           for (int tr=0; tr < num_tracers; tr++) { tracers_flux_y(tr,k,j,i,iens) = 0; }
         }
-
-        // Z-direction
+        // z-direction
         if (i < nx && j < ny) {
-          // Acoustically upwind mass flux and pressure
-          real r_L  = state_limits_z(idR,0,k,j,i,iens);   real r_R  = state_limits_z(idR,1,k,j,i,iens);
-          real rw_L = state_limits_z(idW,0,k,j,i,iens);   real rw_R = state_limits_z(idW,1,k,j,i,iens);
-          real rt_L = state_limits_z(idT,0,k,j,i,iens);   real rt_R = state_limits_z(idT,1,k,j,i,iens);
-          real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
-          real r = 0.5_fp * (r_L + r_R);
-          real p = 0.5_fp * (p_L + p_R);
-          real cs = std::sqrt(gamma*p/r);
-          real w1 = 0.5_fp * (p_R-cs*rw_R);
-          real w2 = 0.5_fp * (p_L+cs*rw_L);
-          real p_upw  = w1 + w2;
-          real rw_upw = (w2-w1)/cs;
-          // Advectively upwind everything else
-          int ind = rw_L+rw_R > 0 ? 0 : 1;
-          real r_upw = state_limits_z(idR,ind,k,j,i,iens);
-          state_flux_z(idR,k,j,i,iens) = rw_upw;
-          state_flux_z(idU,k,j,i,iens) = rw_upw*state_limits_z(idU,ind,k,j,i,iens)/r_upw;
-          state_flux_z(idV,k,j,i,iens) = rw_upw*state_limits_z(idV,ind,k,j,i,iens)/r_upw;
-          state_flux_z(idW,k,j,i,iens) = rw_upw*state_limits_z(idW,ind,k,j,i,iens)/r_upw + p_upw;
-          state_flux_z(idT,k,j,i,iens) = rw_upw*state_limits_z(idT,ind,k,j,i,iens)/r_upw;
-          for (int tr=0; tr < num_tracers; tr++) {
-            tracers_flux_z(tr,k,j,i,iens) = rw_upw*tracers_limits_z(tr,ind,k,j,i,iens)/r_upw;
+          real q1_L = state_limits_z(idR,0,k,j,i,iens);    real q1_R = state_limits_z(idR,1,k,j,i,iens);
+          real q2_L = state_limits_z(idU,0,k,j,i,iens);    real q2_R = state_limits_z(idU,1,k,j,i,iens);
+          real q3_L = state_limits_z(idV,0,k,j,i,iens);    real q3_R = state_limits_z(idV,1,k,j,i,iens);
+          real q4_L = state_limits_z(idW,0,k,j,i,iens);    real q4_R = state_limits_z(idW,1,k,j,i,iens);
+          real q5_L = state_limits_z(idT,0,k,j,i,iens);    real q5_R = state_limits_z(idT,1,k,j,i,iens);
+          real p_L  = C0*std::pow( q5_L , gamma );         real p_R  = C0*std::pow( q5_R , gamma );
+          real r  = 0.5_fp * (q1_L + q1_R);
+          real u  = 0.5_fp * (q2_L + q2_R) / r;
+          real v  = 0.5_fp * (q3_L + q3_R) / r;
+          real w  = 0.5_fp * (q4_L + q4_R) / r;
+          real t  = 0.5_fp * (q5_L + q5_R) / r;
+          real p  = 0.5_fp * (p_L  + p_R );
+          real cs = std::sqrt( gamma * p / r );
+          real w1_L = q1_L -   q5_L/t;
+          real w1_R = q1_R -   q5_R/t;
+          real w2_L = q2_L - u*q5_L/t;
+          real w2_R = q2_R - u*q5_R/t;
+          real w3_L = q3_L - v*q5_L/t;
+          real w3_R = q3_R - v*q5_R/t;
+          real w4_L =  w*q1_L/(2*cs) - q4_L/(2*cs) + q5_L/(2*t);
+          real w4_R =  w*q1_R/(2*cs) - q4_R/(2*cs) + q5_R/(2*t);
+          real w5_L = -w*q1_L/(2*cs) + q4_L/(2*cs) + q5_L/(2*t);
+          real w5_R = -w*q1_R/(2*cs) + q4_R/(2*cs) + q5_R/(2*t);
+          real w1, w2, w3, w4, w5;
+          if      (w > 0) { w1 = w1_L;                w2 = w2_L;                w3 = w3_L;               }
+          else if (w < 0) { w1 = w1_R;                w2 = w2_R;                w3 = w3_R;               }
+          else            { w1 = 0.5_fp*(w1_L+w1_R);  w2 = 0.5_fp*(w2_L+w2_R);  w3 = 0.5_fp*(w3_L+w3_R); }
+          if      (w-cs > 0) { w4 = w4_L;               }
+          else if (w-cs < 0) { w4 = w4_R;               }
+          else               { w4 = 0.5_fp*(w4_L+w4_R); }
+          if      (w+cs > 0) { w5 = w5_L;               }
+          else if (w+cs < 0) { w5 = w5_R;               }
+          else               { w5 = 0.5_fp*(w5_L+w5_R); }
+          real q1 =   w1 +        w4 +        w5;
+          real q2 =   w2 +      u*w4 +      u*w5;
+          real q3 =   w3 +      v*w4 +      v*w5;
+          real q4 = w*w1 + (w-cs)*w4 + (w+cs)*w5;
+          real q5 =             t*w4 +      t*w5;
+          state_flux_z(idR,k,j,i,iens) = q4;
+          state_flux_z(idU,k,j,i,iens) = q4*q2/q1;
+          state_flux_z(idV,k,j,i,iens) = q4*q3/q1;
+          state_flux_z(idW,k,j,i,iens) = q4*q4/q1 + C0*std::pow(q5,gamma);
+          state_flux_z(idT,k,j,i,iens) = q4*q5/q1;
+          for (int tr = 0; tr < num_tracers; tr++) {
+            real val;
+            if      (q4 > 0) { val = tracers_limits_z(tr,0,k,j,i,iens)/state_limits_z(idR,0,k,j,i,iens); }
+            else if (q4 < 0) { val = tracers_limits_z(tr,1,k,j,i,iens)/state_limits_z(idR,1,k,j,i,iens); }
+            else             { val = 0.5_fp*( tracers_limits_z(tr,0,k,j,i,iens)/state_limits_z(idR,0,k,j,i,iens) +
+                                              tracers_limits_z(tr,1,k,j,i,iens)/state_limits_z(idR,1,k,j,i,iens) ); }
+            tracers_flux_z(tr,k,j,i,iens) = q4*val;
           }
         }
+        // X-direction
+        // if (j < ny && k < nz) {
+        //   // Acoustically upwind mass flux and pressure
+        //   real r_L  = state_limits_x(idR,0,k,j,i,iens);   real r_R  = state_limits_x(idR,1,k,j,i,iens);
+        //   real ru_L = state_limits_x(idU,0,k,j,i,iens);   real ru_R = state_limits_x(idU,1,k,j,i,iens);
+        //   real rt_L = state_limits_x(idT,0,k,j,i,iens);   real rt_R = state_limits_x(idT,1,k,j,i,iens);
+        //   real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
+        //   real r = 0.5_fp * (r_L + r_R);
+        //   real p = 0.5_fp * (p_L + p_R);
+        //   real cs = std::sqrt(gamma*p/r);
+        //   real w1 = 0.5_fp * (p_R-cs*ru_R);
+        //   real w2 = 0.5_fp * (p_L+cs*ru_L);
+        //   real p_upw  = w1 + w2;
+        //   real ru_upw = (w2-w1)/cs;
+        //   // Advectively upwind everything else
+        //   int ind = ru_L+ru_R > 0 ? 0 : 1;
+        //   real r_upw = state_limits_x(idR,ind,k,j,i,iens);
+        //   state_flux_x(idR,k,j,i,iens) = ru_upw;
+        //   state_flux_x(idU,k,j,i,iens) = ru_upw*state_limits_x(idU,ind,k,j,i,iens)/r_upw + p_upw;
+        //   state_flux_x(idV,k,j,i,iens) = ru_upw*state_limits_x(idV,ind,k,j,i,iens)/r_upw;
+        //   state_flux_x(idW,k,j,i,iens) = ru_upw*state_limits_x(idW,ind,k,j,i,iens)/r_upw;
+        //   state_flux_x(idT,k,j,i,iens) = ru_upw*state_limits_x(idT,ind,k,j,i,iens)/r_upw;
+        //   for (int tr=0; tr < num_tracers; tr++) {
+        //     tracers_flux_x(tr,k,j,i,iens) = ru_upw*tracers_limits_x(tr,ind,k,j,i,iens)/r_upw;
+        //   }
+        // }
+
+        // // Y-direction
+        // // If we are simulating in 2-D, then do not do Riemann in the y-direction
+        // if ( (! sim2d) && i < nx && k < nz) {
+        //   // Acoustically upwind mass flux and pressure
+        //   real r_L  = state_limits_y(idR,0,k,j,i,iens);   real r_R  = state_limits_y(idR,1,k,j,i,iens);
+        //   real rv_L = state_limits_y(idV,0,k,j,i,iens);   real rv_R = state_limits_y(idV,1,k,j,i,iens);
+        //   real rt_L = state_limits_y(idT,0,k,j,i,iens);   real rt_R = state_limits_y(idT,1,k,j,i,iens);
+        //   real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
+        //   real r = 0.5_fp * (r_L + r_R);
+        //   real p = 0.5_fp * (p_L + p_R);
+        //   real cs = std::sqrt(gamma*p/r);
+        //   real w1 = 0.5_fp * (p_R-cs*rv_R);
+        //   real w2 = 0.5_fp * (p_L+cs*rv_L);
+        //   real p_upw  = w1 + w2;
+        //   real rv_upw = (w2-w1)/cs;
+        //   // Advectively upwind everything else
+        //   int ind = rv_L+rv_R > 0 ? 0 : 1;
+        //   real r_upw = state_limits_y(idR,ind,k,j,i,iens);
+        //   state_flux_y(idR,k,j,i,iens) = rv_upw;
+        //   state_flux_y(idU,k,j,i,iens) = rv_upw*state_limits_y(idU,ind,k,j,i,iens)/r_upw;
+        //   state_flux_y(idV,k,j,i,iens) = rv_upw*state_limits_y(idV,ind,k,j,i,iens)/r_upw + p_upw;
+        //   state_flux_y(idW,k,j,i,iens) = rv_upw*state_limits_y(idW,ind,k,j,i,iens)/r_upw;
+        //   state_flux_y(idT,k,j,i,iens) = rv_upw*state_limits_y(idT,ind,k,j,i,iens)/r_upw;
+        //   for (int tr=0; tr < num_tracers; tr++) {
+        //     tracers_flux_y(tr,k,j,i,iens) = rv_upw*tracers_limits_y(tr,ind,k,j,i,iens)/r_upw;
+        //   }
+        // } else if (i < nx && k < nz) {
+        //   state_flux_y(idR,k,j,i,iens) = 0;
+        //   state_flux_y(idU,k,j,i,iens) = 0;
+        //   state_flux_y(idV,k,j,i,iens) = 0;
+        //   state_flux_y(idW,k,j,i,iens) = 0;
+        //   state_flux_y(idT,k,j,i,iens) = 0;
+        //   for (int tr=0; tr < num_tracers; tr++) { tracers_flux_y(tr,k,j,i,iens) = 0; }
+        // }
+
+        // // Z-direction
+        // if (i < nx && j < ny) {
+        //   // Acoustically upwind mass flux and pressure
+        //   real r_L  = state_limits_z(idR,0,k,j,i,iens);   real r_R  = state_limits_z(idR,1,k,j,i,iens);
+        //   real rw_L = state_limits_z(idW,0,k,j,i,iens);   real rw_R = state_limits_z(idW,1,k,j,i,iens);
+        //   real rt_L = state_limits_z(idT,0,k,j,i,iens);   real rt_R = state_limits_z(idT,1,k,j,i,iens);
+        //   real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
+        //   real r = 0.5_fp * (r_L + r_R);
+        //   real p = 0.5_fp * (p_L + p_R);
+        //   real cs = std::sqrt(gamma*p/r);
+        //   real w1 = 0.5_fp * (p_R-cs*rw_R);
+        //   real w2 = 0.5_fp * (p_L+cs*rw_L);
+        //   real p_upw  = w1 + w2;
+        //   real rw_upw = (w2-w1)/cs;
+        //   // Advectively upwind everything else
+        //   int ind = rw_L+rw_R > 0 ? 0 : 1;
+        //   real r_upw = state_limits_z(idR,ind,k,j,i,iens);
+        //   state_flux_z(idR,k,j,i,iens) = rw_upw;
+        //   state_flux_z(idU,k,j,i,iens) = rw_upw*state_limits_z(idU,ind,k,j,i,iens)/r_upw;
+        //   state_flux_z(idV,k,j,i,iens) = rw_upw*state_limits_z(idV,ind,k,j,i,iens)/r_upw;
+        //   state_flux_z(idW,k,j,i,iens) = rw_upw*state_limits_z(idW,ind,k,j,i,iens)/r_upw + p_upw;
+        //   state_flux_z(idT,k,j,i,iens) = rw_upw*state_limits_z(idT,ind,k,j,i,iens)/r_upw;
+        //   for (int tr=0; tr < num_tracers; tr++) {
+        //     tracers_flux_z(tr,k,j,i,iens) = rw_upw*tracers_limits_z(tr,ind,k,j,i,iens)/r_upw;
+        //   }
+        // }
 
         // Multiply density back to other variables
         if (i < nx && j < ny && k < nz) {
