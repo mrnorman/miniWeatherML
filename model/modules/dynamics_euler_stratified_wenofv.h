@@ -38,10 +38,11 @@ namespace modules {
     int  static constexpr idT = 4;  // Density * potential temperature
 
     // IDs for the test cases
-    int  static constexpr DATA_THERMAL   = 0;
-    int  static constexpr DATA_SUPERCELL = 1;
-    int  static constexpr DATA_CITY      = 2;
-    int  static constexpr DATA_BUILDING  = 3;
+    int  static constexpr DATA_THERMAL          = 0;
+    int  static constexpr DATA_SUPERCELL        = 1;
+    int  static constexpr DATA_CITY             = 2;
+    int  static constexpr DATA_BUILDING         = 3;
+    int  static constexpr DATA_KELVIN_HELMHOLTZ = 4;
 
     int  static constexpr BC_PERIODIC = 0;
     int  static constexpr BC_OPEN     = 1;
@@ -66,12 +67,43 @@ namespace modules {
 
     // Compute the maximum stable time step using very conservative assumptions about max wind speed
     real compute_time_step( core::Coupler const &coupler ) const {
-      auto dx = coupler.get_dx();
-      auto dy = coupler.get_dy();
-      auto dz = coupler.get_dz();
-      real constexpr maxwave = 350 + 80;
-      real cfl = 0.6;
-      return cfl * std::min( std::min( dx , dy ) , dz ) / maxwave;
+      using yakl::c::parallel_for;
+      using yakl::c::SimpleBounds;
+      auto dx       = coupler.get_dx();
+      auto dy       = coupler.get_dy();
+      auto dz       = coupler.get_dz();
+      auto nens     = coupler.get_nens();
+      auto nx       = coupler.get_nx();
+      auto ny       = coupler.get_ny();
+      auto nz       = coupler.get_nz();
+      auto &dm      = coupler.get_data_manager_readonly();
+      auto dm_rho_d = dm.get<real const,4>("density_dry");
+      auto dm_uvel  = dm.get<real const,4>("uvel"       );
+      auto dm_vvel  = dm.get<real const,4>("vvel"       );
+      auto dm_wvel  = dm.get<real const,4>("wvel"       );
+      auto dm_temp  = dm.get<real const,4>("temp"       );
+      auto gamma_d  = coupler.get_option<real>("gamma_d");
+      auto R_d      = coupler.get_option<real>("R_d"    );
+      real cfl      = 0.3;
+      real4d dt4d("dt4d",nz,ny,nx,nens);
+      parallel_for( YAKL_AUTO_LABEL() , SimpleBounds<4>(nz,ny,nx,nens) ,
+                                        YAKL_LAMBDA (int k, int j, int i, int iens) {
+        real rho_d = dm_rho_d(k,j,i,iens);
+        real u     = dm_uvel (k,j,i,iens);
+        real v     = dm_uvel (k,j,i,iens);
+        real w     = dm_wvel (k,j,i,iens);
+        real temp  = dm_temp (k,j,i,iens);
+        real p     = rho_d*R_d*temp;
+        real cs    = std::sqrt(gamma_d*p/rho_d);
+        real dt_x  = cfl * dx / std::max( std::abs(u-cs) , std::abs(u+cs) );
+        real dt_y  = cfl * dy / std::max( std::abs(v-cs) , std::abs(v+cs) );
+        real dt_z  = cfl * dz / std::max( std::abs(w-cs) , std::abs(w+cs) );
+        dt4d(k,j,i,iens) = std::min( std::min( dt_x , dt_y ) , dt_z );
+      });
+      real dtmin_loc = yakl::intrinsics::minval( dt4d );
+      real dtmin_glob;
+      MPI_Allreduce( &dtmin_loc , &dtmin_glob , 1 , coupler.get_mpi_data_type() , MPI_MIN , MPI_COMM_WORLD );
+      return dtmin_glob;
     }
 
 
@@ -394,10 +426,13 @@ namespace modules {
         // X-direction
         if (j < ny && k < nz) {
           // Acoustically upwind mass flux and pressure
+          real r_L  = state_limits_x(idR,0,k,j,i,iens);   real r_R  = state_limits_x(idR,1,k,j,i,iens);
           real ru_L = state_limits_x(idU,0,k,j,i,iens);   real ru_R = state_limits_x(idU,1,k,j,i,iens);
           real rt_L = state_limits_x(idT,0,k,j,i,iens);   real rt_R = state_limits_x(idT,1,k,j,i,iens);
           real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
-          real constexpr cs = 350;
+          real r = 0.5_fp * (r_L + r_R);
+          real p = 0.5_fp * (p_L + p_R);
+          real cs = std::sqrt(gamma*p/r);
           real w1 = 0.5_fp * (p_R-cs*ru_R);
           real w2 = 0.5_fp * (p_L+cs*ru_L);
           real p_upw  = w1 + w2;
@@ -419,10 +454,13 @@ namespace modules {
         // If we are simulating in 2-D, then do not do Riemann in the y-direction
         if ( (! sim2d) && i < nx && k < nz) {
           // Acoustically upwind mass flux and pressure
+          real r_L  = state_limits_y(idR,0,k,j,i,iens);   real r_R  = state_limits_y(idR,1,k,j,i,iens);
           real rv_L = state_limits_y(idV,0,k,j,i,iens);   real rv_R = state_limits_y(idV,1,k,j,i,iens);
           real rt_L = state_limits_y(idT,0,k,j,i,iens);   real rt_R = state_limits_y(idT,1,k,j,i,iens);
           real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
-          real constexpr cs = 350;
+          real r = 0.5_fp * (r_L + r_R);
+          real p = 0.5_fp * (p_L + p_R);
+          real cs = std::sqrt(gamma*p/r);
           real w1 = 0.5_fp * (p_R-cs*rv_R);
           real w2 = 0.5_fp * (p_L+cs*rv_L);
           real p_upw  = w1 + w2;
@@ -450,10 +488,13 @@ namespace modules {
         // Z-direction
         if (i < nx && j < ny) {
           // Acoustically upwind mass flux and pressure
+          real r_L  = state_limits_z(idR,0,k,j,i,iens);   real r_R  = state_limits_z(idR,1,k,j,i,iens);
           real rw_L = state_limits_z(idW,0,k,j,i,iens);   real rw_R = state_limits_z(idW,1,k,j,i,iens);
           real rt_L = state_limits_z(idT,0,k,j,i,iens);   real rt_R = state_limits_z(idT,1,k,j,i,iens);
           real p_L  = C0*std::pow(rt_L,gamma)         ;   real p_R  = C0*std::pow(rt_R,gamma)         ;
-          real constexpr cs = 350;
+          real r = 0.5_fp * (r_L + r_R);
+          real p = 0.5_fp * (p_L + p_R);
+          real cs = std::sqrt(gamma*p/r);
           real w1 = 0.5_fp * (p_R-cs*rw_R);
           real w2 = 0.5_fp * (p_L+cs*rw_L);
           real p_upw  = w1 + w2;
@@ -1301,10 +1342,11 @@ namespace modules {
       tracer_adds_mass.deep_copy_to(dm_tracer_adds_mass);
 
       // Set an integer version of the input_data so we can test it inside GPU kernels
-      if      (init_data == "thermal"  ) { init_data_int = DATA_THERMAL;   }
-      else if (init_data == "supercell") { init_data_int = DATA_SUPERCELL; }
-      else if (init_data == "city"     ) { init_data_int = DATA_CITY;      }
-      else if (init_data == "building" ) { init_data_int = DATA_BUILDING;  }
+      if      (init_data == "thermal"         ) { init_data_int = DATA_THERMAL;          }
+      else if (init_data == "supercell"       ) { init_data_int = DATA_SUPERCELL;        }
+      else if (init_data == "city"            ) { init_data_int = DATA_CITY;             }
+      else if (init_data == "building"        ) { init_data_int = DATA_BUILDING;         }
+      else if (init_data == "kelvin_helmholtz") { init_data_int = DATA_KELVIN_HELMHOLTZ; }
       else { endrun("ERROR: Invalid init_data in yaml input file"); }
 
       coupler.set_option<bool>("use_immersed_boundaries",false);
@@ -1332,6 +1374,62 @@ namespace modules {
         coupler.add_option<int>("bc_z",BC_WALL);
         coupler.add_option<real>("latitude",0);
         init_supercell( coupler , state , tracers );
+
+      } else if (init_data_int == DATA_KELVIN_HELMHOLTZ) {
+
+        coupler.add_option<int>("bc_x",BC_PERIODIC);
+        coupler.add_option<int>("bc_y",BC_PERIODIC);
+        coupler.add_option<int>("bc_z",BC_PERIODIC);
+        coupler.add_option<real>("latitude",0);
+        coupler.set_option<bool>("enable_gravity",false);
+        auto alpha = coupler.get_option<real>("kh_alpha",0.25);
+
+        int constexpr nqpoints = 9;
+        SArray<real,1,nqpoints> qpoints;
+        SArray<real,1,nqpoints> qweights;
+        TransformMatrices::get_gll_points (qpoints );
+        TransformMatrices::get_gll_weights(qweights);
+
+        auto i_beg = coupler.get_i_beg();
+        auto j_beg = coupler.get_j_beg();
+
+        // Use quadrature to initialize state data
+        parallel_for( YAKL_AUTO_LABEL() , Bounds<4>(nz,ny,nx,nens) ,
+                                          YAKL_LAMBDA (int k, int j, int i, int iens) {
+          for (int l=0; l < num_state  ; l++) { state  (l,hs+k,hs+j,hs+i,iens) = 0.; }
+          for (int l=0; l < num_tracers; l++) { tracers(l,hs+k,hs+j,hs+i,iens) = 0.; }
+          for (int kk=0; kk<nqpoints; kk++) {
+            for (int jj=0; jj<nqpoints; jj++) {
+              for (int ii=0; ii<nqpoints; ii++) {
+                real x      = (i+i_beg+0.5)*dx + qpoints(ii)*dx;
+                real y      = (j+j_beg+0.5)*dy + qpoints(jj)*dy;   if (sim2d) y = ylen/2;
+                real z      = (k      +0.5)*dz + qpoints(kk)*dz;
+                real lambda = 0.01;
+                int  n      = 2;
+                int  L      = 1;
+                real rho_d  = std::abs(z-zlen/2) >= zlen/4 ? 1 : 2;
+                real u      = std::abs(z-zlen/2) >= zlen/4 ? alpha : -alpha;
+                real w      =             lambda * sin(2*M_PI*n*(x-xlen/2)/L);
+                real v      = sim2d ? 0 : lambda * sin(2*M_PI*n*(y-ylen/2)/L);
+                real p      = 2.5;
+                real rho_v  = 0;
+                real rho    = rho_d + rho_v;
+                real theta  = std::pow( p/C0 , 1._fp/gamma ) / rho;
+
+                real wt = qweights(ii)*qweights(jj)*qweights(kk);
+                state(idR,hs+k,hs+j,hs+i,iens) += rho       * wt;
+                state(idU,hs+k,hs+j,hs+i,iens) += rho*u     * wt;
+                state(idV,hs+k,hs+j,hs+i,iens) += rho*v     * wt;
+                state(idW,hs+k,hs+j,hs+i,iens) += rho*w     * wt;
+                state(idT,hs+k,hs+j,hs+i,iens) += rho*theta * wt;
+              }
+            }
+          }
+        });
+        hy_dens_cells       = 0;
+        hy_dens_theta_cells = 0;
+        hy_dens_edges       = 0;
+        hy_dens_theta_edges = 0;
 
       } else if (init_data_int == DATA_THERMAL) {
 

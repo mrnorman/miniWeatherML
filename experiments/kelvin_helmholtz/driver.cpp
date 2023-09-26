@@ -1,6 +1,6 @@
 
 #include "coupler.h"
-#include "dynamics_euler_stratified_energy.h"
+#include "dynamics_euler_stratified_wenofv.h"
 
 int main(int argc, char** argv) {
   MPI_Init( &argc , &argv );

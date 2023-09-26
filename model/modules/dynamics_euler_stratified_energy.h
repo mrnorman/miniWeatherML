@@ -1384,7 +1384,6 @@ namespace modules {
           }
         });
 
-
       } else if (init_data_int == DATA_THERMAL) {
 
         coupler.add_option<int>("bc_x",BC_PERIODIC);

@@ -1,9 +1,9 @@
 ---
 sim_time        : 5.
 nens            : 1
-nx_glob         : 32
-ny_glob         : 32
-nz              : 32
+nx_glob         : 256
+ny_glob         : 1
+nz              : 256
 xlen            : 1
 ylen            : 1
 zlen            : 1
