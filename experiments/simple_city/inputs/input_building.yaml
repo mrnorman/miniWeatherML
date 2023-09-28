@@ -3,7 +3,7 @@
 sim_time: 200.  # 86400
 
 # Number of cells to use in the CRMs
-nens   : 2
+nens   : 1
 nx_glob: 100
 ny_glob: 100
 nz     : 25
@@ -29,5 +29,5 @@ out_freq: 10.
 
 enable_gravity: false
 
-file_per_process: true
+file_per_process: false
 
