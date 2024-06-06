@@ -2104,7 +2104,12 @@ namespace modules {
         std::stringstream fname;
         fname << coupler.get_option<std::string>("out_prefix") << ".nc";
         if (etime == 0) {
-          nc.create(fname.str() , NC_CLOBBER | NC_64BIT_DATA);
+          MPI_Info info;
+          MPI_Info_create(&info);
+          MPI_Info_set(info, "romio_no_indep_rw",    "true");
+          MPI_Info_set(info, "nc_header_align_size", "1048576");
+          MPI_Info_set(info, "nc_var_align_size",    "1048576");
+          nc.create(fname.str() , NC_CLOBBER | NC_64BIT_DATA , info );
 
           nc.create_dim( "x" , coupler.get_nx_glob() );
           nc.create_dim( "y" , coupler.get_ny_glob() );
